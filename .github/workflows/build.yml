@@ -6,58 +6,27 @@ on:
       build_target:
         description: 'وش تبني؟'
         required: true
-        default: 'debug'
+        default: 'preview'
         type: choice
         options:
-          - debug
-          - release
+          - preview
+          - production
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      - uses: actions/setup-java@v4
+      - uses: expo/expo-github-action@v8
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Expo Prebuild
-        run: npx expo prebuild --platform android --clean
-
-      - name: Build Debug
-        if: ${{ inputs.build_target == 'debug' }}
-        working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
-
-      - name: Sign & Build Release
-        if: ${{ inputs.build_target == 'release' }}
-        working-directory: android
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
-          ./gradlew assembleRelease --no-daemon \
-            -Pandroid.injected.signing.store.file=$(pwd)/keystore.jks \
-            -Pandroid.injected.signing.store.password=$KEYSTORE_PASS \
-            -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
-            -Pandroid.injected.signing.key.password=$KEY_PASSWORD
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: APK-${{ inputs.build_target }}
-          path: android/app/build/outputs/apk/**/*.apk
-          retention-days: 7
+      - run: eas build --platform android --profile ${{ inputs.build_target }} --non-interactive
