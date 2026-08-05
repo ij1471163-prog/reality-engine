@@ -48,6 +48,11 @@
             "DEFAULT"
           ]
         }
+      ],
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
       ]
     },
     "plugins": [
@@ -65,6 +70,12 @@
           }
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a33db642-82b7-4f3c-8efb-d0fe0f05191b"
+      }
+    },
+    "owner": "zero2000"
   }
 }
