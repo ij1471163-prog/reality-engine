@@ -35,12 +35,10 @@ jobs:
       - name: Expo Prebuild
         run: npx expo prebuild --platform android --clean
 
-      - uses: gradle/actions/setup-gradle@v4
-
       - name: Build Debug
         if: ${{ inputs.build_target == 'debug' }}
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Sign & Build Release
         if: ${{ inputs.build_target == 'release' }}
