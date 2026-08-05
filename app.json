@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "Reality Engine",
+    "slug": "reality-engine",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./src/assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./src/assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0D1117"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./src/assets/icon.png",
+        "backgroundColor": "#0D1117"
+      },
+      "package": "com.naif.realityengine",
+      "versionCode": 1,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            { "mimeType": "text/plain" },
+            { "mimeType": "text/x-python" },
+            { "mimeType": "text/javascript" },
+            { "mimeType": "text/x-python-script" },
+            { "mimeType": "application/octet-stream",
+              "pathPattern": ".*\\.py" },
+            { "mimeType": "application/octet-stream",
+              "pathPattern": ".*\\.js" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
+    "plugins": [
+      "expo-document-picker",
+      "expo-file-system",
+      "expo-splash-screen",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "newArchEnabled": false,
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "minSdkVersion": 24
+          }
+        }
+      ],
+      [
+        "@react-native-async-storage/async-storage",
+        { "excludeSessionStorage": true }
+      ]
+    ]
+  }
+}
