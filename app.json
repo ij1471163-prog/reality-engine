@@ -22,16 +22,31 @@
         {
           "action": "VIEW",
           "data": [
-            { "mimeType": "text/plain" },
-            { "mimeType": "text/x-python" },
-            { "mimeType": "text/javascript" },
-            { "mimeType": "text/x-python-script" },
-            { "mimeType": "application/octet-stream",
-              "pathPattern": ".*\\.py" },
-            { "mimeType": "application/octet-stream",
-              "pathPattern": ".*\\.js" }
+            {
+              "mimeType": "text/plain"
+            },
+            {
+              "mimeType": "text/x-python"
+            },
+            {
+              "mimeType": "text/javascript"
+            },
+            {
+              "mimeType": "text/x-python-script"
+            },
+            {
+              "mimeType": "application/octet-stream",
+              "pathPattern": ".*\\.py"
+            },
+            {
+              "mimeType": "application/octet-stream",
+              "pathPattern": ".*\\.js"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -49,10 +64,6 @@
             "minSdkVersion": 24
           }
         }
-      ],
-      [
-        "@react-native-async-storage/async-storage",
-        { "excludeSessionStorage": true }
       ]
     ]
   }
