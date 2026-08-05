@@ -1,36 +1,19 @@
 {
-  "cli": { "version": ">= 7.0.0" },
+  "cli": { "version": ">= 9.0.0", "appVersionSource": "remote" },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk",
-        "autoIncrement": false
-      }
+      "distribution": "internal"
     },
     "preview": {
       "distribution": "internal",
       "android": {
-        "buildType": "apk",
-        "autoIncrement": false,
-        "credentialsSource": "local"
+        "buildType": "apk"
       }
     },
     "production": {
       "android": {
-        "buildType": "app-bundle",
-        "autoIncrement": true,
-        "credentialsSource": "local"
-      },
-      "env": { "APP_ENV": "production" }
-    }
-  },
-  "submit": {
-    "production": {
-      "android": {
-        "serviceAccountKeyPath": "./google-service-account.json",
-        "track": "internal"
+        "buildType": "app-bundle"
       }
     }
   }
