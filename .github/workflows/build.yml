@@ -15,23 +15,36 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Expo Prebuild
+        run: npx expo prebuild --platform android --clean
+
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x gradlew
 
       - name: Build Debug
         if: ${{ inputs.build_target == 'debug' }}
+        working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Sign & Build Release
         if: ${{ inputs.build_target == 'release' }}
+        working-directory: android
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
@@ -48,5 +61,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: APK-${{ inputs.build_target }}
-          path: app/build/outputs/apk/**/*.apk
+          path: android/app/build/outputs/apk/**/*.apk
           retention-days: 7
