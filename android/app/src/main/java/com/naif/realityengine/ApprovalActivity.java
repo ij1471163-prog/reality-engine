@@ -70,9 +70,24 @@ public class ApprovalActivity extends AppCompatActivity {
 
     private void showCurrent() {
         if (currentIndex >= stubs.size()) {
+            // حفظ الملف المعدّل في Downloads
+        try {
+            String outName = fileName != null ? "fixed_" + fileName : "fixed_code.py";
+            java.io.File outFile = new java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS), outName);
+            java.io.FileWriter fw = new java.io.FileWriter(outFile);
+            fw.write(code);
+            fw.close();
+            Toast.makeText(this,
+                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected +
+                "\nحُفظ في Downloads: " + outName,
+                Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
             Toast.makeText(this,
                 "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected,
                 Toast.LENGTH_LONG).show();
+        }
             finish();
             return;
         }
