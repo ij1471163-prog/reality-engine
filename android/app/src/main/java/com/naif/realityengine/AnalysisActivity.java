@@ -80,6 +80,43 @@ public class AnalysisActivity extends AppCompatActivity {
 
         btnCancel.setOnClickListener(v -> finish());
 
+        // زر تحليل AI
+        android.widget.Button btnAI = new android.widget.Button(this);
+        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+        btnAI.setBackgroundColor(0xFF6E40C9);
+        btnAI.setTextColor(0xFFFFFFFF);
+        btnAI.setTextSize(15);
+        LinearLayout.LayoutParams aiParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 140);
+        aiParams.setMargins(0, 16, 0, 0);
+        btnAI.setLayoutParams(aiParams);
+
+        ((LinearLayout) btnCancel.getParent()).addView(btnAI);
+
+        btnAI.setOnClickListener(v -> {
+            btnAI.setText("⏳ جاري التحليل...");
+            btnAI.setEnabled(false);
+
+            AIEngine.analyze(fileCode, fileName, new AIEngine.Callback() {
+                @Override
+                public void onResult(String result) {
+                    runOnUiThread(() -> {
+                        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+                        btnAI.setEnabled(true);
+                        showAIResult(result);
+                    });
+                }
+                @Override
+                public void onError(String error) {
+                    runOnUiThread(() -> {
+                        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+                        btnAI.setEnabled(true);
+                        Toast.makeText(AnalysisActivity.this, error, Toast.LENGTH_LONG).show();
+                    });
+                }
+            });
+        });
+
         btnProceed.setOnClickListener(v -> {
             if (report.stubs.isEmpty()) {
                 Toast.makeText(this, "لا دوال ناقصة", Toast.LENGTH_SHORT).show();
@@ -111,5 +148,25 @@ public class AnalysisActivity extends AppCompatActivity {
             return "";
         }
         return sb.toString();
+    }
+}
+    private void showAIResult(String result) {
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("نتيجة تحليل الذكاء الاصطناعي")
+            .setMessage(result)
+            .setPositiveButton("حسناً", null)
+            .setNeutralButton("ابدأ الإصلاح", (d, w) -> {
+                try {
+                    java.io.File tmp = new java.io.File(getCacheDir(), "ai_result.txt");
+                    java.io.FileWriter fw = new java.io.FileWriter(tmp);
+                    fw.write(result);
+                    fw.close();
+                } catch (Exception e) { e.printStackTrace(); }
+                Intent intent = new Intent(this, ApprovalActivity.class);
+                intent.putExtra("fileName", fileName);
+                intent.putExtra("useAI", true);
+                startActivity(intent);
+            })
+            .show();
     }
 }
