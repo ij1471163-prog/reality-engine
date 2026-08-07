@@ -166,9 +166,10 @@ public class ApprovalActivity extends AppCompatActivity {
     private void saveFiles() {
         try {
             // Create RealityEngine folder in Downloads
-            File downloads = Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_DOWNLOADS);
-            File dir = new File(downloads, "RealityEngine");
+            // حفظ في Downloads العام - يبقى بعد التحديث
+            File dir = new File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS), "RealityEngine");
             if (!dir.exists()) dir.mkdirs();
 
             // Save fixed file
