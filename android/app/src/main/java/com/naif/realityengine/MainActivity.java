@@ -43,9 +43,10 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        btnHistory.setOnClickListener(v ->
-            Toast.makeText(this, "السجل — قريباً", Toast.LENGTH_SHORT).show()
-        );
+        btnHistory.setOnClickListener(v -> {
+            Intent hi = new Intent(this, HistoryActivity.class);
+            startActivity(hi);
+        });
 
         handleIncomingFile(getIntent());
     }
