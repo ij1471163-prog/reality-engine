@@ -23,7 +23,16 @@ public class ApprovalActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_approval);
 
-        code     = getIntent().getStringExtra("code");
+        // Read code from temp file
+        try {
+            java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
+            java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(tmp));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line).append("\n");
+            br.close();
+            code = sb.toString();
+        } catch (Exception e) { code = ""; }
         fileName = getIntent().getStringExtra("fileName");
 
         if (code == null) { finish(); return; }

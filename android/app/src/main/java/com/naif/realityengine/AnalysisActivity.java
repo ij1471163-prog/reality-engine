@@ -85,8 +85,13 @@ public class AnalysisActivity extends AppCompatActivity {
                 Toast.makeText(this, "لا دوال ناقصة", Toast.LENGTH_SHORT).show();
                 return;
             }
+            try {
+                java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
+                java.io.FileWriter fw = new java.io.FileWriter(tmp);
+                fw.write(fileCode);
+                fw.close();
+            } catch (Exception e) { e.printStackTrace(); }
             Intent intent = new Intent(this, ApprovalActivity.class);
-            intent.putExtra("code", fileCode);
             intent.putExtra("fileName", fileName);
             startActivity(intent);
         });
