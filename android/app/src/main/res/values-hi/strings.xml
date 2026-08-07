@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">कोड फ़ाइल अपलोड करें</string>
+    <string name="btn_history">इतिहास और बैकअप</string>
+    <string name="btn_approve">स्वीकृत करें</string>
+    <string name="btn_reject">अस्वीकार करें</string>
+    <string name="btn_proceed">सुधार शुरू करें</string>
+    <string name="btn_cancel">रद्द करें</string>
+    <string name="privacy_hint">आपका कोड आपके डिवाइस पर रहता है</string>
+    <string name="no_stubs">कोई अधूरा फ़ंक्शन नहीं मिला</string>
+</resources>

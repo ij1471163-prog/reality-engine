@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">Загрузить файл кода</string>
+    <string name="btn_history">История и резервные копии</string>
+    <string name="btn_approve">Одобрить и применить</string>
+    <string name="btn_reject">Отклонить</string>
+    <string name="btn_proceed">Начать исправление</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="privacy_hint">Ваш код остаётся на устройстве</string>
+    <string name="no_stubs">Неполных функций не найдено</string>
+</resources>

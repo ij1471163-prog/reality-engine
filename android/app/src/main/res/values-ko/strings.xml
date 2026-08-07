@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">코드 파일 업로드</string>
+    <string name="btn_history">기록 및 백업</string>
+    <string name="btn_approve">승인 및 적용</string>
+    <string name="btn_reject">거부</string>
+    <string name="btn_proceed">수정 시작</string>
+    <string name="btn_cancel">취소</string>
+    <string name="privacy_hint">코드는 기기에 남아있습니다</string>
+    <string name="no_stubs">불완전한 함수를 찾을 수 없습니다</string>
+</resources>

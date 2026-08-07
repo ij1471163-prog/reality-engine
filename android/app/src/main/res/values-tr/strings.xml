@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">Kod Dosyası Yükle</string>
+    <string name="btn_history">Geçmiş ve Yedekler</string>
+    <string name="btn_approve">Onayla ve Uygula</string>
+    <string name="btn_reject">Reddet</string>
+    <string name="btn_proceed">Düzeltmeyi Başlat</string>
+    <string name="btn_cancel">İptal</string>
+    <string name="privacy_hint">Kodunuz cihazınızda kalır</string>
+    <string name="no_stubs">Eksik fonksiyon bulunamadı</string>
+</resources>

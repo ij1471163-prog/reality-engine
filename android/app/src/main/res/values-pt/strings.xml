@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">Carregar arquivo de código</string>
+    <string name="btn_history">Histórico e backups</string>
+    <string name="btn_approve">Aprovar e aplicar</string>
+    <string name="btn_reject">Rejeitar</string>
+    <string name="btn_proceed">Iniciar correção</string>
+    <string name="btn_cancel">Cancelar</string>
+    <string name="privacy_hint">Seu código permanece no dispositivo</string>
+    <string name="no_stubs">Nenhuma função incompleta encontrada</string>
+</resources>
