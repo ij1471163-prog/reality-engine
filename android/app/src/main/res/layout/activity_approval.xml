@@ -28,7 +28,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:gap="12dp">
+            >
 
             <TextView
                 android:text="قبل:"
@@ -81,7 +81,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="16dp"
-        android:gap="12dp">
+        >
 
         <Button
             android:id="@+id/btnReject"

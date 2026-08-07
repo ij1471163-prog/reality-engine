@@ -42,7 +42,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="16dp"
-        android:gap="12dp">
+        >
 
         <Button
             android:id="@+id/btnCancel"
