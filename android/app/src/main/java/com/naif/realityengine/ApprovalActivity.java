@@ -60,33 +60,7 @@ public class ApprovalActivity extends AppCompatActivity {
         btnApprove.setOnClickListener(v -> handleApprove());
         btnReject.setOnClickListener(v  -> handleReject());
 
-        // زر حفظ نسخة احتياطية يدوي
-        android.widget.Button btnSave = new android.widget.Button(this);
-        btnSave.setText("💾 حفظ نسخة احتياطية الآن");
-        btnSave.setBackgroundColor(0xFF21262D);
-        btnSave.setTextColor(0xFF58A6FF);
-        btnSave.setPadding(20, 10, 20, 10);
-        ((android.widget.LinearLayout) findViewById(R.id.btnApprove).getParent().getParent()).addView(btnSave);
-
-        btnSave.setOnClickListener(v -> {
-            new android.app.AlertDialog.Builder(this)
-                .setTitle("حفظ نسخة احتياطية")
-                .setMessage(
-                    "هل تريد حفظ نسخة احتياطية من الكود الحالي؟\n\n" +
-                    "• يُحفظ الكود كما هو الآن\n" +
-                    "• يمكنك الرجوع إليه لاحقاً من السجل"
-                )
-                .setPositiveButton("حفظ", (d, w) -> {
-                    backupManager.recordVersion(
-                        sessionId, "manual_backup",
-                        "نسخة احتياطية يدوية",
-                        code, code, true, 100
-                    );
-                    android.widget.Toast.makeText(this, "✅ تم الحفظ", android.widget.Toast.LENGTH_SHORT).show();
-                })
-                .setNegativeButton("إلغاء", null)
-                .show();
-        });
+        // Backup - manual save handled via BackupManager
     }
 
     private void showCurrent() {
