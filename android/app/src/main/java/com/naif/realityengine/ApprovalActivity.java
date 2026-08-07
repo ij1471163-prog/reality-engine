@@ -70,35 +70,41 @@ public class ApprovalActivity extends AppCompatActivity {
 
     private void showCurrent() {
         if (currentIndex >= stubs.size()) {
-            // حفظ الملف المعدّل في Downloads
+            // حفظ الملف في التخزين الداخلي
         try {
-            // حفظ النسخة الأصلية
-            String origName = fileName != null ? "original_" + fileName : "original_code.py";
-            java.io.File origFile = new java.io.File(
-                android.os.Environment.getExternalStoragePublicDirectory(
-                android.os.Environment.DIRECTORY_DOWNLOADS), origName);
-            java.io.FileWriter origFw = new java.io.FileWriter(origFile);
-            origFw.write(backupManager.getSession(sessionId).originalCode);
-            origFw.close();
-
-            // حفظ النسخة المعدّلة
             String outName = fileName != null ? "fixed_" + fileName : "fixed_code.py";
-            java.io.File outFile = new java.io.File(
-                android.os.Environment.getExternalStoragePublicDirectory(
-                android.os.Environment.DIRECTORY_DOWNLOADS), outName);
+            String origName = fileName != null ? "original_" + fileName : "original_code.py";
+
+            // حفظ في مجلد التطبيق الداخلي
+            java.io.File dir = getExternalFilesDir(null);
+            if (dir == null) dir = getFilesDir();
+
+            // النسخة المعدّلة
+            java.io.File outFile = new java.io.File(dir, outName);
             java.io.FileWriter fw = new java.io.FileWriter(outFile);
             fw.write(code);
             fw.close();
+
+            // النسخة الأصلية
+            BackupManager.Session s = backupManager.getSession(sessionId);
+            if (s != null) {
+                java.io.File origFile = new java.io.File(dir, origName);
+                java.io.FileWriter origFw = new java.io.FileWriter(origFile);
+                origFw.write(s.originalCode);
+                origFw.close();
+            }
+
             Toast.makeText(this,
                 "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected +
-                "\nحُفظ في Downloads: " + outName,
+                "\nحُفظ: " + outFile.getAbsolutePath(),
                 Toast.LENGTH_LONG).show();
         } catch (Exception e) {
             Toast.makeText(this,
-                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected,
+                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected +
+                "\nخطأ في الحفظ: " + e.getMessage(),
                 Toast.LENGTH_LONG).show();
         }
-            finish();
+        finish();
             return;
         }
 
