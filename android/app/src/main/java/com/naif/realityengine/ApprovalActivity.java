@@ -72,6 +72,16 @@ public class ApprovalActivity extends AppCompatActivity {
         if (currentIndex >= stubs.size()) {
             // حفظ الملف المعدّل في Downloads
         try {
+            // حفظ النسخة الأصلية
+            String origName = fileName != null ? "original_" + fileName : "original_code.py";
+            java.io.File origFile = new java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS), origName);
+            java.io.FileWriter origFw = new java.io.FileWriter(origFile);
+            origFw.write(backupManager.getSession(sessionId).originalCode);
+            origFw.close();
+
+            // حفظ النسخة المعدّلة
             String outName = fileName != null ? "fixed_" + fileName : "fixed_code.py";
             java.io.File outFile = new java.io.File(
                 android.os.Environment.getExternalStoragePublicDirectory(
