@@ -80,31 +80,7 @@ public class AnalysisActivity extends AppCompatActivity {
 
         btnCancel.setOnClickListener(v -> finish());
 
-        // زر تحليل AI
-        android.widget.Button btnAI = new android.widget.Button(this);
-        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
-        btnAI.setBackgroundColor(0xFF6E40C9);
-        btnAI.setTextColor(0xFFFFFFFF);
-        btnAI.setTextSize(15);
-        LinearLayout.LayoutParams aiParams = new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 140);
-        aiParams.setMargins(0, 16, 0, 0);
-        btnAI.setLayoutParams(aiParams);
-
-        ((LinearLayout) btnCancel.getParent()).addView(btnAI);
-
-        btnAI.setOnClickListener(v -> {
-            btnAI.setText("⏳ جاري التحليل...");
-            btnAI.setEnabled(false);
-
-            AIEngine.analyze(fileCode, fileName, new AIEngine.Callback() {
-                @Override
-                public void onResult(String result) {
-                    runOnUiThread(() -> {
-                        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
-                        btnAI.setEnabled(true);
-                        showAIResult(result);
-                    });
+        // AI - قريباً
                 }
                 @Override
                 public void onError(String error) {
