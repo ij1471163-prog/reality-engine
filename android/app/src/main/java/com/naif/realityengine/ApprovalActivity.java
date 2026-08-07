@@ -21,6 +21,7 @@ public class ApprovalActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        try {
         setContentView(R.layout.activity_approval);
 
         // Read code from temp file
@@ -61,6 +62,10 @@ public class ApprovalActivity extends AppCompatActivity {
         btnReject.setOnClickListener(v  -> handleReject());
 
         // Backup - manual save handled via BackupManager
+        } catch (Exception e) {
+            Toast.makeText(this, "خطأ: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            finish();
+        }
     }
 
     private void showCurrent() {
