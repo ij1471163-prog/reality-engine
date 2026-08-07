@@ -63,6 +63,8 @@ public class AIEngine {
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + getKey());
+        conn.setRequestProperty("HTTP-Referer", "https://github.com/reality-engine");
+        conn.setRequestProperty("X-Title", "Reality Engine");
         conn.setDoOutput(true);
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(60000);
