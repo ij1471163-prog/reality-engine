@@ -35,7 +35,7 @@ public class ApprovalActivity extends AppCompatActivity {
         } catch (Exception e) { code = ""; }
         fileName = getIntent().getStringExtra("fileName");
 
-        if (code == null) { finish(); return; }
+        if (code == null || code.trim().isEmpty()) { Toast.makeText(this, "تعذّر قراءة الكود", Toast.LENGTH_SHORT).show(); finish(); return; }
 
         // Detect stubs
         StubDetector.StubResult result = StubDetector.detect(code);
