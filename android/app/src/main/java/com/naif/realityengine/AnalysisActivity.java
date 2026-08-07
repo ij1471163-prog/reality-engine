@@ -149,7 +149,7 @@ public class AnalysisActivity extends AppCompatActivity {
         }
         return sb.toString();
     }
-}
+
     private void showAIResult(String result) {
         new android.app.AlertDialog.Builder(this)
             .setTitle("نتيجة تحليل الذكاء الاصطناعي")
@@ -169,4 +169,4 @@ public class AnalysisActivity extends AppCompatActivity {
             })
             .show();
     }
-}
+
