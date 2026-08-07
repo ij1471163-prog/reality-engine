@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0D1117"
+    android:padding="20dp">
+
+    <TextView
+        android:text="Reality Engine"
+        android:textSize="26sp"
+        android:textColor="#58A6FF"
+        android:textStyle="bold"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="40dp"/>
+
+    <TextView
+        android:text="محلل كود ذكي • أمني • بدون إنترنت"
+        android:textSize="13sp"
+        android:textColor="#8B949E"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"/>
+
+    <Button
+        android:id="@+id/btnPickFile"
+        android:text="ارفع ملف كود"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="40dp"
+        android:backgroundTint="#58A6FF"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"/>
+
+    <Button
+        android:id="@+id/btnHistory"
+        android:text="السجل والنسخ الاحتياطية"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="12dp"
+        android:backgroundTint="#1C2128"
+        android:textColor="#8B949E"/>
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:text="الكود يبقى على جهازك — لا يُرسل لأي خادم"
+        android:textSize="11sp"
+        android:textColor="#484F58"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:gravity="center"
+        android:layout_gravity="center"/>
+
+</LinearLayout>

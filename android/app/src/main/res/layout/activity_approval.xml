@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0D1117">
+
+    <TextView
+        android:id="@+id/tvFuncName"
+        android:textSize="18sp"
+        android:textColor="#E6EDF3"
+        android:textStyle="bold"
+        android:padding="20dp"/>
+
+    <TextView
+        android:id="@+id/tvSafetyScore"
+        android:textSize="14sp"
+        android:textColor="#58A6FF"
+        android:paddingHorizontal="20dp"/>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gap="12dp">
+
+            <TextView
+                android:text="قبل:"
+                android:textColor="#F85149"
+                android:textSize="12sp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+
+            <TextView
+                android:id="@+id/tvBefore"
+                android:textSize="12sp"
+                android:textColor="#F85149"
+                android:background="#1C2128"
+                android:padding="12dp"
+                android:fontFamily="monospace"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
+
+            <TextView
+                android:text="بعد:"
+                android:textColor="#3FB950"
+                android:textSize="12sp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+
+            <TextView
+                android:id="@+id/tvAfter"
+                android:textSize="12sp"
+                android:textColor="#3FB950"
+                android:background="#1C2128"
+                android:padding="12dp"
+                android:fontFamily="monospace"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
+
+            <TextView
+                android:id="@+id/tvExplanation"
+                android:textSize="13sp"
+                android:textColor="#8B949E"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:lineSpacingExtra="4dp"/>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gap="12dp">
+
+        <Button
+            android:id="@+id/btnReject"
+            android:text="رفض"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1"
+            android:backgroundTint="#1C2128"
+            android:textColor="#F85149"/>
+
+        <Button
+            android:id="@+id/btnApprove"
+            android:text="موافقة وتطبيق"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="2"
+            android:backgroundTint="#3FB950"
+            android:textColor="#FFFFFF"/>
+
+    </LinearLayout>
+
+</LinearLayout>

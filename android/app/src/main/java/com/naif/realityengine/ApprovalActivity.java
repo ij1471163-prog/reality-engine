@@ -1,0 +1,124 @@
+package com.naif.realityengine;
+
+import android.os.Bundle;
+import android.widget.Button;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.appcompat.app.AppCompatActivity;
+import java.util.List;
+
+public class ApprovalActivity extends AppCompatActivity {
+
+    private String code;
+    private String fileName;
+    private List<StubDetector.StubFunction> stubs;
+    private int currentIndex = 0;
+    private BackupManager backupManager;
+    private String sessionId;
+    private int approved = 0;
+    private int rejected = 0;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_approval);
+
+        code     = getIntent().getStringExtra("code");
+        fileName = getIntent().getStringExtra("fileName");
+
+        if (code == null) { finish(); return; }
+
+        // Detect stubs
+        StubDetector.StubResult result = StubDetector.detect(code);
+        stubs = result.stubs;
+
+        if (stubs.isEmpty()) {
+            Toast.makeText(this, "لا دوال ناقصة", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
+
+        // Create backup session
+        backupManager = new BackupManager(this);
+        BackupManager.Session session = backupManager.createSession(fileName, code);
+        sessionId = session.sessionId;
+
+        showCurrent();
+
+        Button btnApprove = findViewById(R.id.btnApprove);
+        Button btnReject  = findViewById(R.id.btnReject);
+
+        btnApprove.setOnClickListener(v -> handleApprove());
+        btnReject.setOnClickListener(v  -> handleReject());
+    }
+
+    private void showCurrent() {
+        if (currentIndex >= stubs.size()) {
+            Toast.makeText(this,
+                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected,
+                Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        StubDetector.StubFunction stub = stubs.get(currentIndex);
+
+        // Run workflow
+        ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code);
+
+        TextView tvFuncName    = findViewById(R.id.tvFuncName);
+        TextView tvSafetyScore = findViewById(R.id.tvSafetyScore);
+        TextView tvBefore      = findViewById(R.id.tvBefore);
+        TextView tvAfter       = findViewById(R.id.tvAfter);
+        TextView tvExplanation = findViewById(R.id.tvExplanation);
+        Button   btnApprove    = findViewById(R.id.btnApprove);
+
+        tvFuncName.setText(stub.name + "()  — " + (currentIndex + 1) + "/" + stubs.size());
+        tvSafetyScore.setText("Safety Score: " + item.safetyScore + "/100");
+        tvBefore.setText(item.before);
+        tvAfter.setText(item.after != null ? item.after : "لا اقتراح");
+        tvExplanation.setText(item.explanation != null ? item.explanation : "");
+
+        // Blocked
+        if (item.stage == ApprovalWorkflow.Stage.BLOCKED) {
+            tvAfter.setText("⛔ " + item.blockedReason);
+            tvAfter.setTextColor(0xFFF85149);
+            btnApprove.setEnabled(false);
+        } else {
+            tvAfter.setTextColor(0xFF3FB950);
+            btnApprove.setEnabled(true);
+        }
+    }
+
+    private void handleApprove() {
+        StubDetector.StubFunction stub = stubs.get(currentIndex);
+        ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code);
+
+        if (item.suggestion != null) {
+            code = ApprovalWorkflow.applyChange(code, stub.name, item.suggestion);
+            backupManager.recordVersion(
+                sessionId, stub.name,
+                "تطبيق " + stub.name + "()",
+                stub.snippet, item.suggestion,
+                true, item.safetyScore
+            );
+        }
+
+        approved++;
+        currentIndex++;
+        showCurrent();
+    }
+
+    private void handleReject() {
+        StubDetector.StubFunction stub = stubs.get(currentIndex);
+        backupManager.recordVersion(
+            sessionId, stub.name,
+            "رُفض " + stub.name + "()",
+            stub.snippet, "", false, 0
+        );
+
+        rejected++;
+        currentIndex++;
+        showCurrent();
+    }
+}
