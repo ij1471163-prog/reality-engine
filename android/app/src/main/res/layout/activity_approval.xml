@@ -7,6 +7,8 @@
 
     <TextView
         android:id="@+id/tvFuncName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:textSize="18sp"
         android:textColor="#E6EDF3"
         android:textStyle="bold"
@@ -14,10 +16,13 @@
 
     <TextView
         android:id="@+id/tvSafetyScore"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:textSize="14sp"
         android:textColor="#58A6FF"
         android:paddingLeft="20dp"
-        android:paddingRight="20dp"/>
+        android:paddingRight="20dp"
+        android:paddingBottom="8dp"/>
 
     <ScrollView
         android:layout_width="match_parent"
@@ -28,49 +33,52 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            >
+            android:orientation="vertical">
 
             <TextView
                 android:text="قبل:"
                 android:textColor="#F85149"
                 android:textSize="12sp"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"/>
+                android:layout_height="wrap_content"
+                android:paddingBottom="4dp"/>
 
             <TextView
                 android:id="@+id/tvBefore"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:textSize="12sp"
                 android:textColor="#F85149"
                 android:background="#1C2128"
                 android:padding="12dp"
                 android:fontFamily="monospace"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
+                android:layout_marginBottom="12dp"/>
 
             <TextView
                 android:text="بعد:"
                 android:textColor="#3FB950"
                 android:textSize="12sp"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"/>
+                android:layout_height="wrap_content"
+                android:paddingBottom="4dp"/>
 
             <TextView
                 android:id="@+id/tvAfter"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:textSize="12sp"
                 android:textColor="#3FB950"
                 android:background="#1C2128"
                 android:padding="12dp"
                 android:fontFamily="monospace"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
+                android:layout_marginBottom="12dp"/>
 
             <TextView
                 android:id="@+id/tvExplanation"
-                android:textSize="13sp"
-                android:textColor="#8B949E"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:textColor="#8B949E"
                 android:lineSpacingExtra="4dp"/>
 
         </LinearLayout>
@@ -81,8 +89,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="16dp"
-        >
+        android:padding="16dp">
 
         <Button
             android:id="@+id/btnReject"
@@ -91,7 +98,8 @@
             android:layout_height="52dp"
             android:layout_weight="1"
             android:backgroundTint="#1C2128"
-            android:textColor="#F85149"/>
+            android:textColor="#F85149"
+            android:layout_marginRight="8dp"/>
 
         <Button
             android:id="@+id/btnApprove"
