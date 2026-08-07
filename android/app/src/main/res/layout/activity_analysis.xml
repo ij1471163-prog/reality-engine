@@ -20,7 +20,8 @@
         android:textColor="#E6EDF3"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingHorizontal="20dp"
+        android:paddingLeft="20dp"
+        android:paddingRight="20dp"
         android:lineSpacingExtra="4dp"/>
 
     <ScrollView

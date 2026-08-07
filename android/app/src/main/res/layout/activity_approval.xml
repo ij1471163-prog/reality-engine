@@ -16,7 +16,8 @@
         android:id="@+id/tvSafetyScore"
         android:textSize="14sp"
         android:textColor="#58A6FF"
-        android:paddingHorizontal="20dp"/>
+        android:paddingLeft="20dp"
+        android:paddingRight="20dp"/>
 
     <ScrollView
         android:layout_width="match_parent"
