@@ -76,8 +76,16 @@ public class ApprovalActivity extends AppCompatActivity {
             String origName = fileName != null ? "original_" + fileName : "original_code.py";
 
             // حفظ في مجلد التطبيق الداخلي
-            java.io.File dir = getExternalFilesDir(null);
-            if (dir == null) dir = getFilesDir();
+            // حفظ في Downloads العام
+            java.io.File dir;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                dir = new java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS), "RealityEngine");
+            } else {
+                dir = new java.io.File(android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS), "RealityEngine");
+            }
+            if (!dir.exists()) dir.mkdirs();
 
             // النسخة المعدّلة
             java.io.File outFile = new java.io.File(dir, outName);
