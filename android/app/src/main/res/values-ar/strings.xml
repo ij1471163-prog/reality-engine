@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">ارفع ملف كود</string>
+    <string name="btn_history">السجل والنسخ الاحتياطية</string>
+    <string name="btn_approve">موافقة وتطبيق</string>
+    <string name="btn_reject">رفض</string>
+    <string name="btn_proceed">ابدأ الإصلاح</string>
+    <string name="btn_cancel">إلغاء</string>
+    <string name="privacy_hint">كودك يبقى على جهازك</string>
+    <string name="no_stubs">ما وجد المحرك أي دوال ناقصة</string>
+</resources>

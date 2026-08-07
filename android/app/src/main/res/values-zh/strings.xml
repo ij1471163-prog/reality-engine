@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">上传代码文件</string>
+    <string name="btn_history">历史记录与备份</string>
+    <string name="btn_approve">批准并应用</string>
+    <string name="btn_reject">拒绝</string>
+    <string name="btn_proceed">开始修复</string>
+    <string name="btn_cancel">取消</string>
+    <string name="privacy_hint">您的代码保留在设备上</string>
+    <string name="no_stubs">未发现不完整函数</string>
+</resources>

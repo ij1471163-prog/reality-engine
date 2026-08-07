@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">Mag-upload ng Code File</string>
+    <string name="btn_history">Kasaysayan at Backup</string>
+    <string name="btn_approve">Aprubahan at Ilapat</string>
+    <string name="btn_reject">Tanggihan</string>
+    <string name="btn_proceed">Simulan ang Pag-aayos</string>
+    <string name="btn_cancel">Kanselahin</string>
+    <string name="privacy_hint">Ang iyong code ay nananatili sa iyong device</string>
+    <string name="no_stubs">Walang nahanap na hindi kumpletong function</string>
+</resources>

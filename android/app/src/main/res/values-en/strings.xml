@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reality Engine</string>
+    <string name="btn_pick_file">Upload Code File</string>
+    <string name="btn_history">History and Backups</string>
+    <string name="btn_approve">Approve and Apply</string>
+    <string name="btn_reject">Reject</string>
+    <string name="btn_proceed">Start Fix</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="privacy_hint">Your code stays on your device</string>
+    <string name="no_stubs">No incomplete functions found</string>
+</resources>
