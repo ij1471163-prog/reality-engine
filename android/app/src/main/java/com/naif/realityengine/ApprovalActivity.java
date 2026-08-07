@@ -118,6 +118,13 @@ public class ApprovalActivity extends AppCompatActivity {
                 stub.snippet, item.suggestion,
                 true, item.safetyScore
             );
+            // حفظ الكود المعدّل في الملف المؤقت
+            try {
+                java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
+                java.io.FileWriter fw = new java.io.FileWriter(tmp);
+                fw.write(code);
+                fw.close();
+            } catch (Exception e) { e.printStackTrace(); }
         }
 
         approved++;
