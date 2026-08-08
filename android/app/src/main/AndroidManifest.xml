@@ -29,6 +29,7 @@
         <activity android:name=".AnalysisActivity" android:exported="false" />
         <activity android:name=".ApprovalActivity" android:exported="false" />
         <activity android:name=".HistoryActivity" android:exported="false" />
+        <activity android:name=".AIAnalysisActivity" android:exported="false" />
 
     </application>
 
