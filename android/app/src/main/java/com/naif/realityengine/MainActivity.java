@@ -50,6 +50,24 @@ public class MainActivity extends AppCompatActivity {
             startActivity(hi);
         });
 
+        // زر تحليل AI مستقل
+        android.widget.Button btnAI = new android.widget.Button(this);
+        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+        btnAI.setBackgroundColor(0xFF6E40C9);
+        btnAI.setTextColor(0xFFFFFFFF);
+        btnAI.setTextSize(15);
+        android.widget.LinearLayout.LayoutParams aiParams = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        aiParams.setMargins(0, 12, 0, 0);
+        btnAI.setLayoutParams(aiParams);
+        ((android.widget.LinearLayout) btnPickFile.getParent()).addView(btnAI);
+
+        btnAI.setOnClickListener(v -> {
+            Intent intent = new Intent(this, AIAnalysisActivity.class);
+            startActivity(intent);
+        });
+
         // طلب إذن الكتابة
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
             if (ContextCompat.checkSelfPermission(this,
