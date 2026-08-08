@@ -12,6 +12,7 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+        buildConfigField "String", "AI_KEY", "\"" + (System.getenv("AI_KEY") ?: "") + "\""
     }
 
     signingConfigs {
@@ -32,6 +33,10 @@ android {
             signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

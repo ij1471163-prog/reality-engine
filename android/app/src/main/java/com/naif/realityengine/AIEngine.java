@@ -10,16 +10,8 @@ import java.nio.charset.StandardCharsets;
 
 public class AIEngine {
 
-    // المفتاح مشفر بـ XOR
-    private static final String EK = "ITl/PSB/JGN/azYxYTYzM2oxYzBnZTQ2ZmU3MTBqY2JrZWY3ZGVnazBrM2pramphZ2U2N2Q2ZDMxYmFkNmtha2E0ZzM3MWBnMA==";
-    private static final byte  XK = 0x52;
-
     private static String getKey() {
-        byte[] decoded  = Base64.decode(EK, Base64.DEFAULT);
-        byte[] original = new byte[decoded.length];
-        for (int i = 0; i < decoded.length; i++)
-            original[i] = (byte)(decoded[i] ^ XK);
-        return new String(original, StandardCharsets.UTF_8);
+        return BuildConfig.AI_KEY;
     }
 
     public interface Callback {
