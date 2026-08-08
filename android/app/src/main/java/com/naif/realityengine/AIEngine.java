@@ -50,7 +50,7 @@ public class AIEngine {
     }
 
     private static String callAPI(String prompt) throws Exception {
-        URL url = new URL("https://openrouter.ai/api/v1/chat/completions");
+        URL url = new URL("https://api.mistral.ai/v1/chat/completions");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
