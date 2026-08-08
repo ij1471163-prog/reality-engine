@@ -62,7 +62,7 @@ public class AIEngine {
         conn.setReadTimeout(60000);
 
         String body = "{"
-            + "\"model\":\"anthropic/claude-haiku-4-5\","
+            + "\"model\":\"mistral-small-latest\","
             + "\"messages\":[{\"role\":\"user\",\"content\":"
             + "\"" + prompt.replace("\"","\\\"").replace("\n","\\n") + "\""
             + "}],"
