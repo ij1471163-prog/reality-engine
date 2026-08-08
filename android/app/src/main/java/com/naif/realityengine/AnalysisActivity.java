@@ -80,7 +80,40 @@ public class AnalysisActivity extends AppCompatActivity {
 
         btnCancel.setOnClickListener(v -> finish());
 
-        // AI - قريباً
+        // زر AI
+        android.widget.Button btnAI = new android.widget.Button(this);
+        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+        btnAI.setBackgroundColor(0xFF6E40C9);
+        btnAI.setTextColor(0xFFFFFFFF);
+        android.widget.LinearLayout.LayoutParams aiP = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 140);
+        aiP.setMargins(0, 16, 0, 0);
+        btnAI.setLayoutParams(aiP);
+        ((android.widget.LinearLayout) btnCancel.getParent()).addView(btnAI);
+
+        btnAI.setOnClickListener(v -> {
+            btnAI.setText("⏳ جاري التحليل...");
+            btnAI.setEnabled(false);
+            AIEngine.analyze(fileCode, fileName, new AIEngine.Callback() {
+                @Override
+                public void onResult(String result) {
+                    runOnUiThread(() -> {
+                        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+                        btnAI.setEnabled(true);
+                        showAIResult(result);
+                    });
+                }
+                @Override
+                public void onError(String error) {
+                    runOnUiThread(() -> {
+                        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+                        btnAI.setEnabled(true);
+                        android.widget.Toast.makeText(AnalysisActivity.this,
+                            "خطأ: " + error, android.widget.Toast.LENGTH_LONG).show();
+                    });
+                }
+            });
+        });
 
         btnProceed.setOnClickListener(v -> {
             if (report.stubs.isEmpty()) {
