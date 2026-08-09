@@ -61,6 +61,31 @@ public class StubDetector {
         return "raise NotImplementedError('" + name + " not implemented')";
     }
 
+    private static void detectJavaScriptStubs(String code, List<StubFunction> stubs) {
+        // function name() { } or () => { }
+        Pattern jsFunc = Pattern.compile(
+            "(?:function\\s+(\\w+)\\s*\\([^)]*\\)\\s*\\{\\s*\\}|" +
+            "(?:const|let|var)\\s+(\\w+)\\s*=\\s*(?:function\\s*\\([^)]*\\)|[^=]+=>)\\s*\\{\\s*\\})",
+            Pattern.MULTILINE
+        );
+        Matcher jsMatcher = jsFunc.matcher(code);
+        while (jsMatcher.find()) {
+            String name = jsMatcher.group(1) != null ? jsMatcher.group(1) : jsMatcher.group(2);
+            if (name == null) continue;
+            String before = code.substring(0, jsMatcher.start());
+            int lineNo = before.split("\n", -1).length;
+            boolean exists = stubs.stream().anyMatch(s -> s.name.equals(name));
+            if (!exists) {
+                stubs.add(new StubFunction(
+                    name, lineNo, Risk.CONFIRMED,
+                    "دالة JS فارغة",
+                    jsMatcher.group().substring(0, Math.min(80, jsMatcher.group().length())),
+                    "// أضف كود الدالة هنا"
+                ));
+            }
+        }
+    }
+
     public static StubResult detect(String code) {
         List<StubFunction> stubs = new ArrayList<>();
         String[] lines = code.split("\n");
@@ -121,6 +146,9 @@ public class StubDetector {
 
         // Sort: CONFIRMED first
         stubs.sort((a, b) -> a.risk.compareTo(b.risk));
+
+        // JavaScript detection
+        detectJavaScriptStubs(code, stubs);
 
         return new StubResult(stubs, totalFunctions);
     }
