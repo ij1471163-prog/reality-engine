@@ -223,9 +223,9 @@ public class AIAnalysisActivity extends AppCompatActivity {
         btnAnalyze.setEnabled(true);
 
         if (proposals.isEmpty()) {
-            // Show raw result
-            tvStatus.setText("AI قال:");
-            showRawResult(aiResult);
+            // AI ما رجع بتنسيق محدد — اعرض النتيجة مع زر تطبيق يدوي
+            tvStatus.setText("تحليل AI جاهز");
+            showRawResultWithAction(aiResult);
         } else {
             tvStatus.setText("وجد AI " + proposals.size() + " اقتراح — راجع كل واحد");
             showReviewUI();
@@ -389,6 +389,64 @@ public class AIAnalysisActivity extends AppCompatActivity {
                 Toast.LENGTH_LONG).show();
         }
         finish();
+    }
+
+    private void showRawResultWithAction(String aiResult) {
+        layoutMain.removeAllViews();
+
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText("✨ تحليل AI");
+        tvTitle.setTextColor(0xFF6E40C9);
+        tvTitle.setTextSize(18);
+        tvTitle.setPadding(0, 0, 0, 16);
+        layoutMain.addView(tvTitle);
+
+        // عرض نتيجة AI
+        TextView tvRes = new TextView(this);
+        tvRes.setText(aiResult);
+        tvRes.setTextColor(0xFFE6EDF3);
+        tvRes.setTextSize(13);
+        tvRes.setPadding(16, 16, 16, 16);
+        tvRes.setBackgroundColor(0xFF1C2128);
+        tvRes.setLineSpacing(4, 1);
+        addView(tvRes, 0, 0, 16);
+
+        // زر تطبيق الاقتراحات يدوياً
+        Button btnApplyStubs = new Button(this);
+        btnApplyStubs.setText("🔧 تطبيق إصلاح الدوال الناقصة");
+        btnApplyStubs.setBackgroundColor(0xFF3FB950);
+        btnApplyStubs.setTextColor(0xFFFFFFFF);
+        addView(btnApplyStubs, 140, 0, 12);
+
+        btnApplyStubs.setOnClickListener(v -> {
+            // تطبيق المحرك المحلي على الملف
+            StubDetector.StubResult stubs = StubDetector.detect(fileCode);
+            if (stubs.stubs.isEmpty()) {
+                Toast.makeText(this, "ما في دوال ناقصة للإصلاح", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            proposals.clear();
+            for (StubDetector.StubFunction stub : stubs.stubs) {
+                AIProposal p = new AIProposal();
+                p.functionName = stub.name;
+                p.before = stub.snippet;
+                p.after = stub.suggestion;
+                p.explanation = "اقتراح بناءً على اسم الدالة: " + stub.reason;
+                p.safetyScore = 100;
+                proposals.add(p);
+            }
+            currentIndex = 0;
+            approved = 0;
+            rejected = 0;
+            showReviewUI();
+        });
+
+        Button btnBack = new Button(this);
+        btnBack.setText("← رجوع");
+        btnBack.setBackgroundColor(0xFF21262D);
+        btnBack.setTextColor(0xFF8B949E);
+        btnBack.setOnClickListener(v -> finish());
+        addView(btnBack, 120, 0, 0);
     }
 
     private void showRawResult(String result) {
