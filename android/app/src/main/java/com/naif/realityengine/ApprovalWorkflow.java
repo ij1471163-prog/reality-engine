@@ -55,7 +55,8 @@ public class ApprovalWorkflow {
         // 3. Generate suggestion
         item.stage    = Stage.ANALYZING;
         item.progress = 30;
-        String suggestion = stub.suggestion;
+        // استخدم السياق الكامل للاقتراح الذكي
+        String suggestion = StubDetector.suggestWithContext(stub.name, fullCode);
         item.after = suggestion;
 
         // 4. Security check on suggestion
