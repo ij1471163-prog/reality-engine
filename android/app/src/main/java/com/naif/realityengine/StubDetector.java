@@ -83,7 +83,7 @@ public class StubDetector {
 
         // calculate / total / count
         if (n.contains("calculate") || n.contains("total") || n.contains("count"))
-            return "return sum(float(x) if isinstance(x, dict) else x for x in " + p1 + ") if " + p1 + " else 0";
+            return "return sum(" + p1 + ") if " + p1 + " else 0  # تأكد من نوع العناصر";
 
         // average / mean
         if (n.contains("average") || n.contains("avg") || n.contains("mean"))
@@ -99,11 +99,11 @@ public class StubDetector {
 
         // read / load
         if (n.contains("read") || n.contains("load"))
-            return "import os\n    if not os.path.exists(str(" + p1 + ")): return None\n    with open(" + p1 + ", \"r\", encoding=\"utf-8\") as f:\n        return f.read()";
+            return "# افترض أن " + p1 + " مسار ملف\n    import os\n    if not os.path.exists(str(" + p1 + ")): return None\n    with open(" + p1 + ", \"r\", encoding=\"utf-8\") as f:\n        return f.read()";
 
         // write / save
         if (n.contains("write") || n.contains("save"))
-            return "with open(" + p1 + ", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(" + p2 + "))\n    return True";
+            return "# افترض أن " + p1 + " مسار ملف و" + p2 + " المحتوى\n    with open(" + p1 + ", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(" + p2 + "))\n    return True";
 
         // find / search / fetch
         if (n.contains("find") || n.contains("search") || n.contains("fetch"))
