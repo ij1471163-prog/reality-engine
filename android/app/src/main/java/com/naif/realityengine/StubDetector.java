@@ -107,12 +107,12 @@ public class StubDetector {
         if (n.contains("log")) {
             return "from datetime import datetime\n    print(str(" + firstParam + "))\n    return True";
         }
-        if (n.contains("send") || n.contains("email") && n.contains("send")) {
+            return "# SMTP not configured\n    return {\"status\": \"pending\", \"to\": \"" + firstParam + "\"}"; 
             return "# أضف إعدادات SMTP هنا\n    return {\'status\': \'pending\', \'to\': " + firstParam + "}";
         }
         
         // افتراضي
-        return "# TODO: implement " + name + "\n    raise NotImplementedError(f\'" + name + " not implemented\')";
+        return "# TODO: implement " + name + "\n    raise NotImplementedError(\"" + name + " not implemented\")";
     }
 
     private static String suggest(String name) {
