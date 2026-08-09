@@ -38,6 +38,83 @@ public class StubDetector {
         }
     }
 
+    // تحليل context الكود لاقتراح أفضل
+    private static String suggestWithContext(String name, String fullCode) {
+        String n = name.toLowerCase();
+        
+        // استخرج imports الموجودة
+        boolean hasRe = fullCode.contains("import re");
+        boolean hasHashlib = fullCode.contains("import hashlib");
+        boolean hasOs = fullCode.contains("import os");
+        boolean hasJson = fullCode.contains("import json");
+
+        // استخرج parameters من الكود
+        java.util.regex.Pattern paramPat = java.util.regex.Pattern.compile(
+            "def " + name + "\\(([^)]*)\\)");
+        java.util.regex.Matcher paramMat = paramPat.matcher(fullCode);
+        String params = "";
+        if (paramMat.find()) params = paramMat.group(1);
+        
+        // أول parameter
+        String firstParam = params.contains(",") ? 
+            params.split(",")[0].trim() : params.trim();
+        if (firstParam.contains(":")) firstParam = firstParam.split(":")[0].trim();
+        if (firstParam.equals("self") || firstParam.equals("cls"))
+            firstParam = params.contains(",") ? params.split(",")[1].trim() : "value";
+
+        // اقتراح بناءً على الاسم والـ context
+        if (n.contains("email")) {
+            return "import re\n    pattern = r\'[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}\'\n    return bool(re.match(pattern, str(" + firstParam + ")))";
+        }
+        if (n.contains("hash") || n.contains("encrypt")) {
+            return "import hashlib\n    return hashlib.sha256(str(" + firstParam + ").encode()).hexdigest()";
+        }
+        if (n.contains("password") && (n.startsWith("is_") || n.startsWith("check_") || n.startsWith("validate_"))) {
+            return "import re\n    p = str(" + firstParam + ")\n    return (len(p) >= 8 and bool(re.search(r\'[A-Z]\', p)) and bool(re.search(r\'\\d\', p)))";
+        }
+        if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_")) {
+            return "return bool(" + firstParam + ") if " + firstParam + " is not None else False";
+        }
+        if (n.contains("calculate") || n.contains("sum") || n.contains("total")) {
+            return "return sum(" + firstParam + ") if " + firstParam + " else 0";
+        }
+        if (n.contains("average") || n.contains("avg") || n.contains("mean")) {
+            return "return sum(" + firstParam + ") / len(" + firstParam + ") if " + firstParam + " else 0";
+        }
+        if (n.contains("read") || n.contains("load")) {
+            return "import os\n    if not os.path.exists(" + firstParam + "): return None\n    with open(" + firstParam + ", \'r\', encoding=\'utf-8\') as f:\n        return f.read()";
+        }
+        if (n.contains("write") || n.contains("save")) {
+            String dataParam = params.contains(",") ? params.split(",")[1].trim() : "data";
+            if (dataParam.contains(":")) dataParam = dataParam.split(":")[0].trim();
+            return "import os\n    os.makedirs(os.path.dirname(" + firstParam + "), exist_ok=True) if os.path.dirname(" + firstParam + ") else None\n    with open(" + firstParam + ", \'w\', encoding=\'utf-8\') as f:\n        f.write(str(" + dataParam + "))\n    return True";
+        }
+        if (n.contains("find") || n.contains("search") || n.contains("get")) {
+            return "return next((" + firstParam + " for " + firstParam + " in " + firstParam + "s if " + firstParam + " == " + firstParam + "), None)";
+        }
+        if (n.contains("palindrome")) {
+            return "s = str(" + firstParam + ").lower().replace(' ', '')\n    return s == s[::-1]";
+        }
+        if (n.contains("sort")) {
+            return "return sorted(" + firstParam + ")";
+        }
+        if (n.contains("unique") || n.contains("distinct")) {
+            return "return list(dict.fromkeys(" + firstParam + "))";
+        }
+        if (n.contains("json") || n.contains("parse")) {
+            return "import json\n    try:\n        return json.loads(str(" + firstParam + "))\n    except:\n        return None";
+        }
+        if (n.contains("log")) {
+            return "from datetime import datetime\n    print(f\'[{datetime.now().strftime(\\"%%Y-%%m-%%d %%H:%%M:%%S\\")}] {" + firstParam + "}\')\n    return True";
+        }
+        if (n.contains("send") || n.contains("email") && n.contains("send")) {
+            return "# أضف إعدادات SMTP هنا\n    return {\'status\': \'pending\', \'to\': " + firstParam + "}";
+        }
+        
+        // افتراضي
+        return "# TODO: implement " + name + "\n    raise NotImplementedError(f\'" + name + " not implemented\')";
+    }
+
     private static String suggest(String name) {
         String n = name.toLowerCase();
         if (n.matches("^(is_|has_|can_|validate_|check_|verify_).*"))
