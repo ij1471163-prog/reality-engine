@@ -39,7 +39,7 @@ public class StubDetector {
     }
 
     // تحليل context الكود لاقتراح أفضل
-    private static String suggestWithContext(String name, String fullCode) {
+    public static String suggestWithContext(String name, String fullCode) {
         String n = name.toLowerCase();
 
         boolean hasRe = fullCode.contains("import re");
