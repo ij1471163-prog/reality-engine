@@ -59,11 +59,11 @@ public class StubDetector {
 
         // email validation
         if (n.contains("email") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_")))
-            return "import re\n    return bool(re.match(r\"^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$\", str(" + p1 + ")))";
+            return "import re\nreturn bool(re.match(r\"^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$\", str(" + p1 + ")))";
 
         // hash password
         if (n.contains("hash") && n.contains("password"))
-            return "import hashlib\n    return hashlib.sha256(str(" + p1 + ").encode(\"utf-8\")).hexdigest()";
+            return "import hashlib\nreturn hashlib.sha256(str(" + p1 + ").encode(\"utf-8\")).hexdigest()";
 
         // hash / encrypt general
         if (n.contains("hash") || n.contains("encrypt") || n.contains("digest"))
@@ -75,7 +75,7 @@ public class StubDetector {
 
         // palindrome
         if (n.contains("palindrome"))
-            return "s = str(" + p1 + ").lower().replace(\" \", \"\")\n    return s == s[::-1]";
+            return "s = str(" + p1 + ").lower().replace(\" \", \"\")\nreturn s == s[::-1]";
 
         // generic validate / check / is / has
         if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_"))
