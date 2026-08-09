@@ -55,8 +55,15 @@ public class ApprovalWorkflow {
         // 3. Generate suggestion
         item.stage    = Stage.ANALYZING;
         item.progress = 30;
-        // استخدم السياق الكامل للاقتراح الذكي
+        // تحليل السياق أولاً
+        ContextAnalyzer.CodeContext ctx = ContextAnalyzer.analyze(fullCode, stub.name);
         String suggestion = StubDetector.suggestWithContext(stub.name, fullCode);
+
+        // تنقيح الاقتراح بناءً على السياق
+        java.util.List<String> params = ctx.functionParams.getOrDefault(stub.name, new java.util.ArrayList<>());
+        if (!params.isEmpty()) {
+            suggestion = ContextAnalyzer.refineSuggestion(suggestion, ctx, params.get(0));
+        }
         item.after = suggestion;
 
         // 4. Security check on suggestion
