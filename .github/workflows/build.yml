@@ -33,7 +33,6 @@ jobs:
       - name: Build Debug
         if: ${{ inputs.build_target == 'debug' }}
         working-directory: android
-        env:
         run: ./gradlew assembleDebug --no-daemon -PAI_KEY="${{ secrets.AI_KEY }}"
 
       - name: Build Release
@@ -44,10 +43,10 @@ jobs:
           KEYSTORE_PASS:   ${{ secrets.KEYSTORE_PASS }}
           KEY_ALIAS:       ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD:    ${{ secrets.KEY_PASSWORD }}
-          AI_KEY:          ${{ secrets.AI_KEY }}
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
           ./gradlew assembleRelease --no-daemon \
+            -PAI_KEY="${{ secrets.AI_KEY }}" \
             -Pandroid.injected.signing.store.file=$(pwd)/keystore.jks \
             -Pandroid.injected.signing.store.password=$KEYSTORE_PASS \
             -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
