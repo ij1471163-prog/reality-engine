@@ -80,19 +80,6 @@ public class AnalysisActivity extends AppCompatActivity {
 
         btnCancel.setOnClickListener(v -> finish());
 
-                }
-                @Override
-                public void onError(String error) {
-                    runOnUiThread(() -> {
-                        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
-                        btnAI.setEnabled(true);
-                        android.widget.Toast.makeText(AnalysisActivity.this,
-                            "خطأ: " + error, android.widget.Toast.LENGTH_LONG).show();
-                    });
-                }
-            });
-        });
-
         btnProceed.setOnClickListener(v -> {
             if (report.stubs.isEmpty()) {
                 Toast.makeText(this, "لا دوال ناقصة", Toast.LENGTH_SHORT).show();
