@@ -57,10 +57,10 @@ public class StubDetector {
             firstParam = params.contains(",") ? params.split(",")[1].trim() : "value";
 
         if (n.contains("email") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_"))) {
-            return "import re\n    p = r\"[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}\"\n    return bool(re.match(p, str(" + firstParam + ")))";
+            return "import re\n    return bool(re.match(r\"[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}\", str(" + firstParam + ")))";
         }
         if (n.contains("hash") || (n.contains("password") && n.contains("hash"))) {
-            return "import hashlib\n    return hashlib.sha256(str(" + firstParam + ").encode()).hexdigest()";
+            return "import hashlib; return hashlib.sha256(str(" + firstParam + ").encode()).hexdigest()";
         }
         if (n.contains("password") && (n.startsWith("is_") || n.startsWith("check_") || n.startsWith("validate_"))) {
             return "p = str(" + firstParam + ")\n    return len(p) >= 8 and p != p.lower() and any(c.isdigit() for c in p)";
@@ -92,7 +92,7 @@ public class StubDetector {
             return "with open(" + firstParam + ", \"w\") as f:\n        f.write(str(" + dataParam + "))\n    return True";
         }
         if (n.contains("find") || n.contains("search") || n.contains("get")) {
-            return "return next((x for x in " + firstParam + "s if x == " + firstParam + "), None)";
+            return "return next((x for x in users if x == " + firstParam + "), None)";
         }
         if (n.contains("json") || n.contains("parse")) {
             return "import json\n    try:\n        return json.loads(str(" + firstParam + "))\n    except Exception:\n        return None";
