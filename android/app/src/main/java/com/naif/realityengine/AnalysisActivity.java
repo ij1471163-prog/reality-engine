@@ -151,6 +151,3 @@ public class AnalysisActivity extends AppCompatActivity {
                 startActivity(intent);
             })
             .show();
-    }
-
-}
