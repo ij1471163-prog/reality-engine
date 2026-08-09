@@ -64,13 +64,13 @@ public class StubDetector {
 
         // اقتراح بناءً على الاسم والـ context
         if (n.contains("email")) {
-            return "import re\n    pattern = r\'[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}\'\n    return bool(re.match(pattern, str(" + firstParam + ")))";
+            return "import re\n    pattern = r\"[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}\"\n    return bool(re.match(pattern, str(" + firstParam + ")))"; 
         }
         if (n.contains("hash") || n.contains("encrypt")) {
             return "import hashlib\n    return hashlib.sha256(str(" + firstParam + ").encode()).hexdigest()";
         }
         if (n.contains("password") && (n.startsWith("is_") || n.startsWith("check_") || n.startsWith("validate_"))) {
-            return "import re\n    p = str(" + firstParam + ")\n    return (len(p) >= 8 and bool(re.search(r\'[A-Z]\', p)) and bool(re.search(r\'\\d\', p)))";
+            return "import re\n    p = str(" + firstParam + ")\n    return len(p) >= 8 and p != p.lower() and any(c.isdigit() for c in p)"; 
         }
         if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_")) {
             return "return bool(" + firstParam + ") if " + firstParam + " is not None else False";
@@ -82,12 +82,12 @@ public class StubDetector {
             return "return sum(" + firstParam + ") / len(" + firstParam + ") if " + firstParam + " else 0";
         }
         if (n.contains("read") || n.contains("load")) {
-            return "import os\n    if not os.path.exists(" + firstParam + "): return None\n    with open(" + firstParam + ", \'r\', encoding=\'utf-8\') as f:\n        return f.read()";
+            return "import os\n    if not os.path.exists(" + firstParam + "): return None\n    with open(" + firstParam + ") as f:\n        return f.read()"; 
         }
         if (n.contains("write") || n.contains("save")) {
             String dataParam = params.contains(",") ? params.split(",")[1].trim() : "data";
             if (dataParam.contains(":")) dataParam = dataParam.split(":")[0].trim();
-            return "import os\n    os.makedirs(os.path.dirname(" + firstParam + "), exist_ok=True) if os.path.dirname(" + firstParam + ") else None\n    with open(" + firstParam + ", \'w\', encoding=\'utf-8\') as f:\n        f.write(str(" + dataParam + "))\n    return True";
+            return "import os\n    with open(" + firstParam + ", \"w\") as f:\n        f.write(str(" + dataParam + "))\n    return True"; 
         }
         if (n.contains("find") || n.contains("search") || n.contains("get")) {
             return "return next((" + firstParam + " for " + firstParam + " in " + firstParam + "s if " + firstParam + " == " + firstParam + "), None)";
@@ -108,7 +108,7 @@ public class StubDetector {
             return "from datetime import datetime\n    print(str(" + firstParam + "))\n    return True";
         }
             return "# SMTP not configured\n    return {\"status\": \"pending\", \"to\": \"" + firstParam + "\"}"; 
-            return "# أضف إعدادات SMTP هنا\n    return {\'status\': \'pending\', \'to\': " + firstParam + "}";
+            return "# SMTP not configured\n    return {\"status\": \"pending\", \"to\": \"" + firstParam + "\"}"; 
         }
         
         // افتراضي
