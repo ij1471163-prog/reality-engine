@@ -105,7 +105,7 @@ public class StubDetector {
             return "import json\n    try:\n        return json.loads(str(" + firstParam + "))\n    except:\n        return None";
         }
         if (n.contains("log")) {
-            return "from datetime import datetime\n    print(f\'[{datetime.now().strftime(\\"%%Y-%%m-%%d %%H:%%M:%%S\\")}] {" + firstParam + "}\')\n    return True";
+            return "from datetime import datetime\n    print(str(" + firstParam + "))\n    return True";
         }
         if (n.contains("send") || n.contains("email") && n.contains("send")) {
             return "# أضف إعدادات SMTP هنا\n    return {\'status\': \'pending\', \'to\': " + firstParam + "}";
