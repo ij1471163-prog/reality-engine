@@ -123,8 +123,8 @@ public class StubDetector {
 
         // log / debug
         if (n.contains("log") || n.contains("debug"))
-            return "print(f\"[LOG] {" + p1 + "}\")
-    return True";
+            return "print(str(" + p1 + "))\n    return True";
+
 
         // send / notify
         if (n.contains("send") || n.contains("notify"))
