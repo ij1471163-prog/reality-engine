@@ -12,7 +12,7 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
-        buildConfigField "String", "AI_KEY", "\"" + (System.getenv("AI_KEY") ?: "no-key") + "\""
+        buildConfigField "String", "AI_KEY", "\"" + (project.findProperty("AI_KEY") ?: System.getenv("AI_KEY") ?: "") + "\""
     }
 
     signingConfigs {
