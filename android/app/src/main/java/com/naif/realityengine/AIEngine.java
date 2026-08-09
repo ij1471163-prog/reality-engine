@@ -26,7 +26,7 @@ public class AIEngine {
                 String result = callAPI(prompt);
                 callback.onResult(result);
             } catch (Exception e) {
-                callback.onError("خطأ في الاتصال: " + e.getMessage());
+                callback.onError("خطأ: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }).start();
     }
