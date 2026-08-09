@@ -460,6 +460,6 @@ public class AIAnalysisActivity extends AppCompatActivity {
     }
 
     private void setTextStyle(TextView tv, int style) {
-        tv.setTypeface(tv.getTypeface(), style);
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
     }
 }
