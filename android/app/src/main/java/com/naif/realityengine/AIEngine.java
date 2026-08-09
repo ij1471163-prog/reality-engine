@@ -32,21 +32,32 @@ public class AIEngine {
     }
 
     private static String buildPrompt(String code, String fileName) {
-        return "أنت محلل كود متخصص. حلّل هذا الملف بدقة:\n\n" +
-            "اسم الملف: " + fileName + "\n\n" +
+        return "أنت Senior Software Engineer خبير في Python وJavaScript وHTML.\n" +
+            "مهمتك: تحليل الكود التالي وإصلاح كل دالة ناقصة بكود حقيقي يعمل.\n\n" +
+            "قواعد صارمة:\n" +
+            "1. اقرأ توقيع الدالة واستخدم نفس أسماء المعاملات حرفياً\n" +
+            "   مثال: def validate_email(email) → استخدم email وليس value أو data\n" +
+            "2. الكود يجب أن يعمل بدون NameError أو IndentationError أو SyntaxError\n" +
+            "3. لا تُعدّل الدوال المكتملة\n" +
+            "4. استخدم المكتبات المناسبة (re, hashlib, os, json)\n" +
+            "5. كل متغير تستخدمه يجب أن يكون معرّفاً\n\n" +
+            "أمثلة صحيحة:\n" +
+            "def validate_email(email):\n" +
+            "    import re\n" +
+            "    return bool(re.match(r\'[\\w.]+@[\\w.]+\\.[a-z]{2,}\', str(email)))\n\n" +
+            "def hash_password(password):\n" +
+            "    import hashlib\n" +
+            "    return hashlib.sha256(password.encode()).hexdigest()\n\n" +
+            "def calculate_total(items):\n" +
+            "    return sum(items) if items else 0\n\n" +
+            "الملف: " + fileName + "\n\n" +
             "```\n" + code + "\n```\n\n" +
-            "ابحث عن:\n" +
-            "1. الدوال الناقصة (pass / NotImplementedError)\n" +
-            "2. الكود الوهمي أو المحاكي (Mock/Fake)\n" +
-            "3. الأخطاء المنطقية\n" +
-            "4. المشاكل الأمنية\n" +
-            "5. أماكن التحسين\n\n" +
-            "لكل مشكلة أعطني:\n" +
-            "- السطر\n" +
-            "- وصف المشكلة\n" +
-            "- الكود المقترح\n" +
-            "- سبب الاقتراح\n\n" +
-            "أجب بالعربي. لا تعدل أي شيء مباشرة — فقط اقترح.";
+            "مهم: أرجع كل اقتراح بهذا التنسيق فقط:\n" +
+            "FUNCTION: اسم_الدالة\n" +
+            "BEFORE:\n```\nالكود القديم\n```\n" +
+            "AFTER:\n```\nالكود المصلح الكامل\n```\n" +
+            "REASON: سبب التعديل\n" +
+            "---\n";
     }
 
     private static String callAPI(String prompt) throws Exception {
