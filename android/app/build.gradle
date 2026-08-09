@@ -18,9 +18,9 @@ android {
     signingConfigs {
         release {
             storeFile file("../../reality-engine.keystore")
-            storePassword System.getenv("KEYSTORE_PASS") ?: { throw new GradleException("KEYSTORE_PASS غير معرّف") }()
+            storePassword System.getenv("KEYSTORE_PASS") ?: ""
             keyAlias System.getenv("KEY_ALIAS") ?: "reality-engine-key"
-            keyPassword System.getenv("KEY_PASSWORD") ?: { throw new GradleException("KEY_PASSWORD missing") }()
+            keyPassword System.getenv("KEY_PASSWORD") ?: ""
         }
     }
 
