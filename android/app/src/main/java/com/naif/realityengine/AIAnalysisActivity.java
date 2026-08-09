@@ -117,22 +117,7 @@ public class AIAnalysisActivity extends AppCompatActivity {
         startActivityForResult(intent, PICK_FILE);
     }
 
-    @Override
-    protected void onActivityResult(int req, int res, Intent data) {
-        super.onActivityResult(req, res, data);
-        if (req == PICK_FILE && res == RESULT_OK && data != null) {
-            Uri uri = data.getData();
-            fileName = uri.getLastPathSegment();
-            fileCode = readFile(uri);
-            originalCode = fileCode;
 
-            if (!fileCode.isEmpty()) {
-                tvStatus.setText("✅ " + fileName + " — " + fileCode.split("\n").length + " سطر");
-                Button btnAnalyze = findViewById(android.R.id.button1);
-                if (btnAnalyze != null) btnAnalyze.setEnabled(true);
-            }
-        }
-    }
 
     private void runAI(Button btnAnalyze) {
         // Legal check
