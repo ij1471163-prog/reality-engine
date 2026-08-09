@@ -364,31 +364,50 @@ public class AIAnalysisActivity extends AppCompatActivity {
         showCurrentProposal();
     }
 
+    private static final int SAVE_AI_FILE = 98;
+
     private void saveAndFinish() {
-        try {
-            File dir = new File(
-                Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DOWNLOADS), "RealityEngine");
-            if (!dir.exists()) dir.mkdirs();
+        Toast.makeText(this,
+            "✅ موافق: " + approved + " | مرفوض: " + rejected +
+            "\nاختر مكان الحفظ",
+            Toast.LENGTH_SHORT).show();
 
-            // Fixed file
-            File fixed = new File(dir, "ai_fixed_" + fileName);
-            new FileWriter(fixed).write(fileCode);
+        android.content.Intent intent = new android.content.Intent(
+            android.content.Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+        intent.setType("text/plain");
+        intent.putExtra(android.content.Intent.EXTRA_TITLE, "ai_fixed_" + fileName);
+        startActivityForResult(intent, SAVE_AI_FILE);
+    }
 
-            // Original file
-            File orig = new File(dir, "ai_original_" + fileName);
-            new FileWriter(orig).write(originalCode);
-
-            Toast.makeText(this,
-                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected +
-                "\n📁 Downloads/RealityEngine/ai_fixed_" + fileName,
-                Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            Toast.makeText(this,
-                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected,
-                Toast.LENGTH_LONG).show();
+    @Override
+    protected void onActivityResult(int req, int res, android.content.Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == PICK_FILE) {
+            if (res == RESULT_OK && data != null) {
+                Uri uri = data.getData();
+                fileName = uri.getLastPathSegment();
+                fileCode = readFile(uri);
+                originalCode = fileCode;
+                if (!fileCode.isEmpty()) {
+                    tvStatus.setText("✅ " + fileName + " — " + fileCode.split("\n").length + " سطر");
+                    Button btnAnalyze = findViewById(android.R.id.button1);
+                    if (btnAnalyze != null) btnAnalyze.setEnabled(true);
+                }
+            }
+        } else if (req == SAVE_AI_FILE) {
+            if (res == RESULT_OK && data != null) {
+                try {
+                    java.io.OutputStream os = getContentResolver().openOutputStream(data.getData());
+                    os.write(fileCode.getBytes("UTF-8"));
+                    os.close();
+                    Toast.makeText(this, "💾 تم الحفظ بنجاح", Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                    Toast.makeText(this, "خطأ: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            }
+            finish();
         }
-        finish();
     }
 
     private void showRawResultWithAction(String aiResult) {
