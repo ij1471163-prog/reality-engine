@@ -161,6 +161,13 @@ public class AnalysisActivity extends AppCompatActivity {
                     fw.close();
                 } catch (Exception e) { e.printStackTrace(); }
                 Intent intent = new Intent(this, ApprovalActivity.class);
+                // كتابة temp_code.txt عشان ApprovalActivity يقدر يقرأه
+                try {
+                    java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
+                    java.io.FileWriter fw = new java.io.FileWriter(tmp);
+                    fw.write(fileCode);
+                    fw.close();
+                } catch (Exception ignored) {}
                 intent.putExtra("fileName", fileName);
                 intent.putExtra("useAI", true);
                 startActivity(intent);
