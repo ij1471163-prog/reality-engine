@@ -34,8 +34,7 @@ jobs:
         if: ${{ inputs.build_target == 'debug' }}
         working-directory: android
         env:
-          AI_KEY: ${{ secrets.AI_KEY }}
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon -PAI_KEY="${{ secrets.AI_KEY }}"
 
       - name: Build Release
         if: ${{ inputs.build_target == 'release' }}
