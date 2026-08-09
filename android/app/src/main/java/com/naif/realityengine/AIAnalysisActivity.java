@@ -181,12 +181,13 @@ public class AIAnalysisActivity extends AppCompatActivity {
             for (StubDetector.StubFunction s : stubs)
                 sb.append("- ").append(s.name).append("() السطر ").append(s.line).append("\n");
         }
-        sb.append("\nلكل دالة ناقصة اكتب:\n");
+        sb.append("\nمهم: أرجع كل اقتراح بهذا التنسيق الحرفي فقط (لا تكتب أي شيء خارجه):\n");
         sb.append("FUNCTION: اسم_الدالة\n");
-        sb.append("BEFORE:\n```\ndef اسم_الدالة(...):\n    pass\n```\n");
-        sb.append("AFTER:\n```\ndef اسم_الدالة(...):\n    # الكود الحقيقي\n```\n");
-        sb.append("REASON: سبب الاقتراح بالعربي\n");
+        sb.append("BEFORE:\n```\nالكود القديم\n```\n");
+        sb.append("AFTER:\n```\nالكود المصلح الكامل\n```\n");
+        sb.append("REASON: سبب التعديل\n");
         sb.append("---\n");
+        sb.append("ابحث عن كل مشكلة: دوال ناقصة، أخطاء منطقية، تحسينات. اكتب اقتراح لكل مشكلة.\n");
         return sb.toString();
     }
 
