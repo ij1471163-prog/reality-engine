@@ -250,7 +250,7 @@ public class AIAnalysisActivity extends AppCompatActivity {
         tvFuncName = new TextView(this);
         tvFuncName.setTextColor(0xFF58A6FF);
         tvFuncName.setTextSize(16);
-        tvFuncName.setTextStyle(android.graphics.Typeface.BOLD);
+        tvFuncName.setTypeface(null, android.graphics.Typeface.BOLD);
         tvFuncName.setPadding(0, 8, 0, 8);
         layoutMain.addView(tvFuncName);
 
