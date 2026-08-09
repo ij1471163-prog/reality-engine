@@ -163,41 +163,39 @@ public class ApprovalActivity extends AppCompatActivity {
     }
 
     // ── Save files to Downloads/RealityEngine ─────────────
+    private static final int SAVE_FILE = 99;
+
     private void saveFiles() {
-        try {
-            // Create RealityEngine folder in Downloads
-            // حفظ في Downloads العام - يبقى بعد التحديث
-            File dir = new File(
-                android.os.Environment.getExternalStoragePublicDirectory(
-                android.os.Environment.DIRECTORY_DOWNLOADS), "RealityEngine");
-            if (!dir.exists()) dir.mkdirs();
+        android.content.Intent intent = new android.content.Intent(
+            android.content.Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+        intent.setType("text/plain");
+        intent.putExtra(android.content.Intent.EXTRA_TITLE, "fixed_" + fileName);
+        startActivityForResult(intent, SAVE_FILE);
+    }
 
-            // Save fixed file
-            String fixedName = "fixed_" + fileName;
-            File fixedFile = new File(dir, fixedName);
-            FileWriter fw = new FileWriter(fixedFile);
-            fw.write(code);
-            fw.close();
-
-            // Save original file
-            String origName = "original_" + fileName;
-            File origFile = new File(dir, origName);
-            FileWriter origFw = new FileWriter(origFile);
-            origFw.write(originalCode);
-            origFw.close();
-
-            Toast.makeText(this,
-                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected +
-                "\n📁 Downloads/RealityEngine/" + fixedName,
-                Toast.LENGTH_LONG).show();
-
-        } catch (Exception e) {
-            Toast.makeText(this,
-                "✅ انتهى — موافق: " + approved + " | مرفوض: " + rejected +
-                "\n⚠️ خطأ في الحفظ: " + e.getMessage(),
-                Toast.LENGTH_LONG).show();
+    @Override
+    protected void onActivityResult(int req, int res, android.content.Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == SAVE_FILE) {
+            if (res == RESULT_OK && data != null) {
+                try {
+                    java.io.OutputStream os = getContentResolver().openOutputStream(data.getData());
+                    os.write(code.getBytes("UTF-8"));
+                    os.close();
+                    Toast.makeText(this,
+                        "✅ موافق: " + approved + " | مرفوض: " + rejected + "\n💾 تم الحفظ",
+                        Toast.LENGTH_LONG).show();
+                } catch (Exception e) {
+                    Toast.makeText(this, "خطأ: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            } else {
+                Toast.makeText(this,
+                    "✅ موافق: " + approved + " | مرفوض: " + rejected,
+                    Toast.LENGTH_SHORT).show();
+            }
+            finish();
         }
-        finish();
     }
 
     // ── Show error ────────────────────────────────────────
