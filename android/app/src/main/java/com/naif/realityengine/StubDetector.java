@@ -42,69 +42,96 @@ public class StubDetector {
     public static String suggestWithContext(String name, String fullCode) {
         String n = name.toLowerCase();
 
-        boolean hasRe = fullCode.contains("import re");
-        boolean hasHashlib = fullCode.contains("import hashlib");
-        boolean hasOs = fullCode.contains("import os");
+        // استخرج parameters الحقيقية
+        java.util.regex.Matcher pm = java.util.regex.Pattern
+            .compile("def " + java.util.regex.Pattern.quote(name) + "\\(([^)]*)\\)")
+            .matcher(fullCode);
+        java.util.List<String> paramList = new java.util.ArrayList<>();
+        if (pm.find()) {
+            for (String p : pm.group(1).split(",")) {
+                String pname = p.trim().split(":")[0].trim().split("=")[0].trim();
+                if (!pname.equals("self") && !pname.equals("cls") && !pname.isEmpty())
+                    paramList.add(pname);
+            }
+        }
+        String p1 = paramList.size() > 0 ? paramList.get(0) : "value";
+        String p2 = paramList.size() > 1 ? paramList.get(1) : "items";
 
-        java.util.regex.Pattern paramPat = java.util.regex.Pattern.compile("def " + name + "\\(([^)]*)\\)");
-        java.util.regex.Matcher paramMat = paramPat.matcher(fullCode);
-        String params = "";
-        if (paramMat.find()) params = paramMat.group(1);
+        // email validation
+        if (n.contains("email") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_")))
+            return "import re\n    return bool(re.match(r\"^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$\", str(" + p1 + ")))";
 
-        String firstParam = params.contains(",") ? params.split(",")[0].trim() : params.trim();
-        if (firstParam.contains(":")) firstParam = firstParam.split(":")[0].trim();
-        if (firstParam.equals("self") || firstParam.equals("cls") || firstParam.isEmpty())
-            firstParam = params.contains(",") ? params.split(",")[1].trim() : "value";
+        // hash password
+        if (n.contains("hash") && n.contains("password"))
+            return "import hashlib\n    return hashlib.sha256(str(" + p1 + ").encode(\"utf-8\")).hexdigest()";
 
-        if (n.contains("email") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_"))) {
-            return "import re\n    return bool(re.match(r\"[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}\", str(" + firstParam + ")))";
-        }
-        if (n.contains("hash") || (n.contains("password") && n.contains("hash"))) {
-            return "import hashlib; return hashlib.sha256(str(" + firstParam + ").encode()).hexdigest()";
-        }
-        if (n.contains("password") && (n.startsWith("is_") || n.startsWith("check_") || n.startsWith("validate_"))) {
-            return "p = str(" + firstParam + ")\n    return len(p) >= 8 and p != p.lower() and any(c.isdigit() for c in p)";
-        }
-        if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_")) {
-            return "return bool(" + firstParam + ") if " + firstParam + " is not None else False";
-        }
-        if (n.contains("palindrome")) {
-            return "s = str(" + firstParam + ").lower().replace(\" \", \"\")\n    return s == s[::-1]";
-        }
-        if (n.contains("calculate") || n.contains("sum") || n.contains("total")) {
-            return "return sum(" + firstParam + ") if " + firstParam + " else 0";
-        }
-        if (n.contains("average") || n.contains("avg") || n.contains("mean")) {
-            return "return sum(" + firstParam + ") / len(" + firstParam + ") if " + firstParam + " else 0";
-        }
-        if (n.contains("sort")) {
-            return "return sorted(" + firstParam + ")";
-        }
-        if (n.contains("unique") || n.contains("distinct")) {
-            return "return list(dict.fromkeys(" + firstParam + "))";
-        }
-        if (n.contains("read") || n.contains("load")) {
-            return "import os\n    if not os.path.exists(" + firstParam + "): return None\n    with open(" + firstParam + ") as f:\n        return f.read()";
-        }
-        if (n.contains("write") || n.contains("save")) {
-            String dataParam = params.contains(",") ? params.split(",")[1].trim() : "data";
-            if (dataParam.contains(":")) dataParam = dataParam.split(":")[0].trim();
-            return "with open(" + firstParam + ", \"w\") as f:\n        f.write(str(" + dataParam + "))\n    return True";
-        }
-        if (n.contains("find") || n.contains("search") || n.contains("get")) {
-            return "return next((x for x in users if x == " + firstParam + "), None)";
-        }
-        if (n.contains("json") || n.contains("parse")) {
-            return "import json\n    try:\n        return json.loads(str(" + firstParam + "))\n    except Exception:\n        return None";
-        }
-        if (n.contains("log")) {
-            return "print(str(" + firstParam + "))\n    return True";
-        }
-        if (n.contains("send") || n.contains("email")) {
-            return "return {\"status\": \"pending\", \"to\": str(" + firstParam + ")}";
-        }
+        // hash / encrypt general
+        if (n.contains("hash") || n.contains("encrypt") || n.contains("digest"))
+            return "import hashlib\n    return hashlib.sha256(str(" + p1 + ").encode()).hexdigest()";
 
-        return "raise NotImplementedError(\"" + name + " not implemented\")";
+        // validate password strength
+        if (n.contains("password") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_")))
+            return "p = str(" + p1 + ")\n    return len(p) >= 8 and any(c.isupper() for c in p) and any(c.isdigit() for c in p)";
+
+        // palindrome
+        if (n.contains("palindrome"))
+            return "s = str(" + p1 + ").lower().replace(\" \", \"\")\n    return s == s[::-1]";
+
+        // generic validate / check / is / has
+        if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_"))
+            return "return " + p1 + " is not None and bool(" + p1 + ")";
+
+        // calculate / total / count
+        if (n.contains("calculate") || n.contains("total") || n.contains("count"))
+            return "return sum(float(x) if isinstance(x, dict) else x for x in " + p1 + ") if " + p1 + " else 0";
+
+        // average / mean
+        if (n.contains("average") || n.contains("avg") || n.contains("mean"))
+            return "items = list(" + p1 + ")\n    return sum(items) / len(items) if items else 0.0";
+
+        // sort
+        if (n.contains("sort"))
+            return "return sorted(" + p1 + ")";
+
+        // unique / distinct
+        if (n.contains("unique") || n.contains("distinct") || n.contains("dedup"))
+            return "return list(dict.fromkeys(" + p1 + "))";
+
+        // read / load
+        if (n.contains("read") || n.contains("load"))
+            return "import os\n    if not os.path.exists(str(" + p1 + ")): return None\n    with open(" + p1 + ", \"r\", encoding=\"utf-8\") as f:\n        return f.read()";
+
+        // write / save
+        if (n.contains("write") || n.contains("save"))
+            return "with open(" + p1 + ", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(" + p2 + "))\n    return True";
+
+        // find / search / fetch
+        if (n.contains("find") || n.contains("search") || n.contains("fetch"))
+            return "return next((x for x in " + p2 + " if x == " + p1 + "), None)";
+
+        // delete / remove
+        if (n.contains("delete") || n.contains("remove"))
+            return "return [x for x in " + p2 + " if x != " + p1 + "]";
+
+        // format / convert / parse
+        if (n.contains("format") || n.contains("convert") || n.contains("parse"))
+            return "return str(" + p1 + ").strip()";
+
+        // json
+        if (n.contains("json"))
+            return "import json\n    try:\n        return json.loads(str(" + p1 + "))\n    except Exception:\n        return None";
+
+        // log / debug
+        if (n.contains("log") || n.contains("debug"))
+            return "print(f\"[LOG] {" + p1 + "}\")
+    return True";
+
+        // send / notify
+        if (n.contains("send") || n.contains("notify"))
+            return "return {\"status\": \"pending\", \"to\": str(" + p1 + "), \"sent\": False}";
+
+        // default - لا تخمن
+        return "raise NotImplementedError(f\"" + name + "() not implemented - requires manual implementation\")";
     }
 
 
