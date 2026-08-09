@@ -1,54 +1,62 @@
-# ── R8 Full Mode ─────────────────────────────────────────
--allowaccessmodification
--repackageclasses 'r'
+# ── Reality Engine — ProGuard Rules ──────────────────────
 
-# ── تشويش كودنا كامل ──────────────────────────────────
--keep class com.naif.realityengine.MainActivity { *; }
--keep class com.naif.realityengine.*Activity { *; }
+# ── Android Components (Google Required) ─────────────────
+-keep public class * extends android.app.Activity
+-keep public class * extends android.app.Service
+-keep public class * extends android.content.BroadcastReceiver
+-keep public class * extends android.content.ContentProvider
 
-# ── حذف debug info من release ─────────────────────────
--renamesourcefileattribute SourceFile
--keepattributes Exceptions,InnerClasses,Signature,Deprecated,EnclosingMethod
+# ── Reality Engine Classes ────────────────────────────────
+-keep class com.naif.realityengine.BuildConfig { *; }
 
-# ── AndroidX + Material ───────────────────────────────
--keep class androidx.** { *; }
--keep interface androidx.** { *; }
--keep class com.google.android.material.** { *; }
--dontwarn androidx.**
--dontwarn com.google.android.material.**
-
-# ── JSON parsing ──────────────────────────────────────
--keepclassmembers class * {
-    @com.google.gson.annotations.SerializedName <fields>;
-}
-
-# ── JavaScript Interface ──────────────────────────────
--keepclassmembers class * {
+# JavascriptInterface (لو ضفنا WebView مستقبلاً)
+-keepclassmembers class com.naif.realityengine.** {
     @android.webkit.JavascriptInterface <methods>;
 }
 
-# ── Enums ─────────────────────────────────────────────
+# ── AndroidX ──────────────────────────────────────────────
+-dontwarn androidx.**
+-keep class androidx.core.app.CoreComponentFactory { *; }
+
+# ── JSON ──────────────────────────────────────────────────
+-keep class org.json.** { *; }
+
+# ── Google Play Billing (للاشتراك المدفوع لاحقاً) ────────
+-keep class com.android.billingclient.api.** { *; }
+-keep interface com.android.billingclient.api.** { *; }
+-dontwarn com.android.billingclient.**
+
+# ── Google Services ───────────────────────────────────────
+-keep class com.google.android.gms.tasks.** { *; }
+-dontwarn com.google.android.gms.**
+
+# ── Annotations + Signatures ──────────────────────────────
+-keepattributes *Annotation*
+-keepattributes Exceptions,InnerClasses,Signature
+
+# ── Enums ─────────────────────────────────────────────────
 -keepclassmembers enum * {
     public static **[] values();
     public static ** valueOf(java.lang.String);
 }
 
-# ── Parcelable ────────────────────────────────────────
+# ── Parcelable ────────────────────────────────────────────
 -keep class * implements android.os.Parcelable {
     public static final android.os.Parcelable$Creator *;
 }
 
-# ── حذف logs في release ──────────────────────────────
+# ── حذف Logs في Release ──────────────────────────────────
 -assumenosideeffects class android.util.Log {
-    public static *** d(...);
-    public static *** v(...);
-    public static *** i(...);
+    public static int d(...);
+    public static int v(...);
+    public static int i(...);
 }
 
-# ── لا lineNumbers في release ────────────────────────
-# نحذف LineNumberTable لصعوبة الهندسة العكسية
--keepattributes Exceptions,Signature
+# ── R8 Optimization ───────────────────────────────────────
+-optimizationpasses 5
+-allowaccessmodification
+-mergeinterfacesaggressively
+-repackageclasses 'r'
 
-# ── لا API keys في الكود ─────────────────────────────
-# AI_KEY يجي من BuildConfig فقط
--keep class com.naif.realityengine.BuildConfig { *; }
+# ── إخفاء Source Info ─────────────────────────────────────
+-renamesourcefileattribute SourceFile
