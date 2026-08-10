@@ -91,6 +91,18 @@ public class AIEngine {
         os.write(body.getBytes(StandardCharsets.UTF_8));
         os.close();
 
+        // تحقق من response code
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            BufferedReader err = new BufferedReader(
+                new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8));
+            StringBuilder errSb = new StringBuilder();
+            String errLine;
+            while ((errLine = err.readLine()) != null) errSb.append(errLine);
+            err.close();
+            throw new Exception("HTTP " + responseCode + ": " + errSb.toString());
+        }
+
         BufferedReader br = new BufferedReader(
             new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
         StringBuilder sb = new StringBuilder();
