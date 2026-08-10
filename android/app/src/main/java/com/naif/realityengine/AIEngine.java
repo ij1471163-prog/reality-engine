@@ -11,7 +11,9 @@ import java.nio.charset.StandardCharsets;
 public class AIEngine {
 
     private static String getKey() {
-        return BuildConfig.AI_KEY;
+        String key = BuildConfig.AI_KEY;
+        android.util.Log.d("AIEngine", "Key length: " + key.length() + " | starts: " + (key.length() > 4 ? key.substring(0,4) : "EMPTY"));
+        return key;
     }
 
     public interface Callback {
