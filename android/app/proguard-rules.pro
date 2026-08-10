@@ -60,3 +60,12 @@
 
 # ── إخفاء Source Info ─────────────────────────────────────
 -renamesourcefileattribute SourceFile
+
+# Keep networking classes
+-keep class java.net.** { *; }
+-keep class javax.net.** { *; }
+-dontwarn java.net.**
+
+# Keep AIEngine
+-keep class com.naif.realityengine.AIEngine { *; }
+-keepclassmembers class com.naif.realityengine.AIEngine { *; }
