@@ -11,9 +11,14 @@ import java.nio.charset.StandardCharsets;
 public class AIEngine {
 
     private static String getKey() {
-        String key = BuildConfig.AI_KEY;
-        android.util.Log.d("AIEngine", "Key length: " + key.length() + " | starts: " + (key.length() > 4 ? key.substring(0,4) : "EMPTY"));
-        return key;
+        // مفتاح مشفر بـ XOR
+        String enc = "3c281e1c291e7b2808217b773a05087b2a17077c3721062d39342f7f25291637";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < enc.length(); i += 2) {
+            int b = Integer.parseInt(enc.substring(i, i+2), 16) ^ 0x4E;
+            sb.append((char) b);
+        }
+        return sb.toString();
     }
 
     public interface Callback {
