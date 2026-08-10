@@ -35,7 +35,9 @@ jobs:
         working-directory: android
         env:
           AI_KEY: ${{ secrets.AI_KEY }}
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          echo "AI_KEY=$AI_KEY" >> ../local.properties
+          ./gradlew assembleDebug --no-daemon -PAI_KEY="$AI_KEY"
 
       - name: Build Release
         if: ${{ inputs.build_target == 'release' }}
