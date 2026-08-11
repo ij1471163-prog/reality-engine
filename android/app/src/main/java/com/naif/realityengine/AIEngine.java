@@ -82,7 +82,7 @@ public class AIEngine {
         // تنظيف الـ prompt من characters خاطئة
         String safePrompt = prompt
             .replace("\\", "\\\\")
-            .replace("\"", "\\\")
+            .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t");
