@@ -79,11 +79,17 @@ public class AIEngine {
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(60000);
 
+        // تنظيف الـ prompt من characters خاطئة
+        String safePrompt = prompt
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t");
+
         String body = "{"
             + "\"model\":\"mistral-small-latest\","
-            + "\"messages\":[{\"role\":\"user\",\"content\":"
-            + "\"" + prompt.replace("\"","\\\"").replace("\n","\\n") + "\""
-            + "}],"
+            + "\"messages\":[{\"role\":\"user\",\"content\":\"" + safePrompt + "\"}],"
             + "\"max_tokens\":2000"
             + "}";
 
