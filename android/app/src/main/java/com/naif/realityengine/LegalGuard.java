@@ -1,24 +1,17 @@
 package com.naif.realityengine;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.regex.Pattern;
+import java.util.*;
+import java.util.regex.*;
 
 public class LegalGuard {
 
     public enum Verdict { LEGAL, ILLEGAL, RESTRICTED }
 
     public static class Violation {
-        public String category;
-        public String description;
-        public String evidence;
+        public String category, description, evidence;
         public boolean critical;
-
-        public Violation(String category, String description, String evidence, boolean critical) {
-            this.category    = category;
-            this.description = description;
-            this.evidence    = evidence;
-            this.critical    = critical;
+        public Violation(String c, String d, String e, boolean cr) {
+            category=c; description=d; evidence=e; critical=cr;
         }
     }
 
@@ -27,42 +20,114 @@ public class LegalGuard {
         public List<Violation> violations;
         public boolean blocked;
         public String userMessage;
-
-        public LegalResult(Verdict verdict, List<Violation> violations) {
-            this.verdict    = verdict;
-            this.violations = violations;
-            this.blocked    = verdict == Verdict.ILLEGAL;
-            this.userMessage = blocked
-                ? "هذا الملف محظور — يحتوي على محتوى غير قانوني"
-                : verdict == Verdict.RESTRICTED
-                ? "تحذير — يحتوي على محتوى مقيد"
-                : "الملف مقبول";
+        public LegalResult(Verdict v, List<Violation> vl) {
+            verdict=v; violations=vl;
+            blocked = v == Verdict.ILLEGAL;
+            userMessage = blocked ? "هذا الملف محظور — يحتوي على محتوى غير قانوني"
+                        : v == Verdict.RESTRICTED ? "تحذير — يحتوي على محتوى مقيد"
+                        : "الملف مقبول";
         }
     }
 
+    // ── Language detection ────────────────────────────────
+    private static String detectLanguage(String code) {
+        if (code.contains("package ") && code.contains("import android.")) return "java_android";
+        if (code.contains("package ") && code.contains("public class "))   return "java";
+        if (code.contains("import React") || code.contains("useState"))    return "jsx";
+        if (code.contains("def ") && code.contains("import "))             return "python";
+        if (code.contains("function ") || code.contains("const ") || code.contains("=>")) return "javascript";
+        if (code.contains("<?php"))  return "php";
+        if (code.contains("#include")) return "cpp";
+        return "unknown";
+    }
+
+    // ── Context check: is this a string literal or comment? ──
+    private static boolean isInStringOrComment(String code, int pos) {
+        String before = code.substring(0, pos);
+        // Check single-line comment
+        int lastNewline = before.lastIndexOf('\n');
+        String currentLine = before.substring(lastNewline + 1);
+        if (currentLine.contains("//") || currentLine.trim().startsWith("#"))
+            return true;
+        // Rough string check
+        long quotes = currentLine.chars().filter(c -> c == '"').count();
+        return quotes % 2 != 0;
+    }
+
+    // ── Rules ─────────────────────────────────────────────
+    // Format: {category, description, pattern, critical, skip_for_languages}
     private static final String[][] RULES = {
-        {"Weapons",    "كود مرتبط بأسلحة أو متفجرات",          "(?i)(bomb|explosive|detonat|C4|TNT|TATP)",          "true"},
-        {"Narcotics",  "كود لتصنيع مواد مخدرة",                "(?i)(synthesize|manufacture).*(meth|fentanyl|heroin)","true"},
-        {"Fraud",      "كود للاحتيال أو التصيد",                "(?i)(phishing|fake.?login|credential.?harvest)",     "true"},
-        {"Malware",    "كود لإنشاء برمجيات خبيثة",             "(?i)(write|create|build).*(virus|ransomware|trojan)","true"},
-        {"Hacking",    "اختراق أجهزة بدون إذن",                "(?i)(hack|crack).*(someone|victim|account)",         "true"},
-        {"Privacy",    "تجسس على أشخاص بدون موافقة",           "(?i)(spy|track).*(without|secret|hidden)",           "true"},
-        {"IP",         "تجاوز تراخيص البرمجيات",               "(?i)(crack|bypass|keygen).*(license|activation)",    "false"},
-        {"Cheating",   "غش في ألعاب أو اختبارات",              "(?i)(aimbot|wallhack|cheat).*(game|player)",         "false"},
+        // أسلحة حقيقية
+        {"Weapons", "كود لتصنيع أسلحة أو متفجرات",
+         "(?i)\\b(synthesize|manufacture|detonate|build).{0,30}(bomb|explosive|C4|TNT|TATP|weapon)",
+         "true", ""},
+
+        // مخدرات
+        {"Narcotics", "كود لتصنيع مواد مخدرة",
+         "(?i)\\b(synthesize|manufacture|cook).{0,30}(meth|fentanyl|heroin|cocaine|drug)",
+         "true", ""},
+
+        // تصيد حقيقي
+        {"Phishing", "صفحة تصيد أو سرقة بيانات",
+         "(?i)(fake.?login|credential.?harvest|phishing.?page|steal.?password)",
+         "true", ""},
+
+        // keylogger حقيقي
+        {"Keylogger", "كود لتسجيل مدخلات المستخدم خفية",
+         "(?i)(keylog|keystroke.capture|hook.keyboard).{0,50}(send|upload|exfil)",
+         "true", "java_android,java"},
+
+        // malware صريح
+        {"Malware", "كود لإنشاء برمجيات خبيثة صريحة",
+         "(?i)(create|build|write).{0,20}(ransomware|rootkit|botnet|trojan.payload)",
+         "true", ""},
+
+        // اختراق بنية تحتية
+        {"Infrastructure", "استهداف بنية تحتية حيوية",
+         "(?i)(attack|exploit|compromise).{0,30}(power.grid|water.supply|hospital.system)",
+         "true", ""},
+
+        // CSAM
+        {"CSAM", "محتوى يستغل الأطفال",
+         "(?i)(child.{0,10}(porn|abuse|exploit)|CSAM|minor.{0,10}sexual)",
+         "true", ""},
     };
 
+    // ── Main check ────────────────────────────────────────
     public static LegalResult check(String code) {
         List<Violation> violations = new ArrayList<>();
+        String lang = detectLanguage(code);
+
+        // Android/Java code — تمريره مباشرة بعد فحص خفيف
+        boolean isAndroid = lang.equals("java_android") || lang.equals("java");
 
         for (String[] rule : RULES) {
-            Pattern p = Pattern.compile(rule[2]);
-            java.util.regex.Matcher m = p.matcher(code);
-            if (m.find()) {
+            String skipLangs = rule[4];
+
+            // تخطي إذا اللغة مستثناة
+            if (!skipLangs.isEmpty()) {
+                boolean skip = false;
+                for (String sl : skipLangs.split(",")) {
+                    if (lang.equals(sl.trim())) { skip = true; break; }
+                }
+                if (skip) continue;
+            }
+
+            Pattern p = Pattern.compile(rule[2], Pattern.DOTALL);
+            Matcher m = p.matcher(code);
+
+            while (m.find()) {
+                // تجاهل لو داخل comment أو string
+                if (isInStringOrComment(code, m.start())) continue;
+
+                String evidence = m.group();
+                if (evidence.length() > 100) evidence = evidence.substring(0, 100);
+
                 violations.add(new Violation(
-                    rule[0], rule[1],
-                    m.group().substring(0, Math.min(80, m.group().length())),
+                    rule[0], rule[1], evidence,
                     Boolean.parseBoolean(rule[3])
                 ));
+                break;
             }
         }
 
