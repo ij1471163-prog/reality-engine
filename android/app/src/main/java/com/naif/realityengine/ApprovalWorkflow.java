@@ -98,6 +98,10 @@ public class ApprovalWorkflow {
         boolean inFunc = false;
         boolean replaced = false;
         int funcIndent = 0;
+        boolean skipBody = false;
+
+        // لو الاقتراح يحتوي def كاملة — استبدل الدالة كلها
+        boolean suggestionHasDef = suggestion.trim().startsWith("def " + funcName);
 
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
@@ -106,7 +110,26 @@ public class ApprovalWorkflow {
             if (!replaced && trimmed.startsWith("def " + funcName + "(")) {
                 inFunc = true;
                 funcIndent = line.indexOf("def");
-                result.append(line).append("\n");
+
+                if (suggestionHasDef) {
+                    // استبدل الدالة كاملة
+                    String indent = " ".repeat(funcIndent);
+                    for (String sl : suggestion.split("\n"))
+                        result.append(indent).append(sl).append("\n");
+                    replaced = true;
+                    skipBody = true;
+                } else {
+                    result.append(line).append("\n");
+                }
+                continue;
+            }
+
+            if (skipBody) {
+                // تخطى جسم الدالة القديمة
+                if (!trimmed.isEmpty() && line.length() - line.stripLeading().length() <= funcIndent) {
+                    skipBody = false;
+                    result.append(line).append("\n");
+                }
                 continue;
             }
 
