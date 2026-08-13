@@ -310,7 +310,11 @@ public class StubDetector {
                 || bodyContent.matches("^return\\s+\"\"\\s*;?$");
 
             if (isEmpty) {
-                boolean exists = stubs.stream().anyMatch(s -> s.name.equals(name));
+                // FIXED: نسخة final من name عشان يصلح استخدامها جوه lambda
+                // (السبب الأصلي لخطأ compile: "local variables referenced
+                // from a lambda expression must be final or effectively final")
+                final String finalName = name;
+                boolean exists = stubs.stream().anyMatch(s -> s.name.equals(finalName));
                 if (!exists) {
                     stubs.add(new StubFunction(
                         name, i + 1, i + 1, endLine + 1, Risk.CONFIRMED,
@@ -468,3 +472,4 @@ public class StubDetector {
         return new StubResult(stubs, totalFunctions);
     }
 }
+
