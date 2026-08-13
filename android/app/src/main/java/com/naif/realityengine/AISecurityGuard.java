@@ -72,7 +72,6 @@ public class AISecurityGuard {
             this.lang = lang;
         }
 
-        // FIXED: now properly handles Python triple-quoted strings
         public boolean isInStringOrComment(int matchStart, int matchEnd) {
             String before = code.substring(0, matchStart);
             boolean inString = false;
@@ -117,7 +116,6 @@ public class AISecurityGuard {
                 }
 
                 if (!inString) {
-                    // Check for triple-quoted strings first
                     if (lang == Language.PYTHON && i + 2 < before.length()
                         && (c == '"' || c == '\'')
                         && before.charAt(i + 1) == c && before.charAt(i + 2) == c) {
@@ -163,7 +161,6 @@ public class AISecurityGuard {
         }
     }
 
-    // FIXED: better JS detection, var alone is not enough for Kotlin
     public static Language detectLanguage(String code) {
         if (code == null || code.trim().isEmpty()) return Language.UNKNOWN;
         String trimmed = code.trim().toLowerCase();
@@ -205,7 +202,6 @@ public class AISecurityGuard {
         return Language.UNKNOWN;
     }
 
-    // FIXED: compares tail from end backwards instead of line-by-line
     public static ScopeValidationResult validateScope(String originalCode, String modifiedCode,
                                                       int startLine, int endLine) {
         if (originalCode == null || modifiedCode == null) {
@@ -218,7 +214,6 @@ public class AISecurityGuard {
         String[] origLines = originalCode.split("\n", -1);
         String[] modLines = modifiedCode.split("\n", -1);
 
-        // Check lines before scope (must be identical)
         for (int i = 0; i < startLine; i++) {
             String origLine = i < origLines.length ? origLines[i] : null;
             String modLine = i < modLines.length ? modLines[i] : null;
@@ -229,7 +224,6 @@ public class AISecurityGuard {
             }
         }
 
-        // Check lines after scope (must be identical) — walk from end backwards
         int origBack = origLines.length - 1;
         int modBack = modLines.length - 1;
         int linesAfterScope = origLines.length - (endLine + 1);
@@ -247,6 +241,7 @@ public class AISecurityGuard {
         return new ScopeValidationResult(true, "النطاق صالح");
     }
 
+    // FIXED: removed Java/Kotlin structure check that falsely rejected method bodies
     public static boolean structuralSyntaxCheck(String code, Language lang) {
         if (code == null || code.trim().isEmpty()) return false;
 
@@ -298,15 +293,6 @@ public class AISecurityGuard {
 
         if (inString || braces != 0 || parens != 0 || brackets != 0) {
             return false;
-        }
-
-        if (lang == Language.JAVA || lang == Language.KOTLIN) {
-            boolean hasStructure = code.contains("class") || code.contains("interface")
-                || code.contains("enum") || code.contains("void ") || code.contains("public ")
-                || code.contains("private ") || code.contains("protected ");
-            if (!hasStructure && code.split("\n").length > 3) {
-                return false;
-            }
         }
 
         return true;
@@ -491,9 +477,12 @@ public class AISecurityGuard {
             hasObfuscation ? "أنماط تعمية/فك تشفير — قد تكون مشروعة" : "لا تعمية مشبوهة ✓",
             false));
 
+        // FIXED: AI010 now requires SQL keywords near string formatting (not either alone)
         boolean hasInjection = Pattern.compile(
-            "(?i)(?:SELECT\\s+.*FROM|INSERT\\s+INTO|DELETE\\s+FROM|DROP\\s+TABLE|UNION\\s+SELECT|" +
-            "\\+\\s*['\"]|\\.format\\s*\\(|%\\s*\\(|f['\"].*\\{.*\\})"
+            "(?i)(?:(?:SELECT\\s+.*FROM|INSERT\\s+INTO|DELETE\\s+FROM|DROP\\s+TABLE|UNION\\s+SELECT)" +
+            ".{0,80}(?:\\+|\\.format\\s*\\(|%\\s*\\(|f['\"])|" +
+            "(?:\\+|\\.format\\s*\\(|%\\s*\\(|f['\"]).{0,80}" +
+            "(?:SELECT\\s+.*FROM|INSERT\\s+INTO|DELETE\\s+FROM|DROP\\s+TABLE|UNION\\s+SELECT))"
         ).matcher(suggestion).find();
         checks.add(new Check("AI010", "Injection Patterns",
             !hasInjection,
