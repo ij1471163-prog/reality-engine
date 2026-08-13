@@ -7,34 +7,22 @@ import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class AIEngine {
 
-    // ============================================================
-    // إعدادات قابلة للتعديل
-    // ============================================================
     private static final String API_URL = "https://api.mistral.ai/v1/chat/completions";
     private static final String MODEL = "mistral-small-latest";
     private static final int MAX_TOKENS = 2000;
     private static final int CONNECT_TIMEOUT_MS = 30000;
     private static final int READ_TIMEOUT_MS = 60000;
-    private static final int MAX_RETRIES = 3;
-    private static final long RETRY_BASE_DELAY_MS = 1000; // يتضاعف: 1s, 2s, 4s
+    private static final int MAX_RETRIES = 2; // إعادة محاولة بسيطة على أخطاء مؤقتة بس
+    private static final long RETRY_BASE_DELAY_MS = 1000;
 
-    // Thread pool بدل new Thread() لكل طلب — تحكم وإلغاء أفضل
-    private static final ExecutorService executor = Executors.newSingleThreadExecutor();
-
-    // يمنع طلبين متزامنين يبعثرون النتائج
-    private static final AtomicBoolean isRunning = new AtomicBoolean(false);
-    private static Future<?> currentTask = null;
+    private static final ExecutorService executor = Executors.newCachedThreadPool();
 
     private static String getKey() {
         String enc = "3c281e1c291e7b2808217b773a05087b2a17077c3721062d39342f7f25291637";
@@ -47,73 +35,23 @@ public class AIEngine {
     }
 
     // ============================================================
-    // نموذج بيانات الاقتراح — منظم وجاهز للاستخدام مباشرة بالـ UI
+    // نفس الواجهة القديمة بالضبط — صفر تغيير على أي Activity يستخدمها
     // ============================================================
-    public static class Suggestion {
-        public String functionName;
-        public String beforeCode;
-        public String afterCode;
-        public String reason;
-        public AISecurityGuard.GuardReport guardReport; // NEW: مربوط تلقائيًا
-
-        public Suggestion(String functionName, String beforeCode, String afterCode, String reason) {
-            this.functionName = functionName;
-            this.beforeCode = beforeCode;
-            this.afterCode = afterCode;
-            this.reason = reason;
-        }
-    }
-
     public interface Callback {
-        void onResult(List<Suggestion> suggestions);
-        void onError(String error);
-    }
-
-    // القديمة تفضل شغالة لأي كود موجود يعتمد عليها (نص خام)
-    public interface RawCallback {
         void onResult(String result);
         void onError(String error);
     }
 
-    // ============================================================
-    // نقطة الدخول الأساسية — ترجع اقتراحات منظمة + Guard report جاهز
-    // ============================================================
     public static void analyze(String code, String fileName, Callback callback) {
-        if (!isRunning.compareAndSet(false, true)) {
-            callback.onError("فيه تحليل شغال حالياً — انتظر لين يخلص أو ألغِه");
-            return;
-        }
-
-        currentTask = executor.submit(() -> {
+        executor.submit(() -> {
             try {
                 String prompt = buildPrompt(code, fileName);
-                String rawResult = callAPIWithRetry(prompt);
-                List<Suggestion> suggestions = parseSuggestions(rawResult);
-
-                // ربط مباشر: كل اقتراح يمر على الـ Guard قبل ما يرجع للمستخدم
-                for (Suggestion s : suggestions) {
-                    s.guardReport = AISecurityGuard.inspect(s.afterCode);
-                }
-
-                callback.onResult(suggestions);
+                String result = callAPIWithRetry(prompt);
+                callback.onResult(result);
             } catch (Exception e) {
                 callback.onError("خطأ: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            } finally {
-                isRunning.set(false);
             }
         });
-    }
-
-    // إلغاء التحليل الحالي لو المستخدم غيّر رأيه أو غادر الشاشة
-    public static void cancel() {
-        if (currentTask != null && !currentTask.isDone()) {
-            currentTask.cancel(true);
-        }
-        isRunning.set(false);
-    }
-
-    public static boolean isBusy() {
-        return isRunning.get();
     }
 
     private static String buildPrompt(String code, String fileName) {
@@ -145,32 +83,21 @@ public class AIEngine {
             "---\n";
     }
 
-    // ============================================================
-    // Retry مع Exponential Backoff — يعيد المحاولة فقط على أخطاء مؤقتة
-    // ============================================================
     private static String callAPIWithRetry(String prompt) throws Exception {
         Exception lastError = null;
-
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            if (Thread.currentThread().isInterrupted()) {
-                throw new InterruptedException("تم إلغاء العملية");
-            }
             try {
                 return callAPI(prompt);
             } catch (RetryableException e) {
                 lastError = e;
                 if (attempt < MAX_RETRIES) {
-                    long delay = RETRY_BASE_DELAY_MS * (1L << attempt); // 1s, 2s, 4s
-                    Thread.sleep(delay);
+                    Thread.sleep(RETRY_BASE_DELAY_MS * (1L << attempt));
                 }
             }
-            // أخطاء غير مؤقتة (4xx غير 429، JSON parse error) تطلع فورًا بدون إعادة محاولة
         }
-        throw new Exception("فشل بعد " + (MAX_RETRIES + 1) + " محاولات: " +
-            (lastError != null ? lastError.getMessage() : "سبب غير معروف"));
+        throw new Exception(lastError != null ? lastError.getMessage() : "فشل الاتصال");
     }
 
-    // استثناء داخلي يميز الأخطاء المؤقتة (تستاهل إعادة محاولة) عن الدائمة
     private static class RetryableException extends Exception {
         RetryableException(String msg) { super(msg); }
     }
@@ -189,6 +116,8 @@ public class AIEngine {
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(READ_TIMEOUT_MS);
 
+            // FIXED: بناء JSON عبر org.json بدل .replace() اليدوي
+            // (كان يضاعف الـ backslashes ويكسر أي regex بالكود المولّد)
             JSONObject message = new JSONObject();
             message.put("role", "user");
             message.put("content", prompt);
@@ -210,8 +139,7 @@ public class AIEngine {
             }
 
             if (responseCode == 429 || responseCode >= 500) {
-                // Rate limit أو خطأ سيرفر مؤقت — يستاهل إعادة محاولة
-                throw new RetryableException("HTTP " + responseCode + " (مؤقت)");
+                throw new RetryableException("HTTP " + responseCode);
             }
 
             if (responseCode != 200) {
@@ -221,6 +149,7 @@ public class AIEngine {
 
             String response = readStream(conn.getInputStream());
 
+            // FIXED: استخراج المحتوى عبر org.json بدل indexOf/substring اليدوي
             JSONObject responseJson = new JSONObject(response);
             JSONArray choices = responseJson.optJSONArray("choices");
             if (choices != null && choices.length() > 0) {
@@ -230,7 +159,7 @@ public class AIEngine {
                     return msg.getString("content");
                 }
             }
-            throw new Exception("تعذّر تحليل الاستجابة — هيكل غير متوقع");
+            return "تعذّر تحليل الاستجابة";
 
         } finally {
             if (conn != null) conn.disconnect();
@@ -245,77 +174,6 @@ public class AIEngine {
             while ((line = br.readLine()) != null) sb.append(line).append("\n");
             return sb.toString();
         }
-    }
-
-    // ============================================================
-    // Parser: يحول النص الخام (FUNCTION/BEFORE/AFTER/REASON) لكائنات منظمة
-    // ============================================================
-    private static List<Suggestion> parseSuggestions(String raw) {
-        List<Suggestion> result = new ArrayList<>();
-        if (raw == null || raw.trim().isEmpty()) return result;
-
-        String[] blocks = raw.split("---");
-        for (String block : blocks) {
-            if (block.trim().isEmpty()) continue;
-
-            String functionName = extractField(block, "FUNCTION:", "\n");
-            String beforeCode = extractCodeBlock(block, "BEFORE:");
-            String afterCode = extractCodeBlock(block, "AFTER:");
-            String reason = extractField(block, "REASON:", "\n");
-
-            if (functionName != null && afterCode != null) {
-                result.add(new Suggestion(
-                    functionName.trim(),
-                    beforeCode != null ? beforeCode.trim() : "",
-                    afterCode.trim(),
-                    reason != null ? reason.trim() : ""
-                ));
-            }
-        }
-        return result;
-    }
-
-    private static String extractField(String text, String label, String stopAt) {
-        int start = text.indexOf(label);
-        if (start < 0) return null;
-        start += label.length();
-        int end = text.indexOf(stopAt, start);
-        if (end < 0) end = text.length();
-        return text.substring(start, end);
-    }
-
-    private static String extractCodeBlock(String text, String label) {
-        int labelIdx = text.indexOf(label);
-        if (labelIdx < 0) return null;
-        int fenceStart = text.indexOf("```", labelIdx);
-        if (fenceStart < 0) return null;
-        int codeStart = text.indexOf("\n", fenceStart);
-        if (codeStart < 0) return null;
-        codeStart += 1;
-        int fenceEnd = text.indexOf("```", codeStart);
-        if (fenceEnd < 0) return null;
-        return text.substring(codeStart, fenceEnd);
-    }
-
-    // ============================================================
-    // للتوافق مع كود قديم يستخدم الـ String الخام مباشرة
-    // ============================================================
-    public static void analyzeRaw(String code, String fileName, RawCallback callback) {
-        if (!isRunning.compareAndSet(false, true)) {
-            callback.onError("فيه تحليل شغال حالياً");
-            return;
-        }
-        currentTask = executor.submit(() -> {
-            try {
-                String prompt = buildPrompt(code, fileName);
-                String result = callAPIWithRetry(prompt);
-                callback.onResult(result);
-            } catch (Exception e) {
-                callback.onError("خطأ: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            } finally {
-                isRunning.set(false);
-            }
-        });
     }
 }
 
