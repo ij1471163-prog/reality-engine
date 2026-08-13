@@ -18,22 +18,24 @@ public class StubDetector {
         public String reason;
         public String snippet;
         public String suggestion;
+        public String requiredImport;
 
         public StubFunction(String name, int line, int startLine, int endLine,
-                           Risk risk, String reason, String snippet, String suggestion) {
-            this.name       = name;
-            this.line       = line;
-            this.startLine  = startLine;
-            this.endLine    = endLine;
-            this.risk       = risk;
-            this.reason     = reason;
-            this.snippet    = snippet;
-            this.suggestion = suggestion;
+                           Risk risk, String reason, String snippet, String suggestion, String requiredImport) {
+            this.name           = name;
+            this.line           = line;
+            this.startLine      = startLine;
+            this.endLine        = endLine;
+            this.risk           = risk;
+            this.reason         = reason;
+            this.snippet        = snippet;
+            this.suggestion     = suggestion;
+            this.requiredImport = requiredImport;
         }
 
         public StubFunction(String name, int line, Risk risk,
                            String reason, String snippet, String suggestion) {
-            this(name, line, line, line, risk, reason, snippet, suggestion);
+            this(name, line, line, line, risk, reason, snippet, suggestion, null);
         }
     }
 
@@ -43,6 +45,15 @@ public class StubDetector {
         public StubResult(List<StubFunction> stubs, int totalFunctions) {
             this.stubs          = stubs;
             this.totalFunctions = totalFunctions;
+        }
+    }
+
+    public static class SuggestionResult {
+        public String code;
+        public String requiredImport;
+        public SuggestionResult(String code, String requiredImport) {
+            this.code = code;
+            this.requiredImport = requiredImport;
         }
     }
 
@@ -56,10 +67,47 @@ public class StubDetector {
         return count;
     }
 
-    public static String suggestWithContext(String name, String fullCode) {
+    // NEW: strip inline Python comments, respecting # inside strings (basic)
+    private static String stripInlineComment(String line) {
+        int hash = line.indexOf('#');
+        if (hash < 0) return line;
+        boolean inSingle = false, inDouble = false;
+        for (int i = 0; i < hash; i++) {
+            char c = line.charAt(i);
+            if (c == '"' && !inSingle) {
+                if (i + 2 < line.length() && line.charAt(i+1) == '"' && line.charAt(i+2) == '"') {
+                    i += 2; continue;
+                }
+                inDouble = !inDouble;
+            } else if (c == '\'' && !inDouble) {
+                if (i + 2 < line.length() && line.charAt(i+1) == '\'' && line.charAt(i+2) == '\'') {
+                    i += 2; continue;
+                }
+                inSingle = !inSingle;
+            }
+        }
+        if (inSingle || inDouble) return line;
+        return line.substring(0, hash);
+    }
+
+    private static boolean isBlankOrComment(String line) {
+        String t = line.trim();
+        return t.isEmpty() || t.startsWith("#");
+    }
+
+    private static boolean isDocstringStart(String line) {
+        String t = line.trim();
+        return t.startsWith("\"\"\"") || t.startsWith("'''");
+    }
+
+    private static boolean isDocstringEnd(String line) {
+        String t = line.trim();
+        return t.endsWith("\"\"\"") || t.endsWith("'''");
+    }
+
+    public static SuggestionResult suggestWithContextEx(String name, String fullCode) {
         String n = name.toLowerCase();
 
-        // FIXED: multiline signature support + normalize whitespace before splitting
         java.util.regex.Matcher pm = java.util.regex.Pattern
             .compile("def " + java.util.regex.Pattern.quote(name) + "\\(([\\s\\S]*?)\\)")
             .matcher(fullCode);
@@ -76,62 +124,70 @@ public class StubDetector {
         String p2 = paramList.size() > 1 ? paramList.get(1) : "items";
 
         if (n.contains("email") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_")))
-            return "    return bool(re.match(r\"^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$\", str(" + p1 + ")))";
+            return new SuggestionResult("    return bool(re.match(r\"^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$\", str(" + p1 + ")))", "re");
 
         if (n.contains("hash") && n.contains("password"))
-            return "    return hashlib.sha256(str(" + p1 + ").encode(\"utf-8\")).hexdigest()";
+            return new SuggestionResult("    return hashlib.sha256(str(" + p1 + ").encode(\"utf-8\")).hexdigest()", "hashlib");
 
         if (n.contains("hash") || n.contains("encrypt") || n.contains("digest"))
-            return "    return hashlib.sha256(str(" + p1 + ").encode()).hexdigest()";
+            return new SuggestionResult("    return hashlib.sha256(str(" + p1 + ").encode()).hexdigest()", "hashlib");
 
         if (n.contains("password") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_")))
-            return "    p = str(" + p1 + ")\n    return len(p) >= 8 and any(c.isupper() for c in p) and any(c.isdigit() for c in p)";
+            return new SuggestionResult("    p = str(" + p1 + ")\n    return len(p) >= 8 and any(c.isupper() for c in p) and any(c.isdigit() for c in p)", null);
+
+        if (n.contains("normalize") || n.contains("clean") || n.contains("sanitize"))
+            return new SuggestionResult("    return str(" + p1 + ").strip().lower().replace(\"  \", \" \")", null);
 
         if (n.contains("palindrome"))
-            return "    s = str(" + p1 + ").lower().replace(\" \", \"\")\n    return s == s[::-1]";
+            return new SuggestionResult("    s = str(" + p1 + ").lower().replace(\" \", \"\")\n    return s == s[::-1]", null);
 
         if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_"))
-            return "    return " + p1 + " is not None and bool(" + p1 + ")";
+            return new SuggestionResult("    return " + p1 + " is not None and bool(" + p1 + ")", null);
 
         if (n.contains("calculate") || n.contains("total") || n.contains("count"))
-            return "    return sum(" + p1 + ") if " + p1 + " else 0";
+            return new SuggestionResult("    return sum(" + p1 + ") if " + p1 + " else 0", null);
 
         if (n.contains("average") || n.contains("avg") || n.contains("mean"))
-            return "    items = list(" + p1 + ")\n    return sum(items) / len(items) if items else 0.0";
+            return new SuggestionResult("    items = list(" + p1 + ")\n    return sum(items) / len(items) if items else 0.0", null);
 
         if (n.contains("sort"))
-            return "    return sorted(" + p1 + ")";
+            return new SuggestionResult("    return sorted(" + p1 + ")", null);
 
         if (n.contains("unique") || n.contains("distinct") || n.contains("dedup"))
-            return "    return list(dict.fromkeys(" + p1 + "))";
+            return new SuggestionResult("    return list(dict.fromkeys(" + p1 + "))", null);
 
         if (n.contains("read") || n.contains("load"))
-            return "    if not os.path.exists(str(" + p1 + ")):\n        return None\n    with open(" + p1 + ", \"r\", encoding=\"utf-8\") as f:\n        return f.read()";
+            return new SuggestionResult("    if not os.path.exists(str(" + p1 + ")):\n        return None\n    with open(" + p1 + ", \"r\", encoding=\"utf-8\") as f:\n        return f.read()", "os");
 
         if (n.contains("write") || n.contains("save"))
-            return "    with open(" + p1 + ", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(" + p2 + "))\n    return True";
+            return new SuggestionResult("    with open(" + p1 + ", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(" + p2 + "))\n    return True", null);
 
         if (n.contains("find") || n.contains("search") || n.contains("fetch"))
-            return "    return next((x for x in " + p2 + " if x == " + p1 + "), None)";
+            return new SuggestionResult("    return next((x for x in " + p2 + " if x == " + p1 + "), None)", null);
 
         if (n.contains("delete") || n.contains("remove"))
-            return "    return [x for x in " + p2 + " if x != " + p1 + "]";
+            return new SuggestionResult("    return [x for x in " + p2 + " if x != " + p1 + "]", null);
 
         if (n.contains("format") || n.contains("convert") || n.contains("parse"))
-            return "    return str(" + p1 + ").strip()";
+            return new SuggestionResult("    return str(" + p1 + ").strip()", null);
 
         if (n.contains("json"))
-            return "    try:\n        return json.loads(str(" + p1 + "))\n    except Exception:\n        return None";
+            return new SuggestionResult("    try:\n        return json.loads(str(" + p1 + "))\n    except Exception:\n        return None", "json");
 
         if (n.contains("log") || n.contains("debug"))
-            return "    print(str(" + p1 + "))\n    return True";
+            return new SuggestionResult("    print(str(" + p1 + "))\n    return True", null);
 
         if (n.contains("send") || n.contains("notify"))
-            return "    return {\"status\": \"pending\", \"to\": str(" + p1 + "), \"sent\": False}";
+            return new SuggestionResult("    return {\"status\": \"pending\", \"to\": str(" + p1 + "), \"sent\": False}", null);
 
-        return "    raise NotImplementedError(f\"" + name + "() not implemented - requires manual implementation\")";
+        return new SuggestionResult("    raise NotImplementedError(f\"" + name + "() not implemented - requires manual implementation\")", null);
     }
 
+    public static String suggestWithContext(String name, String fullCode) {
+        return suggestWithContextEx(name, fullCode).code;
+    }
+
+    // PRESERVED: original suggest() — not deleted per user request
     private static String suggest(String name) {
         String n = name.toLowerCase();
         if (n.matches("^(is_|has_|can_|validate_|check_|verify_).*"))
@@ -155,135 +211,255 @@ public class StubDetector {
         return "    raise NotImplementedError('" + name + " not implemented')";
     }
 
-    // FIXED: added async support and multiline param support for JS
+    // REWRITTEN: O(n) line-by-line JS stub detector — zero complex regex
     private static void detectJavaScriptStubs(String code, List<StubFunction> stubs) {
-        Pattern jsFunc = Pattern.compile(
-            "(?:async\\s+)?function\\s+(\\w+)\\s*\\([\\s\\S]*?\\)\\s*\\{\\s*\\}|" +
-            "(?:const|let|var)\\s+(\\w+)\\s*=\\s*(?:async\\s+)?(?:function\\s*\\([\\s\\S]*?\\)|[^=]+=>)\\s*\\{\\s*\\}",
-            Pattern.MULTILINE
-        );
-        Matcher jsMatcher = jsFunc.matcher(code);
-        while (jsMatcher.find()) {
-            String name = jsMatcher.group(1) != null ? jsMatcher.group(1) : jsMatcher.group(2);
-            if (name == null) continue;
-            String before = code.substring(0, jsMatcher.start());
-            int lineNo = before.split("\n", -1).length;
-            boolean exists = stubs.stream().anyMatch(s -> s.name.equals(name));
-            if (!exists) {
-                stubs.add(new StubFunction(
-                    name, lineNo, lineNo, lineNo, Risk.CONFIRMED,
-                    "دالة JS فارغة",
-                    jsMatcher.group().substring(0, Math.min(80, jsMatcher.group().length())),
-                    "// TODO: implement " + name
-                ));
-            }
-        }
-    }
-
-    public static StubResult detect(String code) {
-        List<StubFunction> stubs = new ArrayList<>();
         String[] lines = code.split("\n", -1);
-        int totalFunctions = 0;
+        int i = 0;
+        while (i < lines.length) {
+            String line = lines[i].trim();
+            boolean isFuncDecl = false;
+            boolean isVarAssign = false;
+            String name = null;
 
-        Pattern funcPattern = Pattern.compile("^\\s*(?:async\\s+)?def\\s+(\\w+)\\s*\\(", Pattern.MULTILINE);
-        Matcher funcMatcher = funcPattern.matcher(code);
-        while (funcMatcher.find()) totalFunctions++;
-
-        // FIXED: [\\s\\S]*? instead of [^)]* to support multiline signatures
-        Pattern[] confirmed = {
-            Pattern.compile("^(\\s*)(?:@\\w+(?:\\([^)]*\\))?\\s*\\n\\s*)*(?:async\\s+)?def\\s+(\\w+)\\s*\\([\\s\\S]*?\\).*:\\s*\\n\\1    pass\\s*$", Pattern.MULTILINE),
-            Pattern.compile("^(\\s*)(?:@\\w+(?:\\([^)]*\\))?\\s*\\n\\s*)*(?:async\\s+)?def\\s+(\\w+)\\s*\\([\\s\\S]*?\\).*:\\s*\\n\\1    \\.\\.\\.\\s*$", Pattern.MULTILINE),
-            Pattern.compile("^(\\s*)(?:@\\w+(?:\\([^)]*\\))?\\s*\\n\\s*)*(?:async\\s+)?def\\s+(\\w+)\\s*\\([\\s\\S]*?\\).*:\\s*\\n\\1    raise\\s+NotImplementedError", Pattern.MULTILINE),
-        };
-
-        for (Pattern p : confirmed) {
-            Matcher m = p.matcher(code);
-            while (m.find()) {
-                String funcName = m.group(2);
-                String matchText = m.group();
-                String before = code.substring(0, m.start());
-                int matchLine = before.split("\n", -1).length;
-
-                // FIXED: find actual def line (skip decorators)
-                int defOffset = matchText.indexOf("def ");
-                int linesBeforeDef = 0;
-                for (int k = 0; k < defOffset; k++) {
-                    if (matchText.charAt(k) == '\n') linesBeforeDef++;
+            // Pattern 1: function name(...) or async function name(...)
+            if (line.matches("^(?:async\\s+)?function\\s+\\w+.*")) {
+                isFuncDecl = true;
+                String afterFunc = line.replaceFirst("^(?:async\\s+)?function\\s+", "");
+                int paren = afterFunc.indexOf('(');
+                if (paren > 0) {
+                    name = afterFunc.substring(0, paren).trim();
                 }
-                int defLine = matchLine + linesBeforeDef;
-                String snippet = lines[defLine - 1].trim();
-
-                // FIXED: endLine calculation starts from defLine, not decorator line
-                int baseIndent = getIndentLevel(lines[defLine - 1]);
-                int startLine = defLine;
-                int endLine = defLine;
-                for (int idx = defLine; idx < lines.length; idx++) {
-                    String l = lines[idx].trim();
-                    if (l.isEmpty() || l.startsWith("#")) continue;
-                    int ind = getIndentLevel(lines[idx]);
-                    if (ind <= baseIndent) {
-                        endLine = idx; // 1-based line number of previous line
-                        break;
-                    }
-                    endLine = idx + 1;
+            }
+            // Pattern 2: const/let/var name = function(...) or (...) => ...
+            else if (line.matches("^(?:const|let|var)\\s+\\w+\\s*=.*")) {
+                isVarAssign = true;
+                String afterVar = line.replaceFirst("^(?:const|let|var)\\s+", "");
+                int eq = afterVar.indexOf('=');
+                if (eq > 0) {
+                    name = afterVar.substring(0, eq).trim();
                 }
-                if (endLine < defLine) endLine = defLine;
+            }
 
-                boolean exists = stubs.stream().anyMatch(s -> s.name.equals(funcName));
+            if (name == null || name.isEmpty()) {
+                i++;
+                continue;
+            }
+
+            // Only match block-style functions (contains { )
+            boolean hasBlock = false;
+            int searchLimit = Math.min(i + 3, lines.length);
+            for (int s = i; s < searchLimit; s++) {
+                if (lines[s].contains("{")) {
+                    hasBlock = true;
+                    break;
+                }
+                // Single-line arrow without block: () => expr; — skip
+                if (lines[s].contains("=>") && !lines[s].contains("{")) {
+                    hasBlock = false;
+                    break;
+                }
+            }
+            if (!hasBlock) {
+                i++;
+                continue;
+            }
+
+            // Find opening brace line
+            int braceLine = -1;
+            for (int s = i; s < searchLimit && s < lines.length; s++) {
+                if (lines[s].contains("{")) {
+                    braceLine = s;
+                    break;
+                }
+            }
+            if (braceLine < 0) {
+                i++;
+                continue;
+            }
+
+            // Brace counting to find exact end
+            int braceCount = 0;
+            int endLine = braceLine;
+            boolean foundOpen = false;
+            for (int s = braceLine; s < lines.length; s++) {
+                String sl = lines[s];
+                for (int c = 0; c < sl.length(); c++) {
+                    if (sl.charAt(c) == '{') { braceCount++; foundOpen = true; }
+                    else if (sl.charAt(c) == '}') braceCount--;
+                }
+                endLine = s;
+                if (foundOpen && braceCount == 0) break;
+            }
+
+            // Check if body is empty/trivial
+            StringBuilder bodyBuilder = new StringBuilder();
+            for (int s = braceLine; s <= endLine; s++) {
+                bodyBuilder.append(lines[s]).append("\n");
+            }
+            String bodyContent = bodyBuilder.toString()
+                .replaceAll("[\\{\\}]", "").replaceAll("\\s+", " ").trim();
+
+            boolean isEmpty = bodyContent.isEmpty()
+                || bodyContent.equals(";")
+                || bodyContent.matches("^return\\s*;?$")
+                || bodyContent.matches("^return\\s+undefined\\s*;?$")
+                || bodyContent.matches("^return\\s+null\\s*;?$")
+                || bodyContent.matches("^return\\s+false\\s*;?$")
+                || bodyContent.matches("^return\\s+0\\s*;?$")
+                || bodyContent.matches("^return\\s+''\\s*;?$")
+                || bodyContent.matches("^return\\s+\"\"\\s*;?$");
+
+            if (isEmpty) {
+                boolean exists = stubs.stream().anyMatch(s -> s.name.equals(name));
                 if (!exists) {
                     stubs.add(new StubFunction(
-                        funcName, defLine, startLine, endLine, Risk.CONFIRMED,
-                        "pass / ... / NotImplementedError",
-                        snippet, suggestWithContext(funcName, code)
+                        name, i + 1, i + 1, endLine + 1, Risk.CONFIRMED,
+                        "دالة JS فارغة",
+                        line.substring(0, Math.min(80, line.length())),
+                        "// TODO: implement " + name, null
                     ));
                 }
             }
+            i = endLine + 1;
+        }
+    }
+
+    // O(n) line-by-line Python parser — zero complex regex
+    public static StubResult detect(String code) {
+        List<StubFunction> stubs = new ArrayList<>();
+        if (code == null || code.trim().isEmpty()) {
+            return new StubResult(stubs, 0);
         }
 
-        // FIXED: multiline signature support
-        Pattern suspicious = Pattern.compile(
-            "^(\\s*)(?:@\\w+(?:\\([^)]*\\))?\\s*\\n\\s*)*(?:async\\s+)?def\\s+(\\w+)\\s*\\([\\s\\S]*?\\).*:\\s*\\n(?:\\1    \"\"\"[^\"]*\"\"\"\\s*\\n)?\\1    return\\s+(?:0|0\\.0|\\[\\]|\\{\\}|None|False|\"\")\\s*$",
-            Pattern.MULTILINE
-        );
-        Matcher sm = suspicious.matcher(code);
-        while (sm.find()) {
-            String funcName = sm.group(2);
-            String matchText = sm.group();
-            String before = code.substring(0, sm.start());
-            int matchLine = before.split("\n", -1).length;
+        String[] lines = code.split("\n", -1);
+        int totalFunctions = 0;
 
-            // FIXED: find actual def line (skip decorators)
-            int defOffset = matchText.indexOf("def ");
-            int linesBeforeDef = 0;
-            for (int k = 0; k < defOffset; k++) {
-                if (matchText.charAt(k) == '\n') linesBeforeDef++;
+        int i = 0;
+        while (i < lines.length) {
+            String line = lines[i];
+            String trimmed = line.trim();
+
+            if (trimmed.startsWith("@")) {
+                i++;
+                continue;
             }
-            int defLine = matchLine + linesBeforeDef;
-            String snippet = lines[defLine - 1].trim();
 
-            int baseIndent = getIndentLevel(lines[defLine - 1]);
-            int startLine = defLine;
-            int endLine = defLine;
-            for (int idx = defLine; idx < lines.length; idx++) {
-                String l = lines[idx].trim();
-                if (l.isEmpty() || l.startsWith("#")) continue;
-                int ind = getIndentLevel(lines[idx]);
-                if (ind <= baseIndent) {
-                    endLine = idx;
+            boolean isAsync = trimmed.startsWith("async def ");
+            boolean isDef = trimmed.startsWith("def ");
+            if (!isAsync && !isDef) {
+                i++;
+                continue;
+            }
+
+            totalFunctions++;
+
+            String afterDef = isAsync ? trimmed.substring(10).trim() : trimmed.substring(4).trim();
+            int parenIdx = afterDef.indexOf('(');
+            if (parenIdx < 0) { i++; continue; }
+            String funcName = afterDef.substring(0, parenIdx).trim();
+
+            if (funcName.equals("__init__") || funcName.equals("__del__") ||
+                funcName.equals("__repr__") || funcName.equals("__str__") ||
+                funcName.equals("__eq__") || funcName.equals("__hash__")) {
+                i++;
+                continue;
+            }
+
+            int defLine = i + 1;
+            int baseIndent = getIndentLevel(line);
+            int signatureEnd = i;
+
+            // FIXED: strip inline comments before checking for colon
+            while (signatureEnd < lines.length) {
+                String clean = stripInlineComment(lines[signatureEnd]).trim();
+                if (clean.endsWith(":")) break;
+                signatureEnd++;
+            }
+            if (signatureEnd >= lines.length) { i++; continue; }
+
+            int bodyStartIdx = signatureEnd + 1;
+            while (bodyStartIdx < lines.length) {
+                String bl = lines[bodyStartIdx].trim();
+                if (bl.isEmpty() || bl.startsWith("#")) {
+                    bodyStartIdx++;
+                } else if (isDocstringStart(lines[bodyStartIdx])) {
+                    if (!isDocstringEnd(lines[bodyStartIdx]) || bl.length() < 6) {
+                        bodyStartIdx++;
+                        while (bodyStartIdx < lines.length && !isDocstringEnd(lines[bodyStartIdx])) {
+                            bodyStartIdx++;
+                        }
+                    }
+                    bodyStartIdx++;
+                } else {
                     break;
                 }
-                endLine = idx + 1;
             }
-            if (endLine < defLine) endLine = defLine;
 
-            boolean exists = stubs.stream().anyMatch(s -> s.name.equals(funcName));
-            if (!exists) {
-                stubs.add(new StubFunction(
-                    funcName, defLine, startLine, endLine, Risk.SUSPICIOUS,
-                    "return قيمة فاضية",
-                    snippet, suggestWithContext(funcName, code)
-                ));
+            int endLine = bodyStartIdx;
+            if (bodyStartIdx < lines.length) {
+                int scan = bodyStartIdx;
+                while (scan < lines.length) {
+                    String sl = lines[scan];
+                    String slTrim = sl.trim();
+                    if (slTrim.isEmpty() || slTrim.startsWith("#")) {
+                        scan++;
+                        continue;
+                    }
+                    int ind = getIndentLevel(sl);
+                    if (ind <= baseIndent) {
+                        endLine = scan;
+                        break;
+                    }
+                    endLine = scan + 1;
+                    scan++;
+                }
+                if (endLine < bodyStartIdx) endLine = bodyStartIdx;
+            } else {
+                endLine = signatureEnd + 1;
             }
+
+            boolean isStub = false;
+            Risk risk = Risk.SUSPICIOUS;
+            String reason = "";
+            String snippet = "";
+
+            if (bodyStartIdx < lines.length && bodyStartIdx < endLine) {
+                String firstBody = lines[bodyStartIdx].trim();
+
+                if (firstBody.equals("pass") || firstBody.equals("...") || firstBody.equals("Ellipsis")) {
+                    isStub = true;
+                    risk = Risk.CONFIRMED;
+                    reason = "pass / ... / NotImplementedError";
+                    snippet = firstBody;
+                } else if (firstBody.startsWith("raise NotImplementedError")) {
+                    isStub = true;
+                    risk = Risk.CONFIRMED;
+                    reason = "raise NotImplementedError";
+                    snippet = firstBody;
+                } else if (firstBody.matches("^return\\s+(?:0|0\\.0|\\[\\]|\\{\\}|None|False|\"\"|''|\\\"\\\"\\\".*\\\"\\\"\\\"|'''.*''')\\s*$")) {
+                    isStub = true;
+                    risk = Risk.SUSPICIOUS;
+                    reason = "return قيمة فاضية";
+                    snippet = firstBody;
+                }
+            } else {
+                isStub = true;
+                risk = Risk.CONFIRMED;
+                reason = "جسم الدالة فارغ";
+            }
+
+            if (isStub) {
+                boolean exists = stubs.stream().anyMatch(s -> s.name.equals(funcName));
+                if (!exists) {
+                    SuggestionResult sr = suggestWithContextEx(funcName, code);
+                    stubs.add(new StubFunction(
+                        funcName, defLine, bodyStartIdx + 1, endLine,
+                        risk, reason, snippet, sr.code, sr.requiredImport
+                    ));
+                }
+            }
+
+            i = endLine > signatureEnd ? endLine : signatureEnd + 1;
         }
 
         stubs.sort((a, b) -> a.risk.compareTo(b.risk));
@@ -292,4 +468,3 @@ public class StubDetector {
         return new StubResult(stubs, totalFunctions);
     }
 }
-
