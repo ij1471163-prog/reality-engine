@@ -220,10 +220,6 @@ public class AISecurityGuard {
         }
     }
 
-    // ============================================================
-    // الكشف عن اللغة — امتداد الملف أولاً، fallback على الكود
-    // ============================================================
-
     public static Language detectLanguage(String code) {
         return detectLanguage(code, null);
     }
@@ -281,10 +277,6 @@ public class AISecurityGuard {
         return Language.UNKNOWN;
     }
 
-    // ============================================================
-    // Scope Validation — prefix ثابت + modified region + suffix ثابت
-    // ============================================================
-
     public static ScopeValidationResult validateScope(String originalCode, String modifiedCode,
                                                       int startLine, int endLine) {
         if (originalCode == null || modifiedCode == null) {
@@ -297,7 +289,6 @@ public class AISecurityGuard {
         String[] origLines = originalCode.split("\n", -1);
         String[] modLines = modifiedCode.split("\n", -1);
 
-        // prefix: كل شيء قبل startLine يجب أن يكون مطابقاً حرفياً
         StringBuilder origPrefix = new StringBuilder();
         StringBuilder modPrefix = new StringBuilder();
         for (int i = 0; i < startLine && i < origLines.length; i++) {
@@ -307,7 +298,6 @@ public class AISecurityGuard {
             modPrefix.append(modLines[i]).append('\n');
         }
 
-        // suffix: كل شيء بعد endLine يجب أن يكون مطابقاً حرفياً
         StringBuilder origSuffix = new StringBuilder();
         StringBuilder modSuffix = new StringBuilder();
         for (int i = endLine + 1; i < origLines.length; i++) {
@@ -329,16 +319,13 @@ public class AISecurityGuard {
         return new ScopeValidationResult(true, "النطاق صالح — prefix و suffix ثابتان");
     }
 
-    // ============================================================
-    // Structural Syntax Check — sanity check سريع (ليس parser كامل)
-    // ============================================================
-
     public static boolean structuralSyntaxCheck(String code, Language lang) {
         if (code == null || code.trim().isEmpty()) return false;
 
         int braces = 0, parens = 0, brackets = 0;
         boolean inString = false;
-        boolean inComment = false;  // ← FIXED: كان ناقصاً ويسبب خطأ compile
+        boolean inComment = false;
+        boolean inBlockComment = false;  // ← FIXED: تمييز /* */ عن //
         boolean inTripleString = false;
         boolean inTemplateLiteral = false;
         boolean inRegexLiteral = false;
@@ -383,7 +370,14 @@ public class AISecurityGuard {
             }
 
             if (inComment) {
-                if (c == '\n') inComment = false;
+                if (inBlockComment) {
+                    if (i > 0 && code.charAt(i - 1) == '*' && c == '/') {
+                        inComment = false;
+                        inBlockComment = false;
+                    }
+                } else {
+                    if (c == '\n') inComment = false;
+                }
                 continue;
             }
 
@@ -416,8 +410,14 @@ public class AISecurityGuard {
                     if (regexContext) {
                         inRegexLiteral = true;
                     } else {
-                        if (i + 1 < code.length() && code.charAt(i + 1) == '/') { inComment = true; i++; }
-                        else if (i + 1 < code.length() && code.charAt(i + 1) == '*') { inComment = true; i++; }
+                        if (i + 1 < code.length() && code.charAt(i + 1) == '/') {
+                            inComment = true;
+                            i++;
+                        } else if (i + 1 < code.length() && code.charAt(i + 1) == '*') {
+                            inComment = true;
+                            inBlockComment = true;
+                            i++;
+                        }
                     }
                     continue;
                 } else if (c == '"' || c == '\'') {
@@ -428,7 +428,14 @@ public class AISecurityGuard {
                 } else if ((lang == Language.JAVA || lang == Language.JAVASCRIPT || lang == Language.KOTLIN)
                         && c == '/' && i + 1 < code.length()) {
                     char next = code.charAt(i + 1);
-                    if (next == '/' || next == '*') { inComment = true; i++; }
+                    if (next == '/') {
+                        inComment = true;
+                        i++;
+                    } else if (next == '*') {
+                        inComment = true;
+                        inBlockComment = true;
+                        i++;
+                    }
                 } else if (c == '{') braces++;
                 else if (c == '}') braces--;
                 else if (c == '(') parens++;
@@ -453,10 +460,6 @@ public class AISecurityGuard {
         }
         return true;
     }
-
-    // ============================================================
-    // Function Integrity — التأكد أن التعديل داخل الدالة المستهدفة
-    // ============================================================
 
     public static Check validateFunctionIntegrity(String originalCode, String modifiedCode,
                                                    String functionName, Language lang) {
@@ -506,10 +509,6 @@ public class AISecurityGuard {
         if (m.find()) return m.group(1).trim().replaceAll("\\s+", " ");
         return null;
     }
-
-    // ============================================================
-    // Language-specific checks
-    // ============================================================
 
     public static List<Check> performLanguageChecks(String suggestion, Language lang) {
         List<Check> checks = new ArrayList<>();
@@ -647,10 +646,6 @@ public class AISecurityGuard {
         return checks;
     }
 
-    // ============================================================
-    // Core checks
-    // ============================================================
-
     public static List<Check> performCoreChecks(String suggestion, Language lang) {
         List<Check> checks = new ArrayList<>();
         ContextAwareScanner scanner = new ContextAwareScanner(suggestion, lang);
@@ -697,7 +692,6 @@ public class AISecurityGuard {
             hasTry ? "يحتوي try/catch ✓" : (shortSnippet ? "مقتطع قصير — مسموح" : "لا error handling"),
             false));
 
-        // AI005: Hardcoded Credentials — يدعم final/static/const variants مع استثناء placeholders
         boolean hasCreds = Pattern.compile(
             "(?i)(?:private\\s+static\\s+final|public\\s+static\\s+final|private\\s+final|public\\s+final|static\\s+final|final|private|public)?\\s*(?:String|var|let|const)\\s+(?:password|secret|api_key|apikey|api_secret|auth_token|access_token|private_key|secret_key|client_secret|bearer_token)\\s*=\\s*['\"][^'\"]{3,}['\"]"
         ).matcher(suggestion).find();
@@ -745,7 +739,6 @@ public class AISecurityGuard {
             hasObfuscation ? "أنماط تعمية/فك تشفير — قد تكون مشروعة" : "لا تعمية مشبوهة ✓",
             false));
 
-        // AI010: SQL Injection — يتطلب SQL keywords بالقرب من string formatting
         boolean hasInjection = Pattern.compile(
             "(?i)(?:(?:SELECT\\s+.*FROM|INSERT\\s+INTO|DELETE\\s+FROM|DROP\\s+TABLE|UNION\\s+SELECT)" +
             ".{0,80}(?:\\+|\\.format\\s*\\(|%\\s*\\(|f['\"])|" +
@@ -759,10 +752,6 @@ public class AISecurityGuard {
 
         return checks;
     }
-
-    // ============================================================
-    // Inspect — الواجهة العامة (نفسها + overloads اختيارية)
-    // ============================================================
 
     public static GuardReport inspect(String suggestion) {
         return inspectWithContext(suggestion, null, -1, -1, null, null);
@@ -837,4 +826,3 @@ public class AISecurityGuard {
         return count;
     }
 }
-
