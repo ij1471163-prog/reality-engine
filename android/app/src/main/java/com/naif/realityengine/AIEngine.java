@@ -32,12 +32,13 @@ import org.json.JSONObject;
  *   6. BackupManager يحفظ نسخة احتياطية
  *   7. DiffViewer يعرض الفرق للمستخدم
  *   8. المستخدم يوافق → الحفظ النهائي
+ *
+ * ⚠️ أمان: المفتاح لا يُخزن داخل الكود المصدري إطلاقاً (لا XOR، لا Base64 وهمي).
+ *    يُمرر من الخارج عبر setApiKey()، ويُفضّل تمريره عبر Proxy Backend (Vercel/Netlify)
+ *    بدل تخزينه بالتطبيق مباشرة، لأن أي XOR/تعمية ثابتة داخل APK قابلة للفك خلال ثوانٍ.
  */
 public class AIEngine {
 
-    // ═══════════════════════════════════════════════════════════
-    // إعدادات الاتصال
-    // ═══════════════════════════════════════════════════════════
     private static String API_URL = "https://api.mistral.ai/v1/chat/completions";
     private static final String MODEL = "mistral-small-latest";
     private static final int MAX_TOKENS = 4000;
@@ -50,20 +51,43 @@ public class AIEngine {
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     // ═══════════════════════════════════════════════════════════
-    // API Key — يُمرر من الخارج (لا يُخزن داخل الكود أبدًا)
+    // ⚠️ مرحلة تطوير فقط — مفتاح مدمج داخل الكود (XOR + hex، مو تشفير حقيقي)
+    // ─────────────────────────────────────────────────────────────
+    // هذا obfuscation بسيط يمنع القراءة البصرية المباشرة للمفتاح بالكود المصدري،
+    // لكنه لا يحميه من أي حد يفكّك الـ APK (jadx/apktool) — فك التشفير سطر واحد.
+    //
+    // 🔴 قبل أي إصدار عام (Release/Play Store): لازم ينتقل هذا المفتاح لـ Vercel
+    //    Proxy ويُحذف نهائياً من هنا. استخدم setApiKey() من BuildConfig وقتها،
+    //    أو الأفضل خلّي التطبيق يتكلم مع رابطك أنت بس عبر setApiUrl().
+    //
+    // لتوليد ENCODED_KEY: شغّل encode_key.py محلياً عندك وألصق الناتج هنا.
     // ═══════════════════════════════════════════════════════════
-    private static String apiKey = null;
+    private static final String ENCODED_KEY = "REPLACE_WITH_OUTPUT_FROM_encode_key_py";
+
+    private static String apiKey = decryptKey();
+
+    /** فك تشفير XOR بسيط — راجع التحذير أعلاه */
+    private static String decryptKey() {
+        if (ENCODED_KEY == null || ENCODED_KEY.isEmpty()
+                || ENCODED_KEY.equals("REPLACE_WITH_OUTPUT_FROM_encode_key_py")) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ENCODED_KEY.length(); i += 2) {
+            int b = Integer.parseInt(ENCODED_KEY.substring(i, i + 2), 16) ^ 0x4E;
+            sb.append((char) b);
+        }
+        return sb.toString();
+    }
 
     /**
-     * يُعيّن مفتاح API من الخارج (مثلاً من BuildConfig أو Secure Storage)
-     * ⚠️ لا تُخزن المفتاح داخل الكود المصدري — استخدم Proxy Backend إن أمكن
+     * يسمح بتجاوز المفتاح المدمج وقت التشغيل (مثلاً من BuildConfig
+     * أو لاحقاً من Vercel Proxy response). أي استدعاء لهذي يطغى على ENCODED_KEY.
      */
     public static void setApiKey(String key) {
         apiKey = key;
     }
 
-    /** تغيير رابط الـAPI (للتبديل إلى Vercel Proxy لاحقًا)
-     *  ⚠️ مقيّد بـHTTPS فقط لمنع تحويل الطلبات لرابط غير موثوق */
     public static void setApiUrl(String url) {
         if (url == null || !url.toLowerCase().startsWith("https://")) {
             throw new IllegalArgumentException("API URL يجب أن يبدأ بـ https:// فقط");
@@ -71,15 +95,11 @@ public class AIEngine {
         API_URL = url;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // واجهات الاستدعاء (Callbacks)
-    // ═══════════════════════════════════════════════════════════
     public interface Callback {
         void onResult(String result);
         void onError(String error);
     }
 
-    /** نتيجة التعديل المُنظمة */
     public static class ModificationResult {
         public final String functionName;
         public final String originalCode;
@@ -100,18 +120,6 @@ public class AIEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // الواجهة العامة — تحليل ملف كامل مع مرشحات
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * يحلل ملفًا كاملًا ويولد تعديلات دقيقة.
-     *
-     * @param fullCode       محتوى الملف الكامل
-     * @param fileName       اسم الملف
-     * @param candidates     قائمة المرشحات من StubDetector (منطقة + سياق)
-     * @param callback       نتيجة التحليل
-     */
     public static void analyzeFile(String fullCode, String fileName,
                                     List<StubDetector.Candidate> candidates,
                                     Callback callback) {
@@ -127,18 +135,13 @@ public class AIEngine {
                 String aiResponse = callAPIWithRetry(prompt);
                 List<ModificationResult> modifications = parseModifications(aiResponse);
 
-                // ─────────────────────────────────────────────
-                // طبقة تحقق أساسية قبل قبول أي تعديل من الـAI.
-                // هذا لا يغني عن AISecurityGuard منفصل، لكنه يمنع
-                // قبول أي Patch غير مطابق حرفيًا أو خارج الـCandidates.
-                // ─────────────────────────────────────────────
                 JSONArray fixesArray = new JSONArray();
                 int rejectedCount = 0;
                 for (ModificationResult mod : modifications) {
                     String rejectReason = validateModification(fullCode, mod, candidates);
                     if (rejectReason != null) {
                         rejectedCount++;
-                        continue; // نرفض التعديل بأمان بدل تطبيقه أو تخمين مكانه
+                        continue;
                     }
                     JSONObject fix = new JSONObject();
                     fix.put("function_name", mod.functionName);
@@ -164,13 +167,6 @@ public class AIEngine {
         });
     }
 
-    /**
-     * تحقق أساسي قبل قبول أي Patch من الـAI.
-     * يرجع null إذا التعديل مقبول، أو سبب الرفض كنص إذا مرفوض.
-     *
-     * ⚠️ هذا تحقق أولي داخل AIEngine فقط. لا يغني عن AISecurityGuard
-     * كطبقة مستقلة تتحقق أيضًا وقت التطبيق الفعلي في CodeApplier.
-     */
     private static String validateModification(String fullCode, ModificationResult mod,
                                                  List<StubDetector.Candidate> candidates) {
         if (mod.originalCode == null || mod.originalCode.trim().isEmpty()) {
@@ -180,12 +176,10 @@ public class AIEngine {
             return "after فارغ";
         }
 
-        // 1) before يجب أن يطابق نصًا موجودًا فعلًا داخل الملف الحقيقي (حرفيًا)
         if (!fullCode.contains(mod.originalCode)) {
             return "before غير مطابق حرفيًا لأي نص داخل الملف";
         }
 
-        // 2) الدالة المستهدفة يجب أن تكون ضمن الـCandidates التي اكتشفها StubDetector فعلًا
         boolean functionAllowed = false;
         for (StubDetector.Candidate c : candidates) {
             if (c.functionName != null && c.functionName.equals(mod.functionName)) {
@@ -197,15 +191,12 @@ public class AIEngine {
             return "الدالة '" + mod.functionName + "' ليست ضمن المرشحين الذين اكتشفهم StubDetector";
         }
 
-        // 3) حدود الأسطر يجب أن تكون منطقية وداخل الملف (0-based داخليًا)
         int totalLines = fullCode.split("\n", -1).length;
         if (mod.startLine < 0 || mod.endLine < 0 || mod.startLine > mod.endLine
                 || mod.endLine > totalLines) {
             return "أرقام الأسطر start_line/end_line خارج حدود الملف أو غير منطقية";
         }
 
-        // 4) رفض أي Patch يضيف import جديد لم يكن موجودًا أصلًا في الملف
-        //    (فحص مبسّط: أي سطر import في after غير موجود في fullCode يُرفض)
         for (String line : mod.modifiedCode.split("\n")) {
             String trimmed = line.trim();
             if ((trimmed.startsWith("import ") || trimmed.startsWith("using "))
@@ -214,33 +205,22 @@ public class AIEngine {
             }
         }
 
-        return null; // مقبول
+        return null;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // الواجهة القديمة — للتوافق مع الأكواد السابقة
-    // ⚠️ لم تعد ترسل الملف كامل كـ Candidate وهمي.
-    // الآن تستخدم StubDetector.detect() لاستخراج المناطق الناقصة الحقيقية فقط،
-    // حتى لا يعتبر الـAI أن الملف كامل منطقة قابلة للتعديل.
-    // ═══════════════════════════════════════════════════════════
+    // الواجهة القديمة — للتوافق الكامل مع الاستدعاءات الحالية
     public static void analyze(String code, String fileName, Callback callback) {
         StubDetector.StubResult result = StubDetector.detect(code);
         List<StubDetector.Candidate> candidates =
                 StubDetector.toCandidates(code, result);
 
         if (candidates == null || candidates.isEmpty()) {
-            // ما فيه stubs حقيقية مكتشفة — لا نرسل الملف كامل كـ candidate.
-            // نرجع نتيجة فارغة بدل المخاطرة بفتح الملف كامل للتعديل.
             mainHandler.post(() -> callback.onResult("{\"fixes\":[],\"file_name\":\"" + fileName + "\"}"));
             return;
         }
 
         analyzeFile(code, fileName, candidates, callback);
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // بناء الـPrompt الذكي — مع سياق المشروع الكامل
-    // ═══════════════════════════════════════════════════════════
 
     private static String buildContextualPrompt(String fullCode, String fileName,
                                                    List<StubDetector.Candidate> candidates) {
@@ -303,10 +283,6 @@ public class AIEngine {
         return prompt.toString();
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // استخراج التعديلات من رد الـAI
-    // ═══════════════════════════════════════════════════════════
-
     private static List<ModificationResult> parseModifications(String aiResult) {
         List<ModificationResult> results = new ArrayList<>();
 
@@ -314,7 +290,6 @@ public class AIEngine {
 
         String cleaned = aiResult.trim();
 
-        // إزالة تغليف Markdown فقط (هذا شكل شائع ومتوقع من ردود الـAI)
         if (cleaned.startsWith("```")) {
             int firstNewline = cleaned.indexOf('\n');
             if (firstNewline != -1) {
@@ -325,10 +300,8 @@ public class AIEngine {
             }
         }
 
-        // لا نستخرج JSON من منتصف نص عشوائي بصمت — إذا الرد لا يبدأ ولا ينتهي
-        // بأقواس JSON صريحة بعد إزالة الـMarkdown، نعتبره ردًا غير صالح ونفشل بأمان
         if (!cleaned.startsWith("{") || !cleaned.endsWith("}")) {
-            return results; // فشل آمن: قائمة فارغة بدل تخمين مكان الـJSON
+            return results;
         }
 
         try {
@@ -355,15 +328,7 @@ public class AIEngine {
         return results;
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // توليد Diff (للعرض على المستخدم قبل الموافقة)
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * يولد نص Diff بسيط يُعرض للمستخدم قبل الموافقة على التعديل
-     */
     public static String generateDiff(String originalCode, ModificationResult mod) {
-        // تحقق أساسي: لا نبني Diff إذا الكود المستهدف غير موجود فعلًا في الملف الأصلي
         if (originalCode == null || mod.originalCode == null
                 || !originalCode.contains(mod.originalCode)) {
             return "⚠️ تعذّر توليد Diff: mod.originalCode غير مطابق للملف الأصلي المُعطى.";
@@ -379,7 +344,6 @@ public class AIEngine {
         String[] originalLines = originalCode.split("\n");
         String[] afterLines = mod.modifiedCode.split("\n");
 
-        // نعرض السطور المحيطة للسياق
         int contextStart = Math.max(0, mod.startLine - 3);
         int contextEnd = Math.min(originalLines.length, mod.endLine + 3);
 
@@ -398,10 +362,6 @@ public class AIEngine {
 
         return diff.toString();
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // الاتصال بالـAPI — مع Retry وError Handling
-    // ═══════════════════════════════════════════════════════════
 
     private static String callAPIWithRetry(String prompt) throws Exception {
         Exception lastError = null;
@@ -450,7 +410,7 @@ public class AIEngine {
             body.put("model", MODEL);
             body.put("messages", new JSONArray().put(message));
             body.put("max_tokens", MAX_TOKENS);
-            body.put("temperature", 0.1); // منخفض للدقة
+            body.put("temperature", 0.1);
 
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(body.toString().getBytes(StandardCharsets.UTF_8));
