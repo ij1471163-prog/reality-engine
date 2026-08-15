@@ -62,7 +62,7 @@ public class AIEngine {
     //
     // لتوليد ENCODED_KEY: شغّل encode_key.py محلياً عندك وألصق الناتج هنا.
     // ═══════════════════════════════════════════════════════════
-    private static final String ENCODED_KEY = "REPLACE_WITH_OUTPUT_FROM_encode_key_py";
+    private static final String ENCODED_KEY = "3c281e1c291e7b2808217b773a05087b2a17077c3721062d39342f7f25291637";
 
     private static String apiKey = decryptKey();
 
