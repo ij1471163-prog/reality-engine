@@ -2,40 +2,63 @@ package com.naif.realityengine;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
 
+/**
+ * StubDetector — كاشف الدوال الناقصة فقط
+ *
+ * مسؤوليته الوحيدة:
+ *   1. اكتشاف الدوال الناقصة (Stubs) في Python و JavaScript
+ *   2. تحديد موقعها بالضبط (startLine, endLine)
+ *   3. استخراج السياق المحيط (Context) لإرساله للـ AIEngine
+ *
+ * ما ليس من مسؤوليته:
+ *   - توليد كود (لا يخمّن من الاسم)
+ *   - تعديل الملف
+ *   - قرار التنفيذ النهائي
+ */
 public class StubDetector {
 
     public enum Risk { CONFIRMED, SUSPICIOUS }
 
+    /** نتيجة الكشف — للعرض في UI */
     public static class StubFunction {
         public String name;
-        public int line;
-        public int startLine;
-        public int endLine;
+        public int line;           // سطر تعريف الدالة
+        public int startLine;      // بداية جسم الدالة
+        public int endLine;        // نهاية جسم الدالة
         public Risk risk;
-        public String reason;
-        public String snippet;
-        public String suggestion;
-        public String requiredImport;
+        public String reason;      // سبب الاشتباه
+        public String snippet;     // السطر الناقص نفسه (pass, return None, ...)
+        public String context;     // السياق المحيط (يُرسل للـ AI)
 
         public StubFunction(String name, int line, int startLine, int endLine,
-                           Risk risk, String reason, String snippet, String suggestion, String requiredImport) {
-            this.name           = name;
-            this.line           = line;
-            this.startLine      = startLine;
-            this.endLine        = endLine;
-            this.risk           = risk;
-            this.reason         = reason;
-            this.snippet        = snippet;
-            this.suggestion     = suggestion;
-            this.requiredImport = requiredImport;
+                           Risk risk, String reason, String snippet, String context) {
+            this.name      = name;
+            this.line      = line;
+            this.startLine = startLine;
+            this.endLine   = endLine;
+            this.risk      = risk;
+            this.reason    = reason;
+            this.snippet   = snippet;
+            this.context   = context;
         }
+    }
 
-        public StubFunction(String name, int line, Risk risk,
-                           String reason, String snippet, String suggestion) {
-            this(name, line, line, line, risk, reason, snippet, suggestion, null);
+    /** مرشح للـ AIEngine — يحتوي السياق الكامل */
+    public static class Candidate {
+        public final String functionName;
+        public final String codeSnippet;   // الكود الناقص فقط
+        public final String context;       // السياق المحيط (قبل + بعد)
+        public final int startLine;
+        public final int endLine;
+
+        public Candidate(String functionName, String codeSnippet,
+                         String context, int startLine, int endLine) {
+            this.functionName = functionName;
+            this.codeSnippet  = codeSnippet;
+            this.context      = context;
+            this.startLine    = startLine;
+            this.endLine      = endLine;
         }
     }
 
@@ -48,14 +71,9 @@ public class StubDetector {
         }
     }
 
-    public static class SuggestionResult {
-        public String code;
-        public String requiredImport;
-        public SuggestionResult(String code, String requiredImport) {
-            this.code = code;
-            this.requiredImport = requiredImport;
-        }
-    }
+    // ═══════════════════════════════════════════════════════════
+    // أدوات مساعدة
+    // ═══════════════════════════════════════════════════════════
 
     private static int getIndentLevel(String line) {
         int count = 0;
@@ -67,7 +85,6 @@ public class StubDetector {
         return count;
     }
 
-    // NEW: strip inline Python comments, respecting # inside strings (basic)
     private static String stripInlineComment(String line) {
         int hash = line.indexOf('#');
         if (hash < 0) return line;
@@ -105,113 +122,67 @@ public class StubDetector {
         return t.endsWith("\"\"\"") || t.endsWith("'''");
     }
 
-    public static SuggestionResult suggestWithContextEx(String name, String fullCode) {
-        String n = name.toLowerCase();
+    // ═══════════════════════════════════════════════════════════
+    // استخراج السياق المحيط (Context) — للـ AIEngine
+    // ═══════════════════════════════════════════════════════════
 
-        java.util.regex.Matcher pm = java.util.regex.Pattern
-            .compile("def " + java.util.regex.Pattern.quote(name) + "\\(([\\s\\S]*?)\\)")
-            .matcher(fullCode);
-        java.util.List<String> paramList = new java.util.ArrayList<>();
-        if (pm.find()) {
-            String paramsRaw = pm.group(1).replaceAll("\\s+", " ");
-            for (String p : paramsRaw.split(",")) {
-                String pname = p.trim().split(":")[0].trim().split("=")[0].trim();
-                if (!pname.equals("self") && !pname.equals("cls") && !pname.isEmpty())
-                    paramList.add(pname);
-            }
+    /**
+     * يستخرج عددًا من الأسطر قبل وبعد المنطقة المحددة
+     * ليعطي الـ AI فهمًا للسياق الكامل.
+     */
+    private static String extractContext(String[] lines, int startLine, int endLine,
+                                          int contextLines) {
+        int ctxStart = Math.max(0, startLine - contextLines - 1);
+        int ctxEnd   = Math.min(lines.length, endLine + contextLines);
+
+        StringBuilder ctx = new StringBuilder();
+        for (int i = ctxStart; i < ctxEnd; i++) {
+            ctx.append(String.format("%4d | ", i + 1)).append(lines[i]).append("\n");
         }
-        String p1 = paramList.size() > 0 ? paramList.get(0) : "value";
-        String p2 = paramList.size() > 1 ? paramList.get(1) : "items";
-
-        if (n.contains("email") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_")))
-            return new SuggestionResult("    return bool(re.match(r\"^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$\", str(" + p1 + ")))", "re");
-
-        if (n.contains("hash") && n.contains("password"))
-            return new SuggestionResult("    return hashlib.sha256(str(" + p1 + ").encode(\"utf-8\")).hexdigest()", "hashlib");
-
-        if (n.contains("hash") || n.contains("encrypt") || n.contains("digest"))
-            return new SuggestionResult("    return hashlib.sha256(str(" + p1 + ").encode()).hexdigest()", "hashlib");
-
-        if (n.contains("password") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_")))
-            return new SuggestionResult("    p = str(" + p1 + ")\n    return len(p) >= 8 and any(c.isupper() for c in p) and any(c.isdigit() for c in p)", null);
-
-        if (n.contains("normalize") || n.contains("clean") || n.contains("sanitize"))
-            return new SuggestionResult("    return str(" + p1 + ").strip().lower().replace(\"  \", \" \")", null);
-
-        if (n.contains("palindrome"))
-            return new SuggestionResult("    s = str(" + p1 + ").lower().replace(\" \", \"\")\n    return s == s[::-1]", null);
-
-        if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_"))
-            return new SuggestionResult("    return " + p1 + " is not None and bool(" + p1 + ")", null);
-
-        if (n.contains("calculate") || n.contains("total") || n.contains("count"))
-            return new SuggestionResult("    return sum(" + p1 + ") if " + p1 + " else 0", null);
-
-        if (n.contains("average") || n.contains("avg") || n.contains("mean"))
-            return new SuggestionResult("    items = list(" + p1 + ")\n    return sum(items) / len(items) if items else 0.0", null);
-
-        if (n.contains("sort"))
-            return new SuggestionResult("    return sorted(" + p1 + ")", null);
-
-        if (n.contains("unique") || n.contains("distinct") || n.contains("dedup"))
-            return new SuggestionResult("    return list(dict.fromkeys(" + p1 + "))", null);
-
-        if (n.contains("read") || n.contains("load"))
-            return new SuggestionResult("    if not os.path.exists(str(" + p1 + ")):\n        return None\n    with open(" + p1 + ", \"r\", encoding=\"utf-8\") as f:\n        return f.read()", "os");
-
-        if (n.contains("write") || n.contains("save"))
-            return new SuggestionResult("    with open(" + p1 + ", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(" + p2 + "))\n    return True", null);
-
-        if (n.contains("find") || n.contains("search") || n.contains("fetch"))
-            return new SuggestionResult("    return next((x for x in " + p2 + " if x == " + p1 + "), None)", null);
-
-        if (n.contains("delete") || n.contains("remove"))
-            return new SuggestionResult("    return [x for x in " + p2 + " if x != " + p1 + "]", null);
-
-        if (n.contains("format") || n.contains("convert") || n.contains("parse"))
-            return new SuggestionResult("    return str(" + p1 + ").strip()", null);
-
-        if (n.contains("json"))
-            return new SuggestionResult("    try:\n        return json.loads(str(" + p1 + "))\n    except Exception:\n        return None", "json");
-
-        if (n.contains("log") || n.contains("debug"))
-            return new SuggestionResult("    print(str(" + p1 + "))\n    return True", null);
-
-        if (n.contains("send") || n.contains("notify"))
-            return new SuggestionResult("    return {\"status\": \"pending\", \"to\": str(" + p1 + "), \"sent\": False}", null);
-
-        return new SuggestionResult("    raise NotImplementedError(f\"" + name + "() not implemented - requires manual implementation\")", null);
+        return ctx.toString();
     }
 
-    public static String suggestWithContext(String name, String fullCode) {
-        return suggestWithContextEx(name, fullCode).code;
+    /**
+     * يستخرج الكود الكامل للدالة (من التعريف حتى النهاية)
+     */
+    private static String extractFunctionCode(String[] lines, int defLineIdx, int endLineIdx) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = defLineIdx; i < endLineIdx && i < lines.length; i++) {
+            sb.append(lines[i]).append("\n");
+        }
+        return sb.toString();
     }
 
-    // PRESERVED: original suggest() — not deleted per user request
-    private static String suggest(String name) {
-        String n = name.toLowerCase();
-        if (n.matches("^(is_|has_|can_|validate_|check_|verify_).*"))
-            return "    return bool(value)  # أضف منطق التحقق";
-        if (n.contains("calculate") || n.contains("sum") || n.contains("total"))
-            return "    return sum(items)  # أضف منطق الحساب";
-        if (n.contains("read") || n.contains("load"))
-            return "    with open(filepath, 'r') as f:\n        return f.read()";
-        if (n.contains("write") || n.contains("save"))
-            return "    with open(filepath, 'w') as f:\n        f.write(data)";
-        if (n.contains("send") || n.contains("email"))
-            return "    # أضف كود الإرسال هنا";
-        if (n.contains("hash") || n.contains("encrypt"))
-            return "    return hashlib.sha256(data.encode()).hexdigest()";
-        if (n.contains("log") || n.contains("debug"))
-            return "    print(f'[LOG] {message}')";
-        if (n.contains("find") || n.contains("search"))
-            return "    return [x for x in items if query in str(x)]";
-        if (n.contains("delete") || n.contains("remove"))
-            return "    return [x for x in items if x != target]";
-        return "    raise NotImplementedError('" + name + " not implemented')";
+    // ═══════════════════════════════════════════════════════════
+    // تحويل StubFunction إلى Candidate (للـ AIEngine)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * يحول نتائج الكشف إلى قائمة مرشحات يفهمها AIEngine
+     */
+    public static List<Candidate> toCandidates(String fullCode, StubResult result) {
+        List<Candidate> candidates = new ArrayList<>();
+        String[] lines = fullCode.split("\n", -1);
+
+        for (StubFunction stub : result.stubs) {
+            String funcCode = extractFunctionCode(lines, stub.line - 1, stub.endLine);
+            String context  = extractContext(lines, stub.startLine, stub.endLine, 5);
+
+            candidates.add(new Candidate(
+                stub.name,
+                funcCode,
+                context,
+                stub.startLine,
+                stub.endLine
+            ));
+        }
+        return candidates;
     }
 
-    // REWRITTEN: O(n) line-by-line JS stub detector — zero complex regex
+    // ═══════════════════════════════════════════════════════════
+    // كشف JavaScript — O(n) line-by-line
+    // ═══════════════════════════════════════════════════════════
+
     private static void detectJavaScriptStubs(String code, List<StubFunction> stubs) {
         String[] lines = code.split("\n", -1);
         int i = 0;
@@ -253,7 +224,6 @@ public class StubDetector {
                     hasBlock = true;
                     break;
                 }
-                // Single-line arrow without block: () => expr; — skip
                 if (lines[s].contains("=>") && !lines[s].contains("{")) {
                     hasBlock = false;
                     break;
@@ -264,7 +234,6 @@ public class StubDetector {
                 continue;
             }
 
-            // Find opening brace line
             int braceLine = -1;
             for (int s = i; s < searchLimit && s < lines.length; s++) {
                 if (lines[s].contains("{")) {
@@ -277,7 +246,6 @@ public class StubDetector {
                 continue;
             }
 
-            // Brace counting to find exact end
             int braceCount = 0;
             int endLine = braceLine;
             boolean foundOpen = false;
@@ -291,7 +259,6 @@ public class StubDetector {
                 if (foundOpen && braceCount == 0) break;
             }
 
-            // Check if body is empty/trivial
             StringBuilder bodyBuilder = new StringBuilder();
             for (int s = braceLine; s <= endLine; s++) {
                 bodyBuilder.append(lines[s]).append("\n");
@@ -310,17 +277,15 @@ public class StubDetector {
                 || bodyContent.matches("^return\\s+\"\"\\s*;?$");
 
             if (isEmpty) {
-                // FIXED: نسخة final من name عشان يصلح استخدامها جوه lambda
-                // (السبب الأصلي لخطأ compile: "local variables referenced
-                // from a lambda expression must be final or effectively final")
                 final String finalName = name;
                 boolean exists = stubs.stream().anyMatch(s -> s.name.equals(finalName));
                 if (!exists) {
+                    String context = extractContext(lines, i + 1, endLine + 1, 5);
                     stubs.add(new StubFunction(
                         name, i + 1, i + 1, endLine + 1, Risk.CONFIRMED,
                         "دالة JS فارغة",
                         line.substring(0, Math.min(80, line.length())),
-                        "// TODO: implement " + name, null
+                        context
                     ));
                 }
             }
@@ -328,7 +293,10 @@ public class StubDetector {
         }
     }
 
-    // O(n) line-by-line Python parser — zero complex regex
+    // ═══════════════════════════════════════════════════════════
+    // كشف Python — O(n) line-by-line
+    // ═══════════════════════════════════════════════════════════
+
     public static StubResult detect(String code) {
         List<StubFunction> stubs = new ArrayList<>();
         if (code == null || code.trim().isEmpty()) {
@@ -373,7 +341,6 @@ public class StubDetector {
             int baseIndent = getIndentLevel(line);
             int signatureEnd = i;
 
-            // FIXED: strip inline comments before checking for colon
             while (signatureEnd < lines.length) {
                 String clean = stripInlineComment(lines[signatureEnd]).trim();
                 if (clean.endsWith(":")) break;
@@ -455,10 +422,10 @@ public class StubDetector {
             if (isStub) {
                 boolean exists = stubs.stream().anyMatch(s -> s.name.equals(funcName));
                 if (!exists) {
-                    SuggestionResult sr = suggestWithContextEx(funcName, code);
+                    String context = extractContext(lines, bodyStartIdx + 1, endLine, 5);
                     stubs.add(new StubFunction(
                         funcName, defLine, bodyStartIdx + 1, endLine,
-                        risk, reason, snippet, sr.code, sr.requiredImport
+                        risk, reason, snippet, context
                     ));
                 }
             }
@@ -471,5 +438,5 @@ public class StubDetector {
 
         return new StubResult(stubs, totalFunctions);
     }
-                        }
+}
 
