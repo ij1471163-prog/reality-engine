@@ -2,49 +2,55 @@ package com.naif.realityengine;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * StubDetector — كاشف الدوال الناقصة فقط
+ * StubDetector — كاشف الدوال الناقصة + مولّد اقتراحات مبدئية
  *
- * مسؤوليته الوحيدة:
+ * مسؤوليته:
  *   1. اكتشاف الدوال الناقصة (Stubs) في Python و JavaScript
  *   2. تحديد موقعها بالضبط (startLine, endLine)
- *   3. استخراج السياق المحيط (Context) لإرساله للـ AIEngine
+ *   3. استخراج السياق المحيط (Context) لإرساله للـ AIEngine (المعمارية الجديدة)
+ *   4. توليد اقتراح مبدئي بسيط (suggestion) — طبقة توافق فقط، ليست بديلاً عن AIEngine
  *
- * ما ليس من مسؤوليته:
- *   - توليد كود (لا يخمّن من الاسم)
- *   - تعديل الملف
- *   - قرار التنفيذ النهائي
+ * ⚠️ suggestion هنا اقتراح سريع مبني على اسم الدالة فقط (heuristic)، مو تحليل AI حقيقي.
+ *    القرار النهائي والتوليد الدقيق يفترض يمر عبر AIEngine.analyzeFile() + AISecurityGuard.
  */
 public class StubDetector {
 
     public enum Risk { CONFIRMED, SUSPICIOUS }
 
-    /** نتيجة الكشف — للعرض في UI */
+    /** نتيجة الكشف — للعرض في UI وللتوافق مع الاستدعاءات القديمة */
     public static class StubFunction {
         public String name;
-        public int line;           // سطر تعريف الدالة
-        public int startLine;      // بداية جسم الدالة
-        public int endLine;        // نهاية جسم الدالة
+        public int line;             // سطر تعريف الدالة
+        public int startLine;        // بداية جسم الدالة
+        public int endLine;          // نهاية جسم الدالة
         public Risk risk;
-        public String reason;      // سبب الاشتباه
-        public String snippet;     // السطر الناقص نفسه (pass, return None, ...)
-        public String context;     // السياق المحيط (يُرسل للـ AI)
+        public String reason;        // سبب الاشتباه
+        public String snippet;       // السطر الناقص نفسه (pass, return None, ...)
+        public String context;       // السياق المحيط (يُرسل للـ AIEngine الجديد)
+        public String suggestion;    // اقتراح heuristic سريع — توافق فقط
+        public String requiredImport;
 
         public StubFunction(String name, int line, int startLine, int endLine,
-                           Risk risk, String reason, String snippet, String context) {
-            this.name      = name;
-            this.line      = line;
-            this.startLine = startLine;
-            this.endLine   = endLine;
-            this.risk      = risk;
-            this.reason    = reason;
-            this.snippet   = snippet;
-            this.context   = context;
+                           Risk risk, String reason, String snippet, String context,
+                           String suggestion, String requiredImport) {
+            this.name           = name;
+            this.line           = line;
+            this.startLine      = startLine;
+            this.endLine        = endLine;
+            this.risk           = risk;
+            this.reason         = reason;
+            this.snippet        = snippet;
+            this.context        = context;
+            this.suggestion     = suggestion;
+            this.requiredImport = requiredImport;
         }
     }
 
-    /** مرشح للـ AIEngine — يحتوي السياق الكامل */
+    /** مرشح للـ AIEngine الجديد — يحتوي السياق الكامل */
     public static class Candidate {
         public final String functionName;
         public final String codeSnippet;   // الكود الناقص فقط
@@ -68,6 +74,15 @@ public class StubDetector {
         public StubResult(List<StubFunction> stubs, int totalFunctions) {
             this.stubs          = stubs;
             this.totalFunctions = totalFunctions;
+        }
+    }
+
+    public static class SuggestionResult {
+        public String code;
+        public String requiredImport;
+        public SuggestionResult(String code, String requiredImport) {
+            this.code = code;
+            this.requiredImport = requiredImport;
         }
     }
 
@@ -107,11 +122,6 @@ public class StubDetector {
         return line.substring(0, hash);
     }
 
-    private static boolean isBlankOrComment(String line) {
-        String t = line.trim();
-        return t.isEmpty() || t.startsWith("#");
-    }
-
     private static boolean isDocstringStart(String line) {
         String t = line.trim();
         return t.startsWith("\"\"\"") || t.startsWith("'''");
@@ -123,13 +133,9 @@ public class StubDetector {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // استخراج السياق المحيط (Context) — للـ AIEngine
+    // استخراج السياق المحيط (Context) — للـ AIEngine الجديد
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * يستخرج عددًا من الأسطر قبل وبعد المنطقة المحددة
-     * ليعطي الـ AI فهمًا للسياق الكامل.
-     */
     private static String extractContext(String[] lines, int startLine, int endLine,
                                           int contextLines) {
         int ctxStart = Math.max(0, startLine - contextLines - 1);
@@ -142,9 +148,6 @@ public class StubDetector {
         return ctx.toString();
     }
 
-    /**
-     * يستخرج الكود الكامل للدالة (من التعريف حتى النهاية)
-     */
     private static String extractFunctionCode(String[] lines, int defLineIdx, int endLineIdx) {
         StringBuilder sb = new StringBuilder();
         for (int i = defLineIdx; i < endLineIdx && i < lines.length; i++) {
@@ -154,12 +157,9 @@ public class StubDetector {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // تحويل StubFunction إلى Candidate (للـ AIEngine)
+    // تحويل StubFunction إلى Candidate (لـ AIEngine.analyzeFile الجديدة)
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * يحول نتائج الكشف إلى قائمة مرشحات يفهمها AIEngine
-     */
     public static List<Candidate> toCandidates(String fullCode, StubResult result) {
         List<Candidate> candidates = new ArrayList<>();
         String[] lines = fullCode.split("\n", -1);
@@ -180,6 +180,95 @@ public class StubDetector {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // توليد اقتراح مبدئي (heuristic) — طبقة توافق مع الاستدعاءات القديمة
+    // ═══════════════════════════════════════════════════════════
+
+    public static SuggestionResult suggestWithContextEx(String name, String fullCode) {
+        String n = name.toLowerCase();
+
+        Matcher pm = Pattern
+            .compile("def " + Pattern.quote(name) + "\\(([\\s\\S]*?)\\)")
+            .matcher(fullCode);
+        List<String> paramList = new ArrayList<>();
+        if (pm.find()) {
+            String paramsRaw = pm.group(1).replaceAll("\\s+", " ");
+            for (String p : paramsRaw.split(",")) {
+                String pname = p.trim().split(":")[0].trim().split("=")[0].trim();
+                if (!pname.equals("self") && !pname.equals("cls") && !pname.isEmpty())
+                    paramList.add(pname);
+            }
+        }
+        String p1 = paramList.size() > 0 ? paramList.get(0) : "value";
+        String p2 = paramList.size() > 1 ? paramList.get(1) : "items";
+
+        if (n.contains("email") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_")))
+            return new SuggestionResult("    return bool(re.match(r\"^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$\", str(" + p1 + ")))", "re");
+
+        if (n.contains("hash") && n.contains("password"))
+            return new SuggestionResult("    return hashlib.sha256(str(" + p1 + ").encode(\"utf-8\")).hexdigest()", "hashlib");
+
+        if (n.contains("hash") || n.contains("encrypt") || n.contains("digest"))
+            return new SuggestionResult("    return hashlib.sha256(str(" + p1 + ").encode()).hexdigest()", "hashlib");
+
+        if (n.contains("password") && (n.startsWith("is_") || n.startsWith("validate_") || n.startsWith("check_")))
+            return new SuggestionResult("    p = str(" + p1 + ")\n    return len(p) >= 8 and any(c.isupper() for c in p) and any(c.isdigit() for c in p)", null);
+
+        if (n.contains("normalize") || n.contains("clean") || n.contains("sanitize"))
+            return new SuggestionResult("    return str(" + p1 + ").strip().lower().replace(\"  \", \" \")", null);
+
+        if (n.contains("palindrome"))
+            return new SuggestionResult("    s = str(" + p1 + ").lower().replace(\" \", \"\")\n    return s == s[::-1]", null);
+
+        if (n.startsWith("is_") || n.startsWith("has_") || n.startsWith("can_") || n.startsWith("validate_") || n.startsWith("check_") || n.startsWith("verify_"))
+            return new SuggestionResult("    return " + p1 + " is not None and bool(" + p1 + ")", null);
+
+        if (n.contains("calculate") || n.contains("total") || n.contains("count"))
+            return new SuggestionResult("    return sum(" + p1 + ") if " + p1 + " else 0", null);
+
+        if (n.contains("average") || n.contains("avg") || n.contains("mean"))
+            return new SuggestionResult("    items = list(" + p1 + ")\n    return sum(items) / len(items) if items else 0.0", null);
+
+        if (n.contains("sort"))
+            return new SuggestionResult("    return sorted(" + p1 + ")", null);
+
+        if (n.contains("unique") || n.contains("distinct") || n.contains("dedup"))
+            return new SuggestionResult("    return list(dict.fromkeys(" + p1 + "))", null);
+
+        if (n.contains("read") || n.contains("load"))
+            return new SuggestionResult("    if not os.path.exists(str(" + p1 + ")):\n        return None\n    with open(" + p1 + ", \"r\", encoding=\"utf-8\") as f:\n        return f.read()", "os");
+
+        if (n.contains("write") || n.contains("save"))
+            return new SuggestionResult("    with open(" + p1 + ", \"w\", encoding=\"utf-8\") as f:\n        f.write(str(" + p2 + "))\n    return True", null);
+
+        if (n.contains("find") || n.contains("search") || n.contains("fetch"))
+            return new SuggestionResult("    return next((x for x in " + p2 + " if x == " + p1 + "), None)", null);
+
+        if (n.contains("delete") || n.contains("remove"))
+            return new SuggestionResult("    return [x for x in " + p2 + " if x != " + p1 + "]", null);
+
+        if (n.contains("format") || n.contains("convert") || n.contains("parse"))
+            return new SuggestionResult("    return str(" + p1 + ").strip()", null);
+
+        if (n.contains("json"))
+            return new SuggestionResult("    try:\n        return json.loads(str(" + p1 + "))\n    except Exception:\n        return None", "json");
+
+        if (n.contains("log") || n.contains("debug"))
+            return new SuggestionResult("    print(str(" + p1 + "))\n    return True", null);
+
+        if (n.contains("send") || n.contains("notify"))
+            return new SuggestionResult("    return {\"status\": \"pending\", \"to\": str(" + p1 + "), \"sent\": False}", null);
+
+        return new SuggestionResult("    raise NotImplementedError(f\"" + name + "() not implemented - requires manual implementation\")", null);
+    }
+
+    /**
+     * الواجهة القديمة المتوافقة — تُستخدم من ApprovalWorkflow.java و AIAnalysisActivity.java
+     */
+    public static String suggestWithContext(String name, String fullCode) {
+        return suggestWithContextEx(name, fullCode).code;
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // كشف JavaScript — O(n) line-by-line
     // ═══════════════════════════════════════════════════════════
 
@@ -188,22 +277,15 @@ public class StubDetector {
         int i = 0;
         while (i < lines.length) {
             String line = lines[i].trim();
-            boolean isFuncDecl = false;
-            boolean isVarAssign = false;
             String name = null;
 
-            // Pattern 1: function name(...) or async function name(...)
             if (line.matches("^(?:async\\s+)?function\\s+\\w+.*")) {
-                isFuncDecl = true;
                 String afterFunc = line.replaceFirst("^(?:async\\s+)?function\\s+", "");
                 int paren = afterFunc.indexOf('(');
                 if (paren > 0) {
                     name = afterFunc.substring(0, paren).trim();
                 }
-            }
-            // Pattern 2: const/let/var name = function(...) or (...) => ...
-            else if (line.matches("^(?:const|let|var)\\s+\\w+\\s*=.*")) {
-                isVarAssign = true;
+            } else if (line.matches("^(?:const|let|var)\\s+\\w+\\s*=.*")) {
                 String afterVar = line.replaceFirst("^(?:const|let|var)\\s+", "");
                 int eq = afterVar.indexOf('=');
                 if (eq > 0) {
@@ -216,7 +298,6 @@ public class StubDetector {
                 continue;
             }
 
-            // Only match block-style functions (contains { )
             boolean hasBlock = false;
             int searchLimit = Math.min(i + 3, lines.length);
             for (int s = i; s < searchLimit; s++) {
@@ -285,7 +366,9 @@ public class StubDetector {
                         name, i + 1, i + 1, endLine + 1, Risk.CONFIRMED,
                         "دالة JS فارغة",
                         line.substring(0, Math.min(80, line.length())),
-                        context
+                        context,
+                        "// TODO: implement " + name,
+                        null
                     ));
                 }
             }
@@ -423,9 +506,11 @@ public class StubDetector {
                 boolean exists = stubs.stream().anyMatch(s -> s.name.equals(funcName));
                 if (!exists) {
                     String context = extractContext(lines, bodyStartIdx + 1, endLine, 5);
+                    SuggestionResult sr = suggestWithContextEx(funcName, code);
                     stubs.add(new StubFunction(
                         funcName, defLine, bodyStartIdx + 1, endLine,
-                        risk, reason, snippet, context
+                        risk, reason, snippet, context,
+                        sr.code, sr.requiredImport
                     ));
                 }
             }
