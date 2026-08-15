@@ -544,4 +544,125 @@ public class AISecurityGuard {
             checks.add(new Check("AI301", "Function Constructor",
                 !hasFunctionCtor,
                 hasFunctionCtor ? "Function constructor — خطر واضح" : "لا Function constructor ✓",
+                true));
+
+            boolean hasEval = Pattern.compile(
+                "(?i)\\beval\\s*\\("
+            ).matcher(code).find();
+            checks.add(new Check("AI302", "Eval Usage",
+                !hasEval,
+                hasEval ? "استخدام eval() — خطر واضح (code injection)" : "لا eval() ✓",
+                true));
+
+            boolean hasChildProcess = Pattern.compile(
+                "(?i)\\b(child_process|require\\s*\\(\\s*['\"]child_process['\"]\\s*\\)|exec\\s*\\(|execSync|spawn\\s*\\()\\b"
+            ).matcher(code).find();
+            checks.add(new Check("AI303", "Process Execution (Node)",
+                !hasChildProcess,
+                hasChildProcess ? "تنفيذ عمليات نظام عبر child_process — خطر واضح" : "لا process execution ✓",
+                true));
+
+            boolean hasDangerousDom = Pattern.compile(
+                "(?i)\\b(document\\.write\\s*\\(|innerHTML\\s*=|outerHTML\\s*=|dangerouslySetInnerHTML)\\b"
+            ).matcher(code).find();
+            checks.add(new Check("AI304", "Unsafe DOM Injection",
+                !hasDangerousDom,
+                hasDangerousDom ? "كتابة مباشرة في DOM (document.write/innerHTML) — خطر XSS محتمل" : "لا DOM injection مشبوه ✓",
+                false));
+
+            boolean hasPrototypePollution = Pattern.compile(
+                "(?i)(__proto__|prototype\\s*\\[|Object\\.setPrototypeOf)"
+            ).matcher(code).find();
+            checks.add(new Check("AI305", "Prototype Pollution Pattern",
+                !hasPrototypePollution,
+                hasPrototypePollution ? "تلاعب مباشر بالـ prototype — راجع السياق" : "لا prototype pollution ✓",
+                false));
+
+            boolean hasHardcodedSecret = Pattern.compile(
+                "(?i)(api[_-]?key|secret|password|token)\\s*[:=]\\s*['\"][A-Za-z0-9_\\-]{12,}['\"]"
+            ).matcher(code).find();
+            checks.add(new Check("AI306", "Hardcoded Secret",
+                !hasHardcodedSecret,
+                hasHardcodedSecret ? "مفتاح/سر مكتوب مباشرة بالكود — خطر تسريب" : "لا secrets مكتوبة مباشرة ✓",
+                true));
+        }
+
+        return checks;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Orchestrator — يجمع كل الفحوصات ويطلع القرار النهائي
+    // ═══════════════════════════════════════════════════════════
+
+    public static GuardReport analyze(String originalCode, String modifiedCode,
+                                       String fileName, int startLine, int endLine,
+                                       String functionName) {
+
+        Language lang = detectLanguage(modifiedCode, fileName);
+        List<Check> checks = new ArrayList<>();
+
+        // 1) فحص النطاق (scope)
+        ScopeValidationResult scope = validateScope(originalCode, modifiedCode, startLine, endLine);
+        checks.add(new Check("AI001", "Scope Validation", scope.valid, scope.reason, true));
+
+        // 2) سلامة الملف (لا دوال محذوفة)
+        checks.add(validateFileIntegrity(originalCode, modifiedCode, lang));
+
+        // 3) سلامة الدالة المستهدفة (لو محددة)
+        if (functionName != null && !functionName.isEmpty()) {
+            checks.add(validateFunctionIntegrity(originalCode, modifiedCode, functionName, lang));
+        }
+
+        // 4) الفحص النحوي الهيكلي
+        boolean syntaxOk = structuralSyntaxCheck(modifiedCode, lang);
+        checks.add(new Check("AI010", "Structural Syntax", syntaxOk,
+            syntaxOk ? "الأقواس والسلاسل متوازنة ✓" : "خطأ هيكلي — أقواس/سلاسل غير متوازنة", true));
+
+        // 4b) فحص إضافي لبايثون (indentation heuristics)
+        if (lang == Language.PYTHON) {
+            boolean pyOk = pythonSyntaxHeuristics(modifiedCode);
+            checks.add(new Check("AI010b", "Python Indentation Heuristic", pyOk,
+                pyOk ? "المسافات البادئة متسقة ✓" : "احتمال خطأ indentation بعد سطر ينتهي بـ ':'", false));
+        }
+
+        // 5) الفحوصات الأمنية الخاصة باللغة
+        checks.addAll(performLanguageChecks(modifiedCode, lang));
+
+        // 6) احتساب النتيجة والقرار النهائي
+        boolean hasCriticalFailure = false;
+        int totalChecks = checks.size();
+        int passedChecks = 0;
+
+        for (Check ch : checks) {
+            if (ch.passed) {
+                passedChecks++;
+            } else if (ch.critical) {
+                hasCriticalFailure = true;
+            }
+        }
+
+        int safetyScore = totalChecks == 0 ? 0 : (int) Math.round((passedChecks * 100.0) / totalChecks);
+
+        GuardVerdict verdict;
+        String blockedReason = null;
+
+        if (hasCriticalFailure) {
+            verdict = GuardVerdict.BLOCKED;
+            StringBuilder reasons = new StringBuilder();
+            for (Check ch : checks) {
+                if (!ch.passed && ch.critical) {
+                    if (reasons.length() > 0) reasons.append(" | ");
+                    reasons.append(ch.name).append(": ").append(ch.details);
+                }
+            }
+            blockedReason = reasons.toString();
+        } else if (safetyScore < 100) {
+            verdict = GuardVerdict.WARNING;
+        } else {
+            verdict = GuardVerdict.SAFE;
+        }
+
+        return new GuardReport(verdict, safetyScore, checks, blockedReason);
+    }
+}
 
