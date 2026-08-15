@@ -17,6 +17,10 @@ import java.util.regex.Pattern;
  *   4. يفحص الأمان على الملف المعدل كاملاً
  *   5. يتحقق من صحة النحو الهيكلية
  *   6. يُرجع تقريراً يقرر: SAFE / WARNING / BLOCKED
+ *
+ * طبقة التوافق (Compatibility Bridge):
+ *   inspect(String) و inspectWithContext(...) موجودة تحت لتبقى
+ *   ApprovalWorkflow.java و AIAnalysisActivity.java تشتغل بدون أي تعديل عليها.
  */
 public class AISecurityGuard {
 
@@ -141,10 +145,6 @@ public class AISecurityGuard {
     // فحوصات النطاق والملف الكامل
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * يتحقق أن التعديل لم يخرج عن المنطقة المسموحة.
-     * يقارن الملف الأصلي والمعدل سطراً بسطر مع احتساب فرق الأسطر.
-     */
     public static ScopeValidationResult validateScope(String originalCode, String modifiedCode,
                                                       int startLine, int endLine) {
         if (originalCode == null || modifiedCode == null) {
@@ -158,7 +158,6 @@ public class AISecurityGuard {
         String[] modLines = modifiedCode.split("\n", -1);
         int lineDiff = modLines.length - origLines.length;
 
-        // التحقق من أن الأسطر قبل النطاق لم تتغير
         for (int i = 0; i < startLine && i < origLines.length && i < modLines.length; i++) {
             if (!origLines[i].equals(modLines[i])) {
                 return new ScopeValidationResult(false,
@@ -166,7 +165,6 @@ public class AISecurityGuard {
             }
         }
 
-        // التحقق من أن الأسطر بعد النطاق لم تتغير (مع احتساب فرق الأسطر)
         for (int i = endLine + 1; i < origLines.length; i++) {
             int modIdx = i + lineDiff;
             if (modIdx < 0 || modIdx >= modLines.length) {
@@ -182,11 +180,6 @@ public class AISecurityGuard {
         return new ScopeValidationResult(true, "النطاق صالح — prefix و suffix ثابتان");
     }
 
-    /**
-     * يتحقق من سلامة الملف المعدل:
-     * - لم تُحذف دوال أخرى موجودة في الأصل
-     * - لم يتغير هيكل الملف بشكل غير متوقع
-     */
     public static Check validateFileIntegrity(String originalCode, String modifiedCode,
                                                Language lang) {
         if (originalCode == null || modifiedCode == null) {
@@ -236,7 +229,7 @@ public class AISecurityGuard {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // فحص النحو الهيكلي — محسّن
+    // فحص النحو الهيكلي
     // ═══════════════════════════════════════════════════════════
 
     public static boolean structuralSyntaxCheck(String code, Language lang) {
@@ -382,9 +375,6 @@ public class AISecurityGuard {
         return true;
     }
 
-    /**
-     * فحص نحوي إضافي للـPython — يكشف أخطاء شائعة
-     */
     public static boolean pythonSyntaxHeuristics(String code) {
         if (code == null) return false;
         String[] lines = code.split("\n");
@@ -474,7 +464,7 @@ public class AISecurityGuard {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // فحوصات لغوية — تُطبق على الملف المعدل كاملاً
+    // فحوصات لغوية — تُطبق على الكود المعطى كاملاً
     // ═══════════════════════════════════════════════════════════
 
     public static List<Check> performLanguageChecks(String code, Language lang) {
@@ -585,26 +575,50 @@ public class AISecurityGuard {
                 !hasHardcodedSecret,
                 hasHardcodedSecret ? "مفتاح/سر مكتوب مباشرة بالكود — خطر تسريب" : "لا secrets مكتوبة مباشرة ✓",
                 true));
+
+        } else if (lang == Language.HTML) {
+            boolean hasScriptTag = Pattern.compile("(?i)<script\\b").matcher(code).find();
+            checks.add(new Check("AI401", "HTML Script Tag",
+                !hasScriptTag,
+                hasScriptTag ? "يحتوي على <script> — راجع السياق" : "لا <script> ✓",
+                false));
+
+            boolean hasInlineEvent = Pattern.compile("(?i)\\s(on\\w+)\\s*=").matcher(code).find();
+            checks.add(new Check("AI402", "HTML Inline Event Handler",
+                !hasInlineEvent,
+                hasInlineEvent ? "inline event handlers — قد يكون XSS" : "لا inline events ✓",
+                false));
+
+            boolean hasJsProtocol = Pattern.compile("(?i)javascript\\s*:").matcher(code).find();
+            checks.add(new Check("AI403", "JavaScript Protocol",
+                !hasJsProtocol,
+                hasJsProtocol ? "javascript: protocol — خطر واضح" : "لا javascript: ✓",
+                true));
+
+            boolean hasIframe = Pattern.compile("(?i)<iframe\\b").matcher(code).find();
+            checks.add(new Check("AI404", "HTML Iframe",
+                !hasIframe,
+                hasIframe ? "يحتوي على <iframe> — راجع السياق" : "لا <iframe> ✓",
+                false));
         }
 
         return checks;
     }
 
     // ═══════════════════════════════════════════════════════════
-    // Orchestrator — يجمع كل الفحوصات ويطلع القرار النهائي
+    // Orchestrators — الجديد + طبقة التوافق
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * Overload توافقي — فحص سريع لكود واحد فقط (بدون original/modified diff).
-     * يُستخدم لما ما يكون عندك نسخة أصلية للمقارنة (مثل فحص suggestion جاهز من StubDetector).
+     * inspect(String) — التوافق الكامل مع الاستدعاء القديم:
+     *   AISecurityGuard.inspect(suggestion)
+     * ما فيه original للمقارنة → فحص مباشر على الكود المعطى.
      */
     public static GuardReport inspect(String code) {
         return inspect(code, null);
     }
 
     public static GuardReport inspect(String code, String fileName) {
-        // بما إنه ما فيه original للمقارنة، نعتبر الكود كامل ضمن النطاق المسموح
-        // (scope check يمر تلقائياً لأنه ملف جديد بالكامل وليس تعديل جزئي)
         Language lang = detectLanguage(code, fileName);
         List<Check> checks = new ArrayList<>();
 
@@ -626,6 +640,33 @@ public class AISecurityGuard {
         return buildReport(checks);
     }
 
+    /**
+     * inspectWithContext(...) — bridge توافقي مع النسخة القديمة.
+     * يحوّل الاستدعاء لمنطق analyze() الجديد (فحص scope + سلامة ملف).
+     * لو ما فيه originalCode/startLine/endLine كافية، يرجع لفحص inspect() المباشر.
+     */
+    public static GuardReport inspectWithContext(String suggestion, String originalCode,
+                                                  int startLine, int endLine) {
+        return inspectWithContext(suggestion, originalCode, startLine, endLine, null, null);
+    }
+
+    public static GuardReport inspectWithContext(String suggestion, String originalCode,
+                                                  int startLine, int endLine, String functionName) {
+        return inspectWithContext(suggestion, originalCode, startLine, endLine, functionName, null);
+    }
+
+    public static GuardReport inspectWithContext(String suggestion, String originalCode,
+                                                  int startLine, int endLine, String functionName,
+                                                  String fileName) {
+        if (originalCode == null || startLine < 0 || endLine < 0) {
+            return inspect(suggestion, fileName);
+        }
+        return analyze(originalCode, suggestion, fileName, startLine, endLine, functionName);
+    }
+
+    /**
+     * analyze() — الواجهة الأساسية الجديدة: مقارنة original مقابل modified كاملين.
+     */
     public static GuardReport analyze(String originalCode, String modifiedCode,
                                        String fileName, int startLine, int endLine,
                                        String functionName) {
@@ -633,34 +674,27 @@ public class AISecurityGuard {
         Language lang = detectLanguage(modifiedCode, fileName);
         List<Check> checks = new ArrayList<>();
 
-        // 1) فحص النطاق (scope)
         ScopeValidationResult scope = validateScope(originalCode, modifiedCode, startLine, endLine);
         checks.add(new Check("AI001", "Scope Validation", scope.valid, scope.reason, true));
 
-        // 2) سلامة الملف (لا دوال محذوفة)
         checks.add(validateFileIntegrity(originalCode, modifiedCode, lang));
 
-        // 3) سلامة الدالة المستهدفة (لو محددة)
         if (functionName != null && !functionName.isEmpty()) {
             checks.add(validateFunctionIntegrity(originalCode, modifiedCode, functionName, lang));
         }
 
-        // 4) الفحص النحوي الهيكلي
         boolean syntaxOk = structuralSyntaxCheck(modifiedCode, lang);
         checks.add(new Check("AI010", "Structural Syntax", syntaxOk,
             syntaxOk ? "الأقواس والسلاسل متوازنة ✓" : "خطأ هيكلي — أقواس/سلاسل غير متوازنة", true));
 
-        // 4b) فحص إضافي لبايثون (indentation heuristics)
         if (lang == Language.PYTHON) {
             boolean pyOk = pythonSyntaxHeuristics(modifiedCode);
             checks.add(new Check("AI010b", "Python Indentation Heuristic", pyOk,
                 pyOk ? "المسافات البادئة متسقة ✓" : "احتمال خطأ indentation بعد سطر ينتهي بـ ':'", false));
         }
 
-        // 5) الفحوصات الأمنية الخاصة باللغة
         checks.addAll(performLanguageChecks(modifiedCode, lang));
 
-        // 6) احتساب النتيجة والقرار النهائي
         return buildReport(checks);
     }
 
