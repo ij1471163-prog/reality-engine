@@ -594,6 +594,38 @@ public class AISecurityGuard {
     // Orchestrator — يجمع كل الفحوصات ويطلع القرار النهائي
     // ═══════════════════════════════════════════════════════════
 
+    /**
+     * Overload توافقي — فحص سريع لكود واحد فقط (بدون original/modified diff).
+     * يُستخدم لما ما يكون عندك نسخة أصلية للمقارنة (مثل فحص suggestion جاهز من StubDetector).
+     */
+    public static GuardReport inspect(String code) {
+        return inspect(code, null);
+    }
+
+    public static GuardReport inspect(String code, String fileName) {
+        // بما إنه ما فيه original للمقارنة، نعتبر الكود كامل ضمن النطاق المسموح
+        // (scope check يمر تلقائياً لأنه ملف جديد بالكامل وليس تعديل جزئي)
+        Language lang = detectLanguage(code, fileName);
+        List<Check> checks = new ArrayList<>();
+
+        checks.add(new Check("AI001", "Scope Validation", true,
+            "لا يوجد original للمقارنة — فحص مباشر على الكود الكامل", false));
+
+        boolean syntaxOk = structuralSyntaxCheck(code, lang);
+        checks.add(new Check("AI010", "Structural Syntax", syntaxOk,
+            syntaxOk ? "الأقواس والسلاسل متوازنة ✓" : "خطأ هيكلي — أقواس/سلاسل غير متوازنة", true));
+
+        if (lang == Language.PYTHON) {
+            boolean pyOk = pythonSyntaxHeuristics(code);
+            checks.add(new Check("AI010b", "Python Indentation Heuristic", pyOk,
+                pyOk ? "المسافات البادئة متسقة ✓" : "احتمال خطأ indentation بعد سطر ينتهي بـ ':'", false));
+        }
+
+        checks.addAll(performLanguageChecks(code, lang));
+
+        return buildReport(checks);
+    }
+
     public static GuardReport analyze(String originalCode, String modifiedCode,
                                        String fileName, int startLine, int endLine,
                                        String functionName) {
@@ -629,6 +661,10 @@ public class AISecurityGuard {
         checks.addAll(performLanguageChecks(modifiedCode, lang));
 
         // 6) احتساب النتيجة والقرار النهائي
+        return buildReport(checks);
+    }
+
+    private static GuardReport buildReport(List<Check> checks) {
         boolean hasCriticalFailure = false;
         int totalChecks = checks.size();
         int passedChecks = 0;
