@@ -158,7 +158,8 @@ public class AIEngine {
                 result.put("file_name", fileName);
                 result.put("rejected_count", rejectedCount);
 
-                mainHandler.post(() -> callback.onResult(result.toString(2)));
+                String resultString = result.toString(2);
+                mainHandler.post(() -> callback.onResult(resultString));
 
             } catch (Exception e) {
                 mainHandler.post(() -> callback.onError(
