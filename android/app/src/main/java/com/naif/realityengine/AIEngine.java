@@ -26,20 +26,15 @@ import org.json.JSONObject;
 public class AIEngine {
 
     // ═══════════════════════════════════════════════════════════
-    // إعدادات الاتصال
+    // إعدادات الاتصال — Mistral API (نفس الكود القديم)
     // ═══════════════════════════════════════════════════════════
-    private static String API_URL = "https://api.anthropic.com/v1/messages";
-    private static final String MODEL = "claude-sonnet-4-20250514";
-    private static final String ANTHROPIC_VERSION = "2025-01-01";
-    private static final int MAX_TOKENS = 8000;
+    private static String API_URL = "https://api.mistral.ai/v1/chat/completions";
+    private static final String MODEL = "mistral-small-latest";
+    private static final int MAX_TOKENS = 4000;
     private static final int CONNECT_TIMEOUT_MS = 30000;
-    private static final int READ_TIMEOUT_MS = 90000;
+    private static final int READ_TIMEOUT_MS = 60000;
     private static final int MAX_ATTEMPTS = 3;
     private static final long RETRY_BASE_DELAY_MS = 1000;
-
-    private static final boolean ENABLE_EXTENDED_THINKING = true;
-    private static final int THINKING_BUDGET_TOKENS = 3000;
-    private static final String TOOL_NAME = "submit_fixes";
 
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -198,6 +193,12 @@ public class AIEngine {
         int totalLines = fullCode.split("\\R", -1).length;
         if (mod.startLine < 0 || mod.endLine < 0 || mod.startLine > mod.endLine
                 || mod.endLine > totalLines) {
+            return "أ + mod.functionName + "' ليست ضمن المرشحين الذين اكتشفهم StubDetector";
+        }
+
+        int totalLines = fullCode.split("\\R", -1).length;
+        if (mod.startLine < 0 || mod.endLine < 0 || mod.startLine > mod.endLine
+                || mod.endLine > totalLines) {
             return "أرقام الأسطر start_line/end_line خارج حدود الملف أو غير منطقية";
         }
 
@@ -325,14 +326,50 @@ public class AIEngine {
         prompt.append("\n═══════════════════════════════════════\n");
         prompt.append("المطلوب:\n");
         prompt.append("═══════════════════════════════════════\n");
-        prompt.append("استخدم أداة (Tool) ").append(TOOL_NAME).append(" حصرًا لإرجاع نتيجتك. ");
-        prompt.append("لا ترجع نصًا عاديًا أو JSON خارج الأداة.\n");
+        prompt.append("أرجع JSON فقط بدون أي نص إضافي أو شرح:\n");
+        prompt.append("{\n");
+        prompt.append("  \"fixes\": [\n");
+        prompt.append("    {\n");
+        prompt.append("      \"function_name\": \"اسم الدالة\",\n");
+        prompt.append("      \"before\": \"الكود القديم بالضبط (للـdiff)\",\n");
+        prompt.append("      \"after\": \"الكود المصلح الكامل\",\n");
+        prompt.append("      \"reason\": \"سبب التعديل ولماذا هذا هو الحل الصحيح\",\n");
+        prompt.append("      \"start_line\": رقم_سطر_البداية,\n");
+        prompt.append("      \"end_line\": رقم_سطر_النهاية\n");
+        prompt.append("    }\n");
+        prompt.append("  ]\n");
+        prompt.append("}\n\n");
         prompt.append("⚠️ مهم: أرقام الأسطر (start_line, end_line) تبدأ من 0 (0-based)، ");
         prompt.append("أي أن السطر الأول في الملف رقمه 0 وليس 1.\n");
-        prompt.append("⚠️ مهم: إذا لم يكن هناك تعديل مطلوب، استدعِ الأداة بمصفوفة fixes فارغة.\n");
+        prompt.append("⚠️ مهم: إذا لم يكن هناك تعديل مطلوب، أرجع {\"fixes\":[]}.\n");
         prompt.append("⚠️ مهم: 'after' يجب أن يكون كوداً كاملاً يستبدل 'before' بالضبط.\n");
 
         return prompt.toString();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // استخراج التعديلات من رد الـAI — يدعم Mistral (OpenAI format)
+    // ═══════════════════════════════════════════════════════════
+
+    private static List<ModificationResult> extractModifications(String rawResponse) {
+        List<ModificationResult> results = new ArrayList<>();
+        if (rawResponse == null) return results;
+
+        try {
+            JSONObject responseJson = new JSONObject(rawResponse);
+            JSONArray choices = responseJson.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) return results;
+
+            JSONObject firstChoice = choices.getJSONObject(0);
+            JSONObject message = firstChoice.optJSONObject("message");
+            if (message == null) return results;
+
+            String content = message.optString("content", "");
+            return parseModifications(content);
+
+        } catch (JSONException e) {
+            return results;
+        }
     }
 
     private static List<ModificationResult> parseModifications(String aiResult) {
@@ -386,80 +423,6 @@ public class AIEngine {
         return results;
     }
 
-    private static List<ModificationResult> extractModifications(String rawResponseJson) {
-        List<ModificationResult> results = new ArrayList<>();
-        if (rawResponseJson == null) return results;
-
-        try {
-            JSONObject responseJson = new JSONObject(rawResponseJson);
-            JSONArray contentArray = responseJson.optJSONArray("content");
-            if (contentArray == null) return results;
-
-            StringBuilder fallbackText = new StringBuilder();
-
-            for (int i = 0; i < contentArray.length(); i++) {
-                JSONObject block = contentArray.getJSONObject(i);
-                String type = block.optString("type");
-
-                if ("tool_use".equals(type) && TOOL_NAME.equals(block.optString("name"))) {
-                    JSONObject input = block.optJSONObject("input");
-                    if (input != null) {
-                        return parseFixesArray(input.optJSONArray("fixes"));
-                    }
-                } else if ("text".equals(type)) {
-                    fallbackText.append(block.optString("text", ""));
-                }
-            }
-
-            if (fallbackText.length() > 0) {
-                return parseModifications(fallbackText.toString());
-            }
-
-        } catch (JSONException e) {
-            // فشل تحليل الرد الخام بالكامل
-        }
-
-        return results;
-    }
-
-    private static JSONObject buildFixesTool() throws JSONException {
-        JSONObject fixItemProps = new JSONObject();
-        fixItemProps.put("function_name", new JSONObject().put("type", "string"));
-        fixItemProps.put("before", new JSONObject().put("type", "string"));
-        fixItemProps.put("after", new JSONObject().put("type", "string"));
-        fixItemProps.put("reason", new JSONObject().put("type", "string"));
-        fixItemProps.put("start_line", new JSONObject().put("type", "integer"));
-        fixItemProps.put("end_line", new JSONObject().put("type", "integer"));
-
-        JSONObject fixItemSchema = new JSONObject();
-        fixItemSchema.put("type", "object");
-        fixItemSchema.put("properties", fixItemProps);
-        fixItemSchema.put("required", new JSONArray()
-            .put("function_name").put("before").put("after")
-            .put("reason").put("start_line").put("end_line"));
-
-        JSONObject fixesArraySchema = new JSONObject();
-        fixesArraySchema.put("type", "array");
-        fixesArraySchema.put("items", fixItemSchema);
-
-        JSONObject topProps = new JSONObject();
-        topProps.put("fixes", fixesArraySchema);
-
-        JSONObject inputSchema = new JSONObject();
-        inputSchema.put("type", "object");
-        inputSchema.put("properties", topProps);
-        inputSchema.put("required", new JSONArray().put("fixes"));
-
-        JSONObject tool = new JSONObject();
-        tool.put("name", TOOL_NAME);
-        tool.put("description",
-            "يُرسل قائمة التعديلات (fixes) الدقيقة للدوال الناقصة المكتشفة. " +
-            "استخدم مصفوفة فارغة إذا لا يوجد تعديل مطلوب أو لم تستطع تحديد الحل الصحيح بثقة.");
-        tool.put("input_schema", inputSchema);
-
-        return tool;
-    }
-
     public static String generateDiff(String originalCode, ModificationResult mod) {
         if (originalCode == null || mod.originalCode == null
                 || !originalCode.contains(mod.originalCode)) {
@@ -495,6 +458,10 @@ public class AIEngine {
         return diff.toString();
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // الاتصال بالـAPI — Mistral (نفس الكود القديم)
+    // ═══════════════════════════════════════════════════════════
+
     private static String callAPIWithRetry(String prompt) throws Exception {
         Exception lastError = null;
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -527,8 +494,9 @@ public class AIEngine {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("x-api-key", apiKey);
-            conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION);
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            conn.setRequestProperty("HTTP-Referer", "https://github.com/reality-engine");
+            conn.setRequestProperty("X-Title", "Reality Engine");
             conn.setDoOutput(true);
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(READ_TIMEOUT_MS);
@@ -539,25 +507,9 @@ public class AIEngine {
 
             JSONObject body = new JSONObject();
             body.put("model", MODEL);
-            body.put("max_tokens", MAX_TOKENS);
             body.put("messages", new JSONArray().put(message));
-            body.put("system",
-                "أنت Senior Software Engineer دقيق جدًا. تلتزم حرفيًا بالتعليمات المعطاة. " +
-                "لا ترجع أبدًا كودًا وهميًا (NotImplementedError/TODO/pass) ولا تنسخ منطق دالة لدالة أخرى. " +
-                "استخدم أداة " + TOOL_NAME + " دائمًا لإرجاع نتيجتك النهائية.");
-
-            body.put("tools", new JSONArray().put(buildFixesTool()));
-
-            if (ENABLE_EXTENDED_THINKING) {
-                JSONObject thinking = new JSONObject();
-                thinking.put("type", "enabled");
-                thinking.put("budget_tokens", THINKING_BUDGET_TOKENS);
-                body.put("thinking", thinking);
-                body.put("tool_choice", new JSONObject().put("type", "auto"));
-            } else {
-                body.put("temperature", 0.1);
-                body.put("tool_choice", new JSONObject().put("type", "tool").put("name", TOOL_NAME));
-            }
+            body.put("max_tokens", MAX_TOKENS);
+            body.put("temperature", 0.1);
 
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(body.toString().getBytes(StandardCharsets.UTF_8));
