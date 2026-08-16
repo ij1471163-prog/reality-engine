@@ -39,8 +39,8 @@ public class AIEngine {
     // إعدادات الاتصال
     // ═══════════════════════════════════════════════════════════
     private static String API_URL = "https://api.anthropic.com/v1/messages";
-    private static final String MODEL = "claude-sonnet-4-20250514"; // ← تاريخ إصدار صحيح
-    private static final String ANTHROPIC_VERSION = "2025-01-01"; // ← إصدار أحدث وأكثر استقراراً
+    private static final String MODEL = "claude-sonnet-4-20250514";
+    private static final String ANTHROPIC_VERSION = "2025-01-01";
     private static final int MAX_TOKENS = 8000;
     private static final int CONNECT_TIMEOUT_MS = 30000;
     private static final int READ_TIMEOUT_MS = 90000;
@@ -156,7 +156,17 @@ public class AIEngine {
                 result.put("file_name", fileName);
                 result.put("rejected_count", rejectedCount);
 
-                mainHandler.post(() -> callback.onResult(result.toString(2)));
+                // ═══════════════════════════════════════════════════
+                // ← إصلاح الخطأ: toString(2) يرمي JSONException في Android
+                //    لازم نلتقطه داخل Lambda لأن Lambda ما تقدر تعلن throws
+                // ═══════════════════════════════════════════════════
+                mainHandler.post(() -> {
+                    try {
+                        callback.onResult(result.toString(2));
+                    } catch (JSONException e) {
+                        callback.onError("خطأ في تنسيق JSON: " + e.getMessage());
+                    }
+                });
 
             } catch (Exception e) {
                 mainHandler.post(() -> callback.onError(
@@ -189,14 +199,12 @@ public class AIEngine {
             return "الدالة '" + mod.functionName + "' ليست ضمن المرشحين الذين اكتشفهم StubDetector";
         }
 
-        // ← إصلاح: استخدام \\R بدلاً من \n لدعم \r\n و \n و \r
         int totalLines = fullCode.split("\\R", -1).length;
         if (mod.startLine < 0 || mod.endLine < 0 || mod.startLine > mod.endLine
                 || mod.endLine > totalLines) {
             return "أرقام الأسطر start_line/end_line خارج حدود الملف أو غير منطقية";
         }
 
-        // ← إصلاح: استخدام \\R بدلاً من \n
         for (String line : mod.modifiedCode.split("\\R")) {
             String trimmed = line.trim();
             if ((trimmed.startsWith("import ") || trimmed.startsWith("using "))
@@ -230,7 +238,6 @@ public class AIEngine {
             }
         }
 
-        // ← إصلاح: استخدام \\R بدلاً من \n
         String[] lines = afterCode.trim().split("\\R");
         boolean onlyPassOrEmpty = true;
         for (String line : lines) {
@@ -471,7 +478,6 @@ public class AIEngine {
             .append(mod.endLine - mod.startLine).append(" +")
             .append(mod.startLine).append(",? @@\n");
 
-        // ← إصلاح: استخدام \\R بدلاً من \n
         String[] originalLines = originalCode.split("\\R");
         String[] afterLines = mod.modifiedCode.split("\\R");
 
