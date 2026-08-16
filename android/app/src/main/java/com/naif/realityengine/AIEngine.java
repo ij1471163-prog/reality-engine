@@ -128,7 +128,7 @@ public class AIEngine {
                     if (rejectReason == null) {
                         String normalizedBody = mod.modifiedCode.trim().replaceAll("\\s+", " ");
                         if (!acceptedBodies.add(normalizedBody)) {
-                            rejectReason = "الكود مطابق حرفيًا لتعديل آخر مقبول سابقًا (احتمال نسخ-لصق خاطئ)";
+                            rejectReason = "الكود مطابق حرفيا لتعديل آخر مقبول سابقا (احتمال نسخ-لصق خاطئ)";
                         }
                     }
 
@@ -176,7 +176,7 @@ public class AIEngine {
         }
 
         if (!fullCode.contains(mod.originalCode)) {
-            return "before غير مطابق حرفيًا لأي نص داخل الملف";
+            return "before غير مطابق حرفيا لاي نص داخل الملف";
         }
 
         boolean functionAllowed = false;
@@ -187,13 +187,8 @@ public class AIEngine {
             }
         }
         if (!functionAllowed) {
-            return "الدالة '" + mod.functionName + "' ليست ضمن المرشحين الذين اكتشفهم StubDetector";
-        }
-
-        int totalLines = fullCode.split("\\R", -1).length;
-        if (mod.startLine < 0 || mod.endLine < 0 || mod.startLine > mod.endLine
-                || mod.endLine > totalLines) {
-            return "أ + mod.functionName + "' ليست ضمن المرشحين الذين اكتشفهم StubDetector";
+            // ← إصلاح: بدل ' نستخدم String.format لتجنب unclosed character literal
+            return String.format("الدالة [%s] ليست ضمن المرشحين الذين اكتشفهم StubDetector", mod.functionName);
         }
 
         int totalLines = fullCode.split("\\R", -1).length;
@@ -231,7 +226,8 @@ public class AIEngine {
 
         for (String marker : fakeMarkers) {
             if (normalized.contains(marker)) {
-                return "الـAI رجع تنفيذًا وهميًا (يحتوي '" + marker + "') وليس حلًا فعليًا";
+                // ← إصلاح: بدل ' نستخدم String.format
+                return String.format("الـAI رجع تنفيذا وهميا (يحتوي [%s]) وليس حلا فعليا", marker);
             }
         }
 
@@ -248,7 +244,7 @@ public class AIEngine {
             break;
         }
         if (onlyPassOrEmpty) {
-            return "التعديل شبه فارغ (لا يحتوي منطقًا حقيقيًا)";
+            return "التعديل شبه فارغ (لا يحتوي منطقا حقيقيا)";
         }
 
         return null;
@@ -275,45 +271,45 @@ public class AIEngine {
         prompt.append("أنت Senior Software Engineer خبير في تحليل الأكواد وإصلاحها.\n");
         prompt.append("مهمتك: إصلاح الدوال الناقصة (Stubs) في ملف حقيقي من مشروع حقيقي.\n\n");
 
-        prompt.append("⚠️ قواعد صارمة جداً:\n");
-        prompt.append("1. اقرأ الملف الكامل أولاً لفهم السياق والمتغيرات والدوال الأخرى\n");
-        prompt.append("2. لا تُعدّل أي دالة مكتملة أو صحيحة\n");
-        prompt.append("3. استخدم نفس أسماء المعاملات والمتغيرات الموجودة حرفياً\n");
+        prompt.append("قواعد صارمة جدا:\n");
+        prompt.append("1. اقرأ الملف الكامل أولا لفهم السياق والمتغيرات والدوال الأخرى\n");
+        prompt.append("2. لا تعدل أي دالة مكتملة أو صحيحة\n");
+        prompt.append("3. استخدم نفس أسماء المعاملات والمتغيرات الموجودة حرفيا\n");
         prompt.append("4. الكود يجب أن يعمل بدون أخطاء (SyntaxError, NameError, IndentationError)\n");
         prompt.append("5. إذا items هو list of dicts، لا تفترض أنه list of numbers\n");
         prompt.append("6. استنتج المنطق الصحيح من بقية الملف وليس من اسم الدالة فقط\n");
-        prompt.append("7. لا تُضف import إلا إذا كان ضرورياً وغير موجود\n");
-        prompt.append("8. ممنوع منعاً باتاً إرجاع كود يحتوي NotImplementedError أو TODO أو pass فقط — ");
-        prompt.append("إذا لم تستطع تحديد المنطق الصحيح، لا تُرجع هذا fix ضمن fixes أصلاً بدل إرجاع حل وهمي\n");
+        prompt.append("7. لا تضف import إلا إذا كان ضروريا وغير موجود\n");
+        prompt.append("8. ممنوع منعا باتا إرجاع كود يحتوي NotImplementedError أو TODO أو pass فقط — ");
+        prompt.append("إذا لم تستطع تحديد المنطق الصحيح، لا ترجع هذا fix ضمن fixes أصلا بدل إرجاع حل وهمي\n");
         prompt.append("9. كل دالة لها منطقها الخاص المستقل — ممنوع نسخ جسم دالة أخرى ولصقه لدالة مختلفة ");
-        prompt.append("حتى لو الأسماء متشابهة (مثال: find_user و find_best_user دالتان مختلفتان تمامًا)\n");
-        prompt.append("10. تحقق من كل متغير تستخدمه أنه فعلاً موجود ضمن معاملات (parameters) نفس الدالة ");
+        prompt.append("حتى لو الأسماء متشابهة (مثال: find_user و find_best_user دالتان مختلفتان تماما)\n");
+        prompt.append("10. تحقق من كل متغير تستخدمه أنه فعلا موجود ضمن معاملات (parameters) نفس الدالة ");
         prompt.append("قبل استخدامه — استخدام متغير من دالة أخرى يسبب NameError\n");
         prompt.append("11. إذا كانت الملفات المرتبطة أدناه توضح بنية بيانات أو دالة يتم استدعاؤها، ");
         prompt.append("استخدم هذا الفهم بدل التخمين\n\n");
 
-        prompt.append("📁 الملف الرئيسي المستهدف بالتعديل: ").append(fileName).append("\n\n");
+        prompt.append("الملف الرئيسي المستهدف بالتعديل: ").append(fileName).append("\n\n");
 
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("=======================================\n");
         prompt.append("المحتوى الكامل للملف الرئيسي:\n");
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("=======================================\n");
         prompt.append("```\n").append(fullCode).append("\n```\n\n");
 
         if (relatedFiles != null && !relatedFiles.isEmpty()) {
-            prompt.append("═══════════════════════════════════════\n");
-            prompt.append("ملفات مرتبطة من نفس المشروع (للفهم فقط — لا تُعدّلها):\n");
-            prompt.append("═══════════════════════════════════════\n");
+            prompt.append("=======================================\n");
+            prompt.append("ملفات مرتبطة من نفس المشروع (للفهم فقط — لا تعدلها):\n");
+            prompt.append("=======================================\n");
             for (java.util.Map.Entry<String, String> entry : relatedFiles.entrySet()) {
-                prompt.append("\n📄 ملف مرتبط: ").append(entry.getKey()).append("\n");
+                prompt.append("\nملف مرتبط: ").append(entry.getKey()).append("\n");
                 prompt.append("```\n").append(entry.getValue()).append("\n```\n");
             }
-            prompt.append("\n⚠️ الملفات أعلاه للسياق فقط. أي fix يجب أن يكون حصرًا داخل الملف الرئيسي ")
+            prompt.append("\nالملفات أعلاه للسياق فقط. أي fix يجب أن يكون حصرا داخل الملف الرئيسي ")
                   .append(fileName).append(".\n\n");
         }
 
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("=======================================\n");
         prompt.append("المناطق الناقصة المكتشفة (Candidates):\n");
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("=======================================\n");
 
         for (int i = 0; i < candidates.size(); i++) {
             StubDetector.Candidate c = candidates.get(i);
@@ -323,15 +319,15 @@ public class AIEngine {
             prompt.append("الكود:\n```\n").append(c.codeSnippet).append("\n```\n");
         }
 
-        prompt.append("\n═══════════════════════════════════════\n");
+        prompt.append("\n=======================================\n");
         prompt.append("المطلوب:\n");
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("=======================================\n");
         prompt.append("أرجع JSON فقط بدون أي نص إضافي أو شرح:\n");
         prompt.append("{\n");
         prompt.append("  \"fixes\": [\n");
         prompt.append("    {\n");
         prompt.append("      \"function_name\": \"اسم الدالة\",\n");
-        prompt.append("      \"before\": \"الكود القديم بالضبط (للـdiff)\",\n");
+        prompt.append("      \"before\": \"الكود القديم بالضبط (للdiff)\",\n");
         prompt.append("      \"after\": \"الكود المصلح الكامل\",\n");
         prompt.append("      \"reason\": \"سبب التعديل ولماذا هذا هو الحل الصحيح\",\n");
         prompt.append("      \"start_line\": رقم_سطر_البداية,\n");
@@ -339,10 +335,10 @@ public class AIEngine {
         prompt.append("    }\n");
         prompt.append("  ]\n");
         prompt.append("}\n\n");
-        prompt.append("⚠️ مهم: أرقام الأسطر (start_line, end_line) تبدأ من 0 (0-based)، ");
+        prompt.append("مهم: أرقام الأسطر (start_line, end_line) تبدأ من 0 (0-based)، ");
         prompt.append("أي أن السطر الأول في الملف رقمه 0 وليس 1.\n");
-        prompt.append("⚠️ مهم: إذا لم يكن هناك تعديل مطلوب، أرجع {\"fixes\":[]}.\n");
-        prompt.append("⚠️ مهم: 'after' يجب أن يكون كوداً كاملاً يستبدل 'before' بالضبط.\n");
+        prompt.append("مهم: إذا لم يكن هناك تعديل مطلوب، أرجع {\"fixes\":[]}.\n");
+        prompt.append("مهم: after يجب أن يكون كودا كاملا يستبدل before بالضبط.\n");
 
         return prompt.toString();
     }
@@ -426,12 +422,12 @@ public class AIEngine {
     public static String generateDiff(String originalCode, ModificationResult mod) {
         if (originalCode == null || mod.originalCode == null
                 || !originalCode.contains(mod.originalCode)) {
-            return "⚠️ تعذّر توليد Diff: mod.originalCode غير مطابق للملف الأصلي المُعطى.";
+            return "تعذر توليد Diff: mod.originalCode غير مطابق للملف الأصلي المعطى.";
         }
 
         StringBuilder diff = new StringBuilder();
         diff.append("--- ").append(mod.functionName).append("\n");
-        diff.append("+++ ").append(mod.functionName).append(" (مُعدّل)\n");
+        diff.append("+++ ").append(mod.functionName).append(" (معدل)\n");
         diff.append("@@ -").append(mod.startLine).append(",")
             .append(mod.endLine - mod.startLine).append(" +")
             .append(mod.startLine).append(",? @@\n");
@@ -485,7 +481,7 @@ public class AIEngine {
 
     private static String callAPI(String prompt) throws Exception {
         if (apiKey == null || apiKey.isEmpty()) {
-            throw new Exception("API Key غير معيّن");
+            throw new Exception("API Key غير معين");
         }
 
         HttpURLConnection conn = null;
