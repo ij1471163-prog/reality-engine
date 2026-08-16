@@ -22,16 +22,6 @@ import org.json.JSONObject;
 
 /**
  * AIEngine — محرك الذكاء الاصطناعي لتعديل الملفات الحقيقية
- *
- * التدفق الجديد:
- *   1. StubDetector يحدد المرشحات (Candidate Regions)
- *   2. AIEngine يأخذ: الملف الكامل + المرشحات + السياق
- *   3. AI يولد تعديلًا دقيقًا (Patch) — وليس اقتراحًا عامًا
- *   4. AISecurityGuard يتحقق أمنيًا
- *   5. CodeApplier يطبق التعديل
- *   6. BackupManager يحفظ نسخة احتياطية
- *   7. DiffViewer يعرض الفرق للمستخدم
- *   8. المستخدم يوافق → الحفظ النهائي
  */
 public class AIEngine {
 
@@ -47,21 +37,31 @@ public class AIEngine {
     private static final int MAX_ATTEMPTS = 3;
     private static final long RETRY_BASE_DELAY_MS = 1000;
 
-    // ─── Extended Thinking ───
     private static final boolean ENABLE_EXTENDED_THINKING = true;
     private static final int THINKING_BUDGET_TOKENS = 3000;
-
-    // ─── Tool Use ───
     private static final String TOOL_NAME = "submit_fixes";
 
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     // ═══════════════════════════════════════════════════════════
-    // API Key — يُمرر من الخارج
+    // API Key — يُحمّل تلقائياً من getKey() (نفس آلية الكود القديم)
+    // setApiKey() يبقى متاحاً للتجاوز اليدوي
     // ═══════════════════════════════════════════════════════════
-    private static String apiKey = null;
+    private static String apiKey = getKey();
 
+    /** فك تشفير XOR — نفس الكود القديم بالضبط */
+    private static String getKey() {
+        String enc = "3c281e1c291e7b2808217b773a05087b2a17077c3721062d39342f7f25291637";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < enc.length(); i += 2) {
+            int b = Integer.parseInt(enc.substring(i, i + 2), 16) ^ 0x4E;
+            sb.append((char) b);
+        }
+        return sb.toString();
+    }
+
+    /** للتجاوز اليدوي (مثلاً من BuildConfig أو Secure Storage) */
     public static void setApiKey(String key) {
         apiKey = key;
     }
@@ -156,10 +156,6 @@ public class AIEngine {
                 result.put("file_name", fileName);
                 result.put("rejected_count", rejectedCount);
 
-                // ═══════════════════════════════════════════════════
-                // ← إصلاح الخطأ: toString(2) يرمي JSONException في Android
-                //    لازم نلتقطه داخل Lambda لأن Lambda ما تقدر تعلن throws
-                // ═══════════════════════════════════════════════════
                 mainHandler.post(() -> {
                     try {
                         callback.onResult(result.toString(2));
@@ -341,7 +337,6 @@ public class AIEngine {
 
     private static List<ModificationResult> parseModifications(String aiResult) {
         List<ModificationResult> results = new ArrayList<>();
-
         if (aiResult == null) return results;
 
         String cleaned = aiResult.trim();
