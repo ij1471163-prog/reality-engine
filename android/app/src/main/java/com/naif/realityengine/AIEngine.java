@@ -32,58 +32,36 @@ import org.json.JSONObject;
  *   6. BackupManager يحفظ نسخة احتياطية
  *   7. DiffViewer يعرض الفرق للمستخدم
  *   8. المستخدم يوافق → الحفظ النهائي
- *
- * ⚠️ أمان: المفتاح لا يُخزن داخل الكود المصدري إطلاقاً (لا XOR، لا Base64 وهمي).
- *    يُمرر من الخارج عبر setApiKey()، ويُفضّل تمريره عبر Proxy Backend (Vercel/Netlify)
- *    بدل تخزينه بالتطبيق مباشرة، لأن أي XOR/تعمية ثابتة داخل APK قابلة للفك خلال ثوانٍ.
  */
 public class AIEngine {
 
-    private static String API_URL = "https://api.mistral.ai/v1/chat/completions";
-    private static final String MODEL = "mistral-small-latest";
-    private static final int MAX_TOKENS = 4000;
+    // ═══════════════════════════════════════════════════════════
+    // إعدادات الاتصال
+    // ═══════════════════════════════════════════════════════════
+    private static String API_URL = "https://api.anthropic.com/v1/messages";
+    private static final String MODEL = "claude-sonnet-4-20250514"; // ← تاريخ إصدار صحيح
+    private static final String ANTHROPIC_VERSION = "2025-01-01"; // ← إصدار أحدث وأكثر استقراراً
+    private static final int MAX_TOKENS = 8000;
     private static final int CONNECT_TIMEOUT_MS = 30000;
-    private static final int READ_TIMEOUT_MS = 60000;
+    private static final int READ_TIMEOUT_MS = 90000;
     private static final int MAX_ATTEMPTS = 3;
     private static final long RETRY_BASE_DELAY_MS = 1000;
+
+    // ─── Extended Thinking ───
+    private static final boolean ENABLE_EXTENDED_THINKING = true;
+    private static final int THINKING_BUDGET_TOKENS = 3000;
+
+    // ─── Tool Use ───
+    private static final String TOOL_NAME = "submit_fixes";
 
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     // ═══════════════════════════════════════════════════════════
-    // ⚠️ مرحلة تطوير فقط — مفتاح مدمج داخل الكود (XOR + hex، مو تشفير حقيقي)
-    // ─────────────────────────────────────────────────────────────
-    // هذا obfuscation بسيط يمنع القراءة البصرية المباشرة للمفتاح بالكود المصدري،
-    // لكنه لا يحميه من أي حد يفكّك الـ APK (jadx/apktool) — فك التشفير سطر واحد.
-    //
-    // 🔴 قبل أي إصدار عام (Release/Play Store): لازم ينتقل هذا المفتاح لـ Vercel
-    //    Proxy ويُحذف نهائياً من هنا. استخدم setApiKey() من BuildConfig وقتها،
-    //    أو الأفضل خلّي التطبيق يتكلم مع رابطك أنت بس عبر setApiUrl().
-    //
-    // لتوليد ENCODED_KEY: شغّل encode_key.py محلياً عندك وألصق الناتج هنا.
+    // API Key — يُمرر من الخارج
     // ═══════════════════════════════════════════════════════════
-    private static final String ENCODED_KEY = "3c281e1c291e7b2808217b773a05087b2a17077c3721062d39342f7f25291637";
+    private static String apiKey = null;
 
-    private static String apiKey = decryptKey();
-
-    /** فك تشفير XOR بسيط — راجع التحذير أعلاه */
-    private static String decryptKey() {
-        if (ENCODED_KEY == null || ENCODED_KEY.isEmpty()
-                || ENCODED_KEY.equals("REPLACE_WITH_OUTPUT_FROM_encode_key_py")) {
-            return null;
-        }
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < ENCODED_KEY.length(); i += 2) {
-            int b = Integer.parseInt(ENCODED_KEY.substring(i, i + 2), 16) ^ 0x4E;
-            sb.append((char) b);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * يسمح بتجاوز المفتاح المدمج وقت التشغيل (مثلاً من BuildConfig
-     * أو لاحقاً من Vercel Proxy response). أي استدعاء لهذي يطغى على ENCODED_KEY.
-     */
     public static void setApiKey(String key) {
         apiKey = key;
     }
@@ -123,6 +101,13 @@ public class AIEngine {
     public static void analyzeFile(String fullCode, String fileName,
                                     List<StubDetector.Candidate> candidates,
                                     Callback callback) {
+        analyzeFile(fullCode, fileName, candidates, new java.util.LinkedHashMap<>(), callback);
+    }
+
+    public static void analyzeFile(String fullCode, String fileName,
+                                    List<StubDetector.Candidate> candidates,
+                                    java.util.Map<String, String> relatedFiles,
+                                    Callback callback) {
         if (apiKey == null || apiKey.isEmpty()) {
             mainHandler.post(() -> callback.onError(
                 "خطأ: لم يتم تعيين API Key. استخدم AIEngine.setApiKey()"));
@@ -131,14 +116,27 @@ public class AIEngine {
 
         executor.submit(() -> {
             try {
-                String prompt = buildContextualPrompt(fullCode, fileName, candidates);
-                String aiResponse = callAPIWithRetry(prompt);
-                List<ModificationResult> modifications = parseModifications(aiResponse);
+                String prompt = buildContextualPrompt(fullCode, fileName, candidates, relatedFiles);
+                String rawResponse = callAPIWithRetry(prompt);
+                List<ModificationResult> modifications = extractModifications(rawResponse);
 
                 JSONArray fixesArray = new JSONArray();
                 int rejectedCount = 0;
+                java.util.Set<String> acceptedBodies = new java.util.HashSet<>();
                 for (ModificationResult mod : modifications) {
                     String rejectReason = validateModification(fullCode, mod, candidates);
+
+                    if (rejectReason == null) {
+                        rejectReason = detectFakeImplementation(mod.modifiedCode);
+                    }
+
+                    if (rejectReason == null) {
+                        String normalizedBody = mod.modifiedCode.trim().replaceAll("\\s+", " ");
+                        if (!acceptedBodies.add(normalizedBody)) {
+                            rejectReason = "الكود مطابق حرفيًا لتعديل آخر مقبول سابقًا (احتمال نسخ-لصق خاطئ)";
+                        }
+                    }
+
                     if (rejectReason != null) {
                         rejectedCount++;
                         continue;
@@ -158,8 +156,7 @@ public class AIEngine {
                 result.put("file_name", fileName);
                 result.put("rejected_count", rejectedCount);
 
-                String resultString = result.toString(2);
-                mainHandler.post(() -> callback.onResult(resultString));
+                mainHandler.post(() -> callback.onResult(result.toString(2)));
 
             } catch (Exception e) {
                 mainHandler.post(() -> callback.onError(
@@ -192,13 +189,15 @@ public class AIEngine {
             return "الدالة '" + mod.functionName + "' ليست ضمن المرشحين الذين اكتشفهم StubDetector";
         }
 
-        int totalLines = fullCode.split("\n", -1).length;
+        // ← إصلاح: استخدام \\R بدلاً من \n لدعم \r\n و \n و \r
+        int totalLines = fullCode.split("\\R", -1).length;
         if (mod.startLine < 0 || mod.endLine < 0 || mod.startLine > mod.endLine
                 || mod.endLine > totalLines) {
             return "أرقام الأسطر start_line/end_line خارج حدود الملف أو غير منطقية";
         }
 
-        for (String line : mod.modifiedCode.split("\n")) {
+        // ← إصلاح: استخدام \\R بدلاً من \n
+        for (String line : mod.modifiedCode.split("\\R")) {
             String trimmed = line.trim();
             if ((trimmed.startsWith("import ") || trimmed.startsWith("using "))
                     && !fullCode.contains(trimmed)) {
@@ -209,7 +208,48 @@ public class AIEngine {
         return null;
     }
 
-    // الواجهة القديمة — للتوافق الكامل مع الاستدعاءات الحالية
+    private static String detectFakeImplementation(String afterCode) {
+        if (afterCode == null) return "after فارغ";
+        String normalized = afterCode.toLowerCase();
+
+        String[] fakeMarkers = {
+            "notimplementederror",
+            "not implemented",
+            "todo",
+            "fixme",
+            "raise notimplemented",
+            "throw new unsupportedoperationexception",
+            "// stub",
+            "# ناقصة",
+            "pass  #",
+        };
+
+        for (String marker : fakeMarkers) {
+            if (normalized.contains(marker)) {
+                return "الـAI رجع تنفيذًا وهميًا (يحتوي '" + marker + "') وليس حلًا فعليًا";
+            }
+        }
+
+        // ← إصلاح: استخدام \\R بدلاً من \n
+        String[] lines = afterCode.trim().split("\\R");
+        boolean onlyPassOrEmpty = true;
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.isEmpty() || t.equals("pass") || t.startsWith("def ")
+                    || t.startsWith("public ") || t.startsWith("private ")
+                    || t.startsWith("{") || t.startsWith("}")) {
+                continue;
+            }
+            onlyPassOrEmpty = false;
+            break;
+        }
+        if (onlyPassOrEmpty) {
+            return "التعديل شبه فارغ (لا يحتوي منطقًا حقيقيًا)";
+        }
+
+        return null;
+    }
+
     public static void analyze(String code, String fileName, Callback callback) {
         StubDetector.StubResult result = StubDetector.detect(code);
         List<StubDetector.Candidate> candidates =
@@ -224,7 +264,8 @@ public class AIEngine {
     }
 
     private static String buildContextualPrompt(String fullCode, String fileName,
-                                                   List<StubDetector.Candidate> candidates) {
+                                                   List<StubDetector.Candidate> candidates,
+                                                   java.util.Map<String, String> relatedFiles) {
         StringBuilder prompt = new StringBuilder();
 
         prompt.append("أنت Senior Software Engineer خبير في تحليل الأكواد وإصلاحها.\n");
@@ -237,14 +278,34 @@ public class AIEngine {
         prompt.append("4. الكود يجب أن يعمل بدون أخطاء (SyntaxError, NameError, IndentationError)\n");
         prompt.append("5. إذا items هو list of dicts، لا تفترض أنه list of numbers\n");
         prompt.append("6. استنتج المنطق الصحيح من بقية الملف وليس من اسم الدالة فقط\n");
-        prompt.append("7. لا تُضف import إلا إذا كان ضرورياً وغير موجود\n\n");
+        prompt.append("7. لا تُضف import إلا إذا كان ضرورياً وغير موجود\n");
+        prompt.append("8. ممنوع منعاً باتاً إرجاع كود يحتوي NotImplementedError أو TODO أو pass فقط — ");
+        prompt.append("إذا لم تستطع تحديد المنطق الصحيح، لا تُرجع هذا fix ضمن fixes أصلاً بدل إرجاع حل وهمي\n");
+        prompt.append("9. كل دالة لها منطقها الخاص المستقل — ممنوع نسخ جسم دالة أخرى ولصقه لدالة مختلفة ");
+        prompt.append("حتى لو الأسماء متشابهة (مثال: find_user و find_best_user دالتان مختلفتان تمامًا)\n");
+        prompt.append("10. تحقق من كل متغير تستخدمه أنه فعلاً موجود ضمن معاملات (parameters) نفس الدالة ");
+        prompt.append("قبل استخدامه — استخدام متغير من دالة أخرى يسبب NameError\n");
+        prompt.append("11. إذا كانت الملفات المرتبطة أدناه توضح بنية بيانات أو دالة يتم استدعاؤها، ");
+        prompt.append("استخدم هذا الفهم بدل التخمين\n\n");
 
-        prompt.append("📁 الملف: ").append(fileName).append("\n\n");
+        prompt.append("📁 الملف الرئيسي المستهدف بالتعديل: ").append(fileName).append("\n\n");
 
         prompt.append("═══════════════════════════════════════\n");
-        prompt.append("المحتوى الكامل للملف:\n");
+        prompt.append("المحتوى الكامل للملف الرئيسي:\n");
         prompt.append("═══════════════════════════════════════\n");
         prompt.append("```\n").append(fullCode).append("\n```\n\n");
+
+        if (relatedFiles != null && !relatedFiles.isEmpty()) {
+            prompt.append("═══════════════════════════════════════\n");
+            prompt.append("ملفات مرتبطة من نفس المشروع (للفهم فقط — لا تُعدّلها):\n");
+            prompt.append("═══════════════════════════════════════\n");
+            for (java.util.Map.Entry<String, String> entry : relatedFiles.entrySet()) {
+                prompt.append("\n📄 ملف مرتبط: ").append(entry.getKey()).append("\n");
+                prompt.append("```\n").append(entry.getValue()).append("\n```\n");
+            }
+            prompt.append("\n⚠️ الملفات أعلاه للسياق فقط. أي fix يجب أن يكون حصرًا داخل الملف الرئيسي ")
+                  .append(fileName).append(".\n\n");
+        }
 
         prompt.append("═══════════════════════════════════════\n");
         prompt.append("المناطق الناقصة المكتشفة (Candidates):\n");
@@ -261,24 +322,11 @@ public class AIEngine {
         prompt.append("\n═══════════════════════════════════════\n");
         prompt.append("المطلوب:\n");
         prompt.append("═══════════════════════════════════════\n");
-        prompt.append("أرجع JSON فقط بدون أي نص إضافي:\n");
-        prompt.append("{\n");
-        prompt.append("  \"fixes\": [\n");
-        prompt.append("    {\n");
-        prompt.append("      \"function_name\": \"اسم الدالة\",\n");
-        prompt.append("      \"before\": \"الكود القديم بالضبط (للـdiff)\",\n");
-        prompt.append("      \"after\": \"الكود المصلح الكامل\",\n");
-        prompt.append("      \"reason\": \"سبب التعديل ولماذا هذا هو الحل الصحيح\",\n");
-        prompt.append("      \"start_line\": رقم_سطر_البداية,\n");
-        prompt.append("      \"end_line\": رقم_سطر_النهاية\n");
-        prompt.append("    }\n");
-        prompt.append("  ]\n");
-        prompt.append("}\n\n");
-
+        prompt.append("استخدم أداة (Tool) ").append(TOOL_NAME).append(" حصرًا لإرجاع نتيجتك. ");
+        prompt.append("لا ترجع نصًا عاديًا أو JSON خارج الأداة.\n");
         prompt.append("⚠️ مهم: أرقام الأسطر (start_line, end_line) تبدأ من 0 (0-based)، ");
         prompt.append("أي أن السطر الأول في الملف رقمه 0 وليس 1.\n");
-
-        prompt.append("⚠️ مهم: إذا لم يكن هناك تعديل مطلوب، أرجع {\"fixes\":[]}.\n");
+        prompt.append("⚠️ مهم: إذا لم يكن هناك تعديل مطلوب، استدعِ الأداة بمصفوفة fixes فارغة.\n");
         prompt.append("⚠️ مهم: 'after' يجب أن يكون كوداً كاملاً يستبدل 'before' بالضبط.\n");
 
         return prompt.toString();
@@ -307,10 +355,18 @@ public class AIEngine {
 
         try {
             JSONObject root = new JSONObject(cleaned);
-            JSONArray fixes = root.optJSONArray("fixes");
-            if (fixes == null) return results;
+            return parseFixesArray(root.optJSONArray("fixes"));
+        } catch (JSONException e) {
+            return results;
+        }
+    }
 
-            for (int i = 0; i < fixes.length(); i++) {
+    private static List<ModificationResult> parseFixesArray(JSONArray fixes) {
+        List<ModificationResult> results = new ArrayList<>();
+        if (fixes == null) return results;
+
+        for (int i = 0; i < fixes.length(); i++) {
+            try {
                 JSONObject fix = fixes.getJSONObject(i);
                 String functionName = fix.optString("function_name", "unknown");
                 String before = fix.optString("before", "");
@@ -321,12 +377,85 @@ public class AIEngine {
 
                 results.add(new ModificationResult(
                     functionName, before, after, reason, startLine, endLine));
+            } catch (JSONException e) {
+                // نتخطى هذا العنصر فقط
             }
+        }
+        return results;
+    }
+
+    private static List<ModificationResult> extractModifications(String rawResponseJson) {
+        List<ModificationResult> results = new ArrayList<>();
+        if (rawResponseJson == null) return results;
+
+        try {
+            JSONObject responseJson = new JSONObject(rawResponseJson);
+            JSONArray contentArray = responseJson.optJSONArray("content");
+            if (contentArray == null) return results;
+
+            StringBuilder fallbackText = new StringBuilder();
+
+            for (int i = 0; i < contentArray.length(); i++) {
+                JSONObject block = contentArray.getJSONObject(i);
+                String type = block.optString("type");
+
+                if ("tool_use".equals(type) && TOOL_NAME.equals(block.optString("name"))) {
+                    JSONObject input = block.optJSONObject("input");
+                    if (input != null) {
+                        return parseFixesArray(input.optJSONArray("fixes"));
+                    }
+                } else if ("text".equals(type)) {
+                    fallbackText.append(block.optString("text", ""));
+                }
+            }
+
+            if (fallbackText.length() > 0) {
+                return parseModifications(fallbackText.toString());
+            }
+
         } catch (JSONException e) {
-            // فشل في التحليل — نرجع قائمة فارغة
+            // فشل تحليل الرد الخام بالكامل
         }
 
         return results;
+    }
+
+    private static JSONObject buildFixesTool() throws JSONException {
+        JSONObject fixItemProps = new JSONObject();
+        fixItemProps.put("function_name", new JSONObject().put("type", "string"));
+        fixItemProps.put("before", new JSONObject().put("type", "string"));
+        fixItemProps.put("after", new JSONObject().put("type", "string"));
+        fixItemProps.put("reason", new JSONObject().put("type", "string"));
+        fixItemProps.put("start_line", new JSONObject().put("type", "integer"));
+        fixItemProps.put("end_line", new JSONObject().put("type", "integer"));
+
+        JSONObject fixItemSchema = new JSONObject();
+        fixItemSchema.put("type", "object");
+        fixItemSchema.put("properties", fixItemProps);
+        fixItemSchema.put("required", new JSONArray()
+            .put("function_name").put("before").put("after")
+            .put("reason").put("start_line").put("end_line"));
+
+        JSONObject fixesArraySchema = new JSONObject();
+        fixesArraySchema.put("type", "array");
+        fixesArraySchema.put("items", fixItemSchema);
+
+        JSONObject topProps = new JSONObject();
+        topProps.put("fixes", fixesArraySchema);
+
+        JSONObject inputSchema = new JSONObject();
+        inputSchema.put("type", "object");
+        inputSchema.put("properties", topProps);
+        inputSchema.put("required", new JSONArray().put("fixes"));
+
+        JSONObject tool = new JSONObject();
+        tool.put("name", TOOL_NAME);
+        tool.put("description",
+            "يُرسل قائمة التعديلات (fixes) الدقيقة للدوال الناقصة المكتشفة. " +
+            "استخدم مصفوفة فارغة إذا لا يوجد تعديل مطلوب أو لم تستطع تحديد الحل الصحيح بثقة.");
+        tool.put("input_schema", inputSchema);
+
+        return tool;
     }
 
     public static String generateDiff(String originalCode, ModificationResult mod) {
@@ -342,8 +471,9 @@ public class AIEngine {
             .append(mod.endLine - mod.startLine).append(" +")
             .append(mod.startLine).append(",? @@\n");
 
-        String[] originalLines = originalCode.split("\n");
-        String[] afterLines = mod.modifiedCode.split("\n");
+        // ← إصلاح: استخدام \\R بدلاً من \n
+        String[] originalLines = originalCode.split("\\R");
+        String[] afterLines = mod.modifiedCode.split("\\R");
 
         int contextStart = Math.max(0, mod.startLine - 3);
         int contextEnd = Math.min(originalLines.length, mod.endLine + 3);
@@ -396,9 +526,8 @@ public class AIEngine {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            conn.setRequestProperty("HTTP-Referer", "https://github.com/reality-engine");
-            conn.setRequestProperty("X-Title", "Reality Engine");
+            conn.setRequestProperty("x-api-key", apiKey);
+            conn.setRequestProperty("anthropic-version", ANTHROPIC_VERSION);
             conn.setDoOutput(true);
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(READ_TIMEOUT_MS);
@@ -409,9 +538,25 @@ public class AIEngine {
 
             JSONObject body = new JSONObject();
             body.put("model", MODEL);
-            body.put("messages", new JSONArray().put(message));
             body.put("max_tokens", MAX_TOKENS);
-            body.put("temperature", 0.1);
+            body.put("messages", new JSONArray().put(message));
+            body.put("system",
+                "أنت Senior Software Engineer دقيق جدًا. تلتزم حرفيًا بالتعليمات المعطاة. " +
+                "لا ترجع أبدًا كودًا وهميًا (NotImplementedError/TODO/pass) ولا تنسخ منطق دالة لدالة أخرى. " +
+                "استخدم أداة " + TOOL_NAME + " دائمًا لإرجاع نتيجتك النهائية.");
+
+            body.put("tools", new JSONArray().put(buildFixesTool()));
+
+            if (ENABLE_EXTENDED_THINKING) {
+                JSONObject thinking = new JSONObject();
+                thinking.put("type", "enabled");
+                thinking.put("budget_tokens", THINKING_BUDGET_TOKENS);
+                body.put("thinking", thinking);
+                body.put("tool_choice", new JSONObject().put("type", "auto"));
+            } else {
+                body.put("temperature", 0.1);
+                body.put("tool_choice", new JSONObject().put("type", "tool").put("name", TOOL_NAME));
+            }
 
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(body.toString().getBytes(StandardCharsets.UTF_8));
@@ -435,17 +580,7 @@ public class AIEngine {
                 throw new Exception("HTTP " + responseCode + ": " + errBody);
             }
 
-            String response = readStream(conn.getInputStream());
-            JSONObject responseJson = new JSONObject(response);
-            JSONArray choices = responseJson.optJSONArray("choices");
-            if (choices != null && choices.length() > 0) {
-                JSONObject firstChoice = choices.getJSONObject(0);
-                JSONObject msg = firstChoice.optJSONObject("message");
-                if (msg != null && msg.has("content")) {
-                    return msg.getString("content");
-                }
-            }
-            return "{\"fixes\":[]}";
+            return readStream(conn.getInputStream());
 
         } finally {
             if (conn != null) conn.disconnect();
