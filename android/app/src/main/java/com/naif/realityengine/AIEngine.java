@@ -26,7 +26,7 @@ import org.json.JSONObject;
 public class AIEngine {
 
     // ═══════════════════════════════════════════════════════════
-    // إعدادات الاتصال — Mistral API (نفس الكود القديم)
+    // إعدادات الاتصال — Mistral API
     // ═══════════════════════════════════════════════════════════
     private static String API_URL = "https://api.mistral.ai/v1/chat/completions";
     private static final String MODEL = "mistral-small-latest";
@@ -40,12 +40,11 @@ public class AIEngine {
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     // ═══════════════════════════════════════════════════════════
-    // API Key — يُحمّل تلقائياً من getKey() (نفس آلية الكود القديم)
-    // setApiKey() يبقى متاحاً للتجاوز اليدوي
+    // API Key — يُحمّل تلقائياً من getKey()
     // ═══════════════════════════════════════════════════════════
     private static String apiKey = getKey();
 
-    /** فك تشفير XOR — نفس الكود القديم بالضبط */
+    /** فك تشفير XOR */
     private static String getKey() {
         String enc = "0f1f600f2c761c0078041d0236271b1d050c7e212b260b7c763d0d287f79341f082839221c163e027a2c08772c142976033b22380f";
         StringBuilder sb = new StringBuilder();
@@ -56,7 +55,6 @@ public class AIEngine {
         return sb.toString();
     }
 
-    /** للتجاوز اليدوي (مثلاً من BuildConfig أو Secure Storage) */
     public static void setApiKey(String key) {
         apiKey = key;
     }
@@ -261,6 +259,9 @@ public class AIEngine {
         analyzeFile(code, fileName, candidates, callback);
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // buildContextualPrompt — مكتمل
+    // ═══════════════════════════════════════════════════════════
     private static String buildContextualPrompt(String fullCode, String fileName,
                                                    List<StubDetector.Candidate> candidates,
                                                    java.util.Map<String, String> relatedFiles) {
@@ -307,5 +308,162 @@ public class AIEngine {
 
         prompt.append("═══════════════════════════════════════\n");
         prompt.append("المناطق الناقصة المكتشفة (Candidates):\n");
-        prompt
+        prompt.append("═══════════════════════════════════════\n");
+        for (int i = 0; i < candidates.size(); i++) {
+            StubDetector.Candidate c = candidates.get(i);
+            prompt.append("\n[").append(i + 1).append("] الدالة: ").append(c.functionName).append("\n");
+            prompt.append("    الأسطر: ").append(c.startLine).append(" — ").append(c.endLine).append("\n");
+            prompt.append("    الكود الناقص:\n```\n").append(c.stubCode).append("\n```\n");
+        }
+
+        prompt.append("\n═══════════════════════════════════════\n");
+        prompt.append("تعليمات الإخراج (JSON فقط):\n");
+        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("أرجع JSON فقط بهذا الشكل بدون أي نص إضافي:\n");
+        prompt.append("{\n");
+        prompt.append("  \"fixes\": [\n");
+        prompt.append("    {\n");
+        prompt.append("      \"function_name\": \"اسم_الدالة\",\n");
+        prompt.append("      \"before\": \"الكود الناقص الأصلي حرفياً\",\n");
+        prompt.append("      \"after\": \"الكود المكتمل والصحيح\",\n");
+        prompt.append("      \"reason\": \"سبب التعديل\",\n");
+        prompt.append("      \"start_line\": رقم_سطر_البداية,\n");
+        prompt.append("      \"end_line\": رقم_سطر_النهاية\n");
+        prompt.append("    }\n");
+        prompt.append("  ]\n");
+        prompt.append("}\n\n");
+        prompt.append("⚠️ لا تُرجع أي نص خارج JSON. لا تُرجع markdown code blocks حول JSON.\n");
+        prompt.append("إذا لم تستطع إصلاح دالة، لا تُدرجها في fixes أصلاً.\n");
+
+        return prompt.toString();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // callAPIWithRetry + callAPI — مكتملتان
+    // ═══════════════════════════════════════════════════════════
+    private static String callAPIWithRetry(String prompt) throws Exception {
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                return callAPI(prompt);
+            } catch (SocketTimeoutException | ConnectException e) {
+                lastException = e;
+                if (attempt < MAX_ATTEMPTS) {
+                    long delay = RETRY_BASE_DELAY_MS * attempt;
+                    Thread.sleep(delay);
+                }
+            }
+        }
+        throw lastException;
+    }
+
+    private static String callAPI(String prompt) throws Exception {
+        URL url = new URL(API_URL);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        conn.setReadTimeout(READ_TIMEOUT_MS);
+        conn.setDoOutput(true);
+
+        JSONObject body = new JSONObject();
+        body.put("model", MODEL);
+        body.put("max_tokens", MAX_TOKENS);
+
+        JSONArray messages = new JSONArray();
+        JSONObject msg = new JSONObject();
+        msg.put("role", "user");
+        msg.put("content", prompt);
+        messages.put(msg);
+        body.put("messages", messages);
+
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body.toString().getBytes(StandardCharsets.UTF_8));
+        }
+
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            String errBody = "";
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                errBody = sb.toString();
+            }
+            throw new RuntimeException("HTTP " + responseCode + ": " + errBody);
+        }
+
+        StringBuilder response = new StringBuilder();
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                response.append(line);
+            }
+        }
+
+        JSONObject json = new JSONObject(response.toString());
+        JSONArray choices = json.getJSONArray("choices");
+        if (choices.length() == 0) {
+            throw new RuntimeException("No choices in API response");
+        }
+        return choices.getJSONObject(0).getJSONObject("message").getString("content");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // extractModifications — مكتملة
+    // ═══════════════════════════════════════════════════════════
+    private static List<ModificationResult> extractModifications(String rawResponse) {
+        List<ModificationResult> results = new ArrayList<>();
+        if (rawResponse == null || rawResponse.trim().isEmpty()) {
+            return results;
+        }
+
+        String jsonStr = rawResponse.trim();
+
+        // إزالة markdown code blocks إن وُجدت
+        if (jsonStr.startsWith("```")) {
+            int firstNewline = jsonStr.indexOf('\n');
+            if (firstNewline != -1) {
+                jsonStr = jsonStr.substring(firstNewline + 1);
+            }
+            if (jsonStr.endsWith("```")) {
+                jsonStr = jsonStr.substring(0, jsonStr.lastIndexOf("```")).trim();
+            } else if (jsonStr.contains("```")) {
+                jsonStr = jsonStr.substring(0, jsonStr.lastIndexOf("```")).trim();
+            }
+        }
+
+        JSONObject root;
+        try {
+            root = new JSONObject(jsonStr);
+        } catch (JSONException e) {
+            return results;
+        }
+
+        if (!root.has("fixes")) {
+            return results;
+        }
+
+        JSONArray fixes = root.getJSONArray("fixes");
+        for (int i = 0; i < fixes.length(); i++) {
+            JSONObject fix = fixes.getJSONObject(i);
+            String functionName = fix.optString("function_name", "");
+            String before = fix.optString("before", "");
+            String after = fix.optString("after", "");
+            String reason = fix.optString("reason", "");
+            int startLine = fix.optInt("start_line", -1);
+            int endLine = fix.optInt("end_line", -1);
+
+            if (!functionName.isEmpty() && !before.isEmpty() && !after.isEmpty()
+                    && startLine >= 0 && endLine >= 0) {
+                results.add(new ModificationResult(functionName, before, after, reason, startLine, endLine));
+            }
+        }
+
+        return results;
+    }
+}
 
