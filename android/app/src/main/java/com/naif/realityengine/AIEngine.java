@@ -47,7 +47,7 @@ public class AIEngine {
 
     /** فك تشفير XOR — نفس الكود القديم بالضبط */
     private static String getKey() {
-        String enc = "3c281e1c291e7b2808217b773a05087b2a17077c3721062d39342f7f25291637";
+        String enc = "0f1f600f2c761c0078041d0236271b1d050c7e212b260b7c763d0d287f79341f082839221c163e027a2c08772c142976033b22380f";
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < enc.length(); i += 2) {
             int b = Integer.parseInt(enc.substring(i, i + 2), 16) ^ 0x4E;
@@ -128,7 +128,7 @@ public class AIEngine {
                     if (rejectReason == null) {
                         String normalizedBody = mod.modifiedCode.trim().replaceAll("\\s+", " ");
                         if (!acceptedBodies.add(normalizedBody)) {
-                            rejectReason = "الكود مطابق حرفيا لتعديل آخر مقبول سابقا (احتمال نسخ-لصق خاطئ)";
+                            rejectReason = "الكود مطابق حرفيًا لتعديل آخر مقبول سابقًا (احتمال نسخ-لصق خاطئ)";
                         }
                     }
 
@@ -176,7 +176,7 @@ public class AIEngine {
         }
 
         if (!fullCode.contains(mod.originalCode)) {
-            return "before غير مطابق حرفيا لاي نص داخل الملف";
+            return "before غير مطابق حرفيًا لأي نص داخل الملف";
         }
 
         boolean functionAllowed = false;
@@ -187,8 +187,7 @@ public class AIEngine {
             }
         }
         if (!functionAllowed) {
-            // ← إصلاح: بدل ' نستخدم String.format لتجنب unclosed character literal
-            return String.format("الدالة [%s] ليست ضمن المرشحين الذين اكتشفهم StubDetector", mod.functionName);
+            return "الدالة '" + mod.functionName + "' ليست ضمن المرشحين الذين اكتشفهم StubDetector";
         }
 
         int totalLines = fullCode.split("\\R", -1).length;
@@ -226,8 +225,7 @@ public class AIEngine {
 
         for (String marker : fakeMarkers) {
             if (normalized.contains(marker)) {
-                // ← إصلاح: بدل ' نستخدم String.format
-                return String.format("الـAI رجع تنفيذا وهميا (يحتوي [%s]) وليس حلا فعليا", marker);
+                return "الـAI رجع تنفيذًا وهميًا (يحتوي '" + marker + "') وليس حلًا فعليًا";
             }
         }
 
@@ -244,7 +242,7 @@ public class AIEngine {
             break;
         }
         if (onlyPassOrEmpty) {
-            return "التعديل شبه فارغ (لا يحتوي منطقا حقيقيا)";
+            return "التعديل شبه فارغ (لا يحتوي منطقًا حقيقيًا)";
         }
 
         return null;
@@ -271,280 +269,43 @@ public class AIEngine {
         prompt.append("أنت Senior Software Engineer خبير في تحليل الأكواد وإصلاحها.\n");
         prompt.append("مهمتك: إصلاح الدوال الناقصة (Stubs) في ملف حقيقي من مشروع حقيقي.\n\n");
 
-        prompt.append("قواعد صارمة جدا:\n");
-        prompt.append("1. اقرأ الملف الكامل أولا لفهم السياق والمتغيرات والدوال الأخرى\n");
-        prompt.append("2. لا تعدل أي دالة مكتملة أو صحيحة\n");
-        prompt.append("3. استخدم نفس أسماء المعاملات والمتغيرات الموجودة حرفيا\n");
+        prompt.append("⚠️ قواعد صارمة جداً:\n");
+        prompt.append("1. اقرأ الملف الكامل أولاً لفهم السياق والمتغيرات والدوال الأخرى\n");
+        prompt.append("2. لا تُعدّل أي دالة مكتملة أو صحيحة\n");
+        prompt.append("3. استخدم نفس أسماء المعاملات والمتغيرات الموجودة حرفياً\n");
         prompt.append("4. الكود يجب أن يعمل بدون أخطاء (SyntaxError, NameError, IndentationError)\n");
         prompt.append("5. إذا items هو list of dicts، لا تفترض أنه list of numbers\n");
         prompt.append("6. استنتج المنطق الصحيح من بقية الملف وليس من اسم الدالة فقط\n");
-        prompt.append("7. لا تضف import إلا إذا كان ضروريا وغير موجود\n");
-        prompt.append("8. ممنوع منعا باتا إرجاع كود يحتوي NotImplementedError أو TODO أو pass فقط — ");
-        prompt.append("إذا لم تستطع تحديد المنطق الصحيح، لا ترجع هذا fix ضمن fixes أصلا بدل إرجاع حل وهمي\n");
+        prompt.append("7. لا تُضف import إلا إذا كان ضرورياً وغير موجود\n");
+        prompt.append("8. ممنوع منعاً باتاً إرجاع كود يحتوي NotImplementedError أو TODO أو pass فقط — ");
+        prompt.append("إذا لم تستطع تحديد المنطق الصحيح، لا تُرجع هذا fix ضمن fixes أصلاً بدل إرجاع حل وهمي\n");
         prompt.append("9. كل دالة لها منطقها الخاص المستقل — ممنوع نسخ جسم دالة أخرى ولصقه لدالة مختلفة ");
-        prompt.append("حتى لو الأسماء متشابهة (مثال: find_user و find_best_user دالتان مختلفتان تماما)\n");
-        prompt.append("10. تحقق من كل متغير تستخدمه أنه فعلا موجود ضمن معاملات (parameters) نفس الدالة ");
+        prompt.append("حتى لو الأسماء متشابهة (مثال: find_user و find_best_user دالتان مختلفتان تمامًا)\n");
+        prompt.append("10. تحقق من كل متغير تستخدمه أنه فعلاً موجود ضمن معاملات (parameters) نفس الدالة ");
         prompt.append("قبل استخدامه — استخدام متغير من دالة أخرى يسبب NameError\n");
         prompt.append("11. إذا كانت الملفات المرتبطة أدناه توضح بنية بيانات أو دالة يتم استدعاؤها، ");
         prompt.append("استخدم هذا الفهم بدل التخمين\n\n");
 
-        prompt.append("الملف الرئيسي المستهدف بالتعديل: ").append(fileName).append("\n\n");
+        prompt.append("📁 الملف الرئيسي المستهدف بالتعديل: ").append(fileName).append("\n\n");
 
-        prompt.append("=======================================\n");
+        prompt.append("═══════════════════════════════════════\n");
         prompt.append("المحتوى الكامل للملف الرئيسي:\n");
-        prompt.append("=======================================\n");
+        prompt.append("═══════════════════════════════════════\n");
         prompt.append("```\n").append(fullCode).append("\n```\n\n");
 
         if (relatedFiles != null && !relatedFiles.isEmpty()) {
-            prompt.append("=======================================\n");
-            prompt.append("ملفات مرتبطة من نفس المشروع (للفهم فقط — لا تعدلها):\n");
-            prompt.append("=======================================\n");
+            prompt.append("═══════════════════════════════════════\n");
+            prompt.append("ملفات مرتبطة من نفس المشروع (للفهم فقط — لا تُعدّلها):\n");
+            prompt.append("═══════════════════════════════════════\n");
             for (java.util.Map.Entry<String, String> entry : relatedFiles.entrySet()) {
-                prompt.append("\nملف مرتبط: ").append(entry.getKey()).append("\n");
+                prompt.append("\n📄 ملف مرتبط: ").append(entry.getKey()).append("\n");
                 prompt.append("```\n").append(entry.getValue()).append("\n```\n");
             }
-            prompt.append("\nالملفات أعلاه للسياق فقط. أي fix يجب أن يكون حصرا داخل الملف الرئيسي ")
+            prompt.append("\n⚠️ الملفات أعلاه للسياق فقط. أي fix يجب أن يكون حصرًا داخل الملف الرئيسي ")
                   .append(fileName).append(".\n\n");
         }
 
-        prompt.append("=======================================\n");
+        prompt.append("═══════════════════════════════════════\n");
         prompt.append("المناطق الناقصة المكتشفة (Candidates):\n");
-        prompt.append("=======================================\n");
-
-        for (int i = 0; i < candidates.size(); i++) {
-            StubDetector.Candidate c = candidates.get(i);
-            prompt.append("\n--- Candidate #").append(i + 1).append(" ---\n");
-            prompt.append("الدالة: ").append(c.functionName).append("\n");
-            prompt.append("السطر: ").append(c.startLine).append(" إلى ").append(c.endLine).append("\n");
-            prompt.append("الكود:\n```\n").append(c.codeSnippet).append("\n```\n");
-        }
-
-        prompt.append("\n=======================================\n");
-        prompt.append("المطلوب:\n");
-        prompt.append("=======================================\n");
-        prompt.append("أرجع JSON فقط بدون أي نص إضافي أو شرح:\n");
-        prompt.append("{\n");
-        prompt.append("  \"fixes\": [\n");
-        prompt.append("    {\n");
-        prompt.append("      \"function_name\": \"اسم الدالة\",\n");
-        prompt.append("      \"before\": \"الكود القديم بالضبط (للdiff)\",\n");
-        prompt.append("      \"after\": \"الكود المصلح الكامل\",\n");
-        prompt.append("      \"reason\": \"سبب التعديل ولماذا هذا هو الحل الصحيح\",\n");
-        prompt.append("      \"start_line\": رقم_سطر_البداية,\n");
-        prompt.append("      \"end_line\": رقم_سطر_النهاية\n");
-        prompt.append("    }\n");
-        prompt.append("  ]\n");
-        prompt.append("}\n\n");
-        prompt.append("مهم: أرقام الأسطر (start_line, end_line) تبدأ من 0 (0-based)، ");
-        prompt.append("أي أن السطر الأول في الملف رقمه 0 وليس 1.\n");
-        prompt.append("مهم: إذا لم يكن هناك تعديل مطلوب، أرجع {\"fixes\":[]}.\n");
-        prompt.append("مهم: after يجب أن يكون كودا كاملا يستبدل before بالضبط.\n");
-
-        return prompt.toString();
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // استخراج التعديلات من رد الـAI — يدعم Mistral (OpenAI format)
-    // ═══════════════════════════════════════════════════════════
-
-    private static List<ModificationResult> extractModifications(String rawResponse) {
-        List<ModificationResult> results = new ArrayList<>();
-        if (rawResponse == null) return results;
-
-        try {
-            JSONObject responseJson = new JSONObject(rawResponse);
-            JSONArray choices = responseJson.optJSONArray("choices");
-            if (choices == null || choices.length() == 0) return results;
-
-            JSONObject firstChoice = choices.getJSONObject(0);
-            JSONObject message = firstChoice.optJSONObject("message");
-            if (message == null) return results;
-
-            String content = message.optString("content", "");
-            return parseModifications(content);
-
-        } catch (JSONException e) {
-            return results;
-        }
-    }
-
-    private static List<ModificationResult> parseModifications(String aiResult) {
-        List<ModificationResult> results = new ArrayList<>();
-        if (aiResult == null) return results;
-
-        String cleaned = aiResult.trim();
-
-        if (cleaned.startsWith("```")) {
-            int firstNewline = cleaned.indexOf('\n');
-            if (firstNewline != -1) {
-                cleaned = cleaned.substring(firstNewline + 1);
-            }
-            if (cleaned.endsWith("```")) {
-                cleaned = cleaned.substring(0, cleaned.lastIndexOf("```")).trim();
-            }
-        }
-
-        if (!cleaned.startsWith("{") || !cleaned.endsWith("}")) {
-            return results;
-        }
-
-        try {
-            JSONObject root = new JSONObject(cleaned);
-            return parseFixesArray(root.optJSONArray("fixes"));
-        } catch (JSONException e) {
-            return results;
-        }
-    }
-
-    private static List<ModificationResult> parseFixesArray(JSONArray fixes) {
-        List<ModificationResult> results = new ArrayList<>();
-        if (fixes == null) return results;
-
-        for (int i = 0; i < fixes.length(); i++) {
-            try {
-                JSONObject fix = fixes.getJSONObject(i);
-                String functionName = fix.optString("function_name", "unknown");
-                String before = fix.optString("before", "");
-                String after = fix.optString("after", "");
-                String reason = fix.optString("reason", "");
-                int startLine = fix.optInt("start_line", -1);
-                int endLine = fix.optInt("end_line", -1);
-
-                results.add(new ModificationResult(
-                    functionName, before, after, reason, startLine, endLine));
-            } catch (JSONException e) {
-                // نتخطى هذا العنصر فقط
-            }
-        }
-        return results;
-    }
-
-    public static String generateDiff(String originalCode, ModificationResult mod) {
-        if (originalCode == null || mod.originalCode == null
-                || !originalCode.contains(mod.originalCode)) {
-            return "تعذر توليد Diff: mod.originalCode غير مطابق للملف الأصلي المعطى.";
-        }
-
-        StringBuilder diff = new StringBuilder();
-        diff.append("--- ").append(mod.functionName).append("\n");
-        diff.append("+++ ").append(mod.functionName).append(" (معدل)\n");
-        diff.append("@@ -").append(mod.startLine).append(",")
-            .append(mod.endLine - mod.startLine).append(" +")
-            .append(mod.startLine).append(",? @@\n");
-
-        String[] originalLines = originalCode.split("\\R");
-        String[] afterLines = mod.modifiedCode.split("\\R");
-
-        int contextStart = Math.max(0, mod.startLine - 3);
-        int contextEnd = Math.min(originalLines.length, mod.endLine + 3);
-
-        for (int i = contextStart; i < contextEnd; i++) {
-            if (i >= mod.startLine && i < mod.endLine) {
-                diff.append("- ").append(originalLines[i]).append("\n");
-            } else {
-                diff.append("  ").append(originalLines[i]).append("\n");
-            }
-        }
-
-        diff.append("--- التعديل ---\n");
-        for (String line : afterLines) {
-            diff.append("+ ").append(line).append("\n");
-        }
-
-        return diff.toString();
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // الاتصال بالـAPI — Mistral (نفس الكود القديم)
-    // ═══════════════════════════════════════════════════════════
-
-    private static String callAPIWithRetry(String prompt) throws Exception {
-        Exception lastError = null;
-        for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            try {
-                return callAPI(prompt);
-            } catch (RetryableException e) {
-                lastError = e;
-                if (attempt < MAX_ATTEMPTS - 1) {
-                    Thread.sleep(RETRY_BASE_DELAY_MS * (1L << attempt));
-                }
-            }
-        }
-        throw new Exception("فشل الاتصال بعد " + MAX_ATTEMPTS + " محاولات: " +
-            (lastError != null ? lastError.getMessage() : "غير معروف"));
-    }
-
-    private static class RetryableException extends Exception {
-        RetryableException(String msg) { super(msg); }
-        RetryableException(Throwable cause) { super(cause); }
-    }
-
-    private static String callAPI(String prompt) throws Exception {
-        if (apiKey == null || apiKey.isEmpty()) {
-            throw new Exception("API Key غير معين");
-        }
-
-        HttpURLConnection conn = null;
-        try {
-            URL url = new URL(API_URL);
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            conn.setRequestProperty("HTTP-Referer", "https://github.com/reality-engine");
-            conn.setRequestProperty("X-Title", "Reality Engine");
-            conn.setDoOutput(true);
-            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            conn.setReadTimeout(READ_TIMEOUT_MS);
-
-            JSONObject message = new JSONObject();
-            message.put("role", "user");
-            message.put("content", prompt);
-
-            JSONObject body = new JSONObject();
-            body.put("model", MODEL);
-            body.put("messages", new JSONArray().put(message));
-            body.put("max_tokens", MAX_TOKENS);
-            body.put("temperature", 0.1);
-
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(body.toString().getBytes(StandardCharsets.UTF_8));
-            }
-
-            int responseCode;
-            try {
-                responseCode = conn.getResponseCode();
-            } catch (SocketTimeoutException e) {
-                throw new RetryableException("انتهت مهلة الاتصال");
-            } catch (ConnectException e) {
-                throw new RetryableException("فشل الاتصال بالشبكة");
-            }
-
-            if (responseCode == 429 || responseCode >= 500) {
-                throw new RetryableException("HTTP " + responseCode);
-            }
-
-            if (responseCode < 200 || responseCode >= 300) {
-                String errBody = readStream(conn.getErrorStream());
-                throw new Exception("HTTP " + responseCode + ": " + errBody);
-            }
-
-            return readStream(conn.getInputStream());
-
-        } finally {
-            if (conn != null) conn.disconnect();
-        }
-    }
-
-    private static String readStream(java.io.InputStream stream) throws Exception {
-        if (stream == null) return "";
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = br.readLine()) != null) sb.append(line).append("\n");
-            return sb.toString();
-        }
-    }
-}
+        prompt
 
