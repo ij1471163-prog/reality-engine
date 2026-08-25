@@ -351,12 +351,31 @@ public class CodeIntelligence {
 
         // ── 1. اكتشف target entity من اسم الدالة ──
         // get_product → target = "product" → ابحث في "products"
+        // get_user_orders → explicit collection = "orders"
         String targetEntity = null;
+        String explicitCollection = null; // لو اسم الدالة يذكر collection صريحة
+
+        // قائمة collections المعروفة
+        String[] knownCollections = {"orders","products","users","items","records","entries","files"};
         String[] nParts = funcName.split("_");
+
+        // ابحث عن collection صريحة في اسم الدالة
+        for (String part : nParts) {
+            for (String coll : knownCollections) {
+                if (part.equals(coll)) {
+                    explicitCollection = coll;
+                    break;
+                }
+            }
+        }
+
+        // استخرج targetEntity (أول كلمة مفيدة غير فعل)
         for (String part : nParts) {
             if (!part.equals("get") && !part.equals("find") && !part.equals("fetch")
                 && !part.equals("search") && !part.equals("calculate") && !part.equals("apply")
-                && !part.equals("set") && !part.equals("add") && part.length() > 2) {
+                && !part.equals("set") && !part.equals("add") && !part.equals("list")
+                && !part.equals("all") && part.length() > 2
+                && !part.equals(explicitCollection)) {
                 targetEntity = part.toLowerCase();
                 break;
             }
@@ -402,18 +421,37 @@ public class CodeIntelligence {
             }
         }
 
-        // ── 4. get_user_orders → filter collection by scalar ──
+        // ── 4. explicit collection في اسم الدالة → filter مباشرة ──
+        if (explicitCollection != null) {
+            String searchParam = result.scalarParams.isEmpty() ? null : result.scalarParams.get(0);
+            if (searchParam != null) {
+                DataShape explShape = result.paramShapes.get(explicitCollection);
+                if (explShape != null && explShape.type == DataType.LIST_OF_DICT) {
+                    String linkKey = findKey(explShape.keys, searchParam, searchParam + "_id",
+                        targetEntity != null ? targetEntity + "_id" : "id", "owner_id");
+                    if (linkKey != null) {
+                        result.bestSuggestion = "return [x for x in self." + explicitCollection
+                            + " if x.get(\"" + linkKey + "\") == " + searchParam + "]";
+                        result.finalConfidence = 0.68;
+                        result.evidenceSummary.add("explicit collection: " + explicitCollection + "." + linkKey);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // ── 5. get_user_orders (fallback) → filter collection by scalar ──
         if (n.contains("_orders") || n.contains("_items") || n.contains("_products")
                 || (n.startsWith("get_") && returnsCollection)) {
             String searchParam = result.scalarParams.isEmpty() ? null : result.scalarParams.get(0);
             if (searchParam != null) {
-                // ابحث عن collection مرتبطة
                 for (Map.Entry<String, DataShape> entry : result.paramShapes.entrySet()) {
                     DataShape ds = entry.getValue();
                     if (ds.type == DataType.LIST_OF_DICT) {
                         String linkKey = findKey(ds.keys, searchParam, searchParam + "_id", "user_id", "owner_id");
                         if (linkKey != null) {
-                            result.bestSuggestion = "return [x for x in self." + entry.getKey() + " if x.get(\"" + linkKey + "\") == " + searchParam + "]";
+                            result.bestSuggestion = "return [x for x in self." + entry.getKey()
+                                + " if x.get(\"" + linkKey + "\") == " + searchParam + "]";
                             result.finalConfidence = 0.65;
                             return;
                         }
