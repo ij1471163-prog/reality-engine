@@ -206,7 +206,7 @@ public class CodeIntelligence {
                     shape.keys.add(km.group(1));
         }
 
-        shape.type = bestType;
+        shape.type = (bestScore >= 0.15) ? bestType : DataType.UNKNOWN;
         shape.heuristicConfidence = Math.min(0.7, bestScore);
         return shape;
     }
