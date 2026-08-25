@@ -377,6 +377,25 @@ public class CodeIntelligence {
                 return;
             }
 
+            // semantic: expensive/minimum/filter → filter op
+            boolean isFilterSemantic = n.contains("expensive") || n.contains("cheap")
+                || n.contains("filter") || n.contains("active") || n.contains("inactive")
+                || n.contains("above") || n.contains("below");
+            boolean hasThreshold = scalarParam.toLowerCase().contains("min")
+                || scalarParam.toLowerCase().contains("max")
+                || scalarParam.toLowerCase().contains("price")
+                || scalarParam.toLowerCase().contains("threshold")
+                || scalarParam.toLowerCase().contains("limit");
+            if (isFilterSemantic || hasThreshold) {
+                String priceK = findKey(collShape.keys, "price","value","amount","cost","score","rating");
+                if (priceK != null) {
+                    String op = n.contains("cheap") || n.contains("below") ? "<=" : ">=";
+                    result.bestSuggestion = "return [x for x in " + collectionParam + " if x.get(\"" + priceK + "\", 0) " + op + " " + scalarParam + "]";
+                    result.finalConfidence = Math.min(0.65, collShape.heuristicConfidence + 0.1);
+                    return;
+                }
+            }
+
             if (n.contains("find") || n.contains("search") || n.contains("get")) {
                 String idKey = findKey(collShape.keys, "id","username","name","email","key","code","user_id");
                 if (idKey != null) {
