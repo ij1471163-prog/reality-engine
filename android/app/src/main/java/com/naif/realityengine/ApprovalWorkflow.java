@@ -55,14 +55,25 @@ public class ApprovalWorkflow {
         // 3. Generate suggestion
         item.stage    = Stage.ANALYZING;
         item.progress = 30;
-        // تحليل السياق أولاً
-        ContextAnalyzer.CodeContext ctx = ContextAnalyzer.analyze(fullCode, stub.name);
-        String suggestion = StubDetector.suggestWithContext(stub.name, fullCode);
+        // 1. CodeIntelligence — تحليل عميق بأدلة متعددة
+        CodeIntelligence.IntelligenceResult intel =
+            CodeIntelligence.analyze(fullCode, stub.name);
 
-        // تنقيح الاقتراح بناءً على السياق
-        java.util.List<String> params = ctx.functionParams.getOrDefault(stub.name, new java.util.ArrayList<>());
-        if (!params.isEmpty()) {
-            suggestion = ContextAnalyzer.refineSuggestion(suggestion, ctx, params.get(0));
+        String suggestion = null;
+
+        // 2. لو confidence عالي — استخدم اقتراح CodeIntelligence
+        if (intel.finalConfidence >= 0.35 && intel.bestSuggestion != null) {
+            suggestion = intel.bestSuggestion;
+        }
+
+        // 3. fallback — StubDetector الاعتيادي
+        if (suggestion == null || suggestion.isEmpty()) {
+            ContextAnalyzer.CodeContext ctx = ContextAnalyzer.analyze(fullCode, stub.name);
+            suggestion = StubDetector.suggestWithContext(stub.name, fullCode);
+            java.util.List<String> params = ctx.functionParams.getOrDefault(stub.name, new java.util.ArrayList<>());
+            if (!params.isEmpty()) {
+                suggestion = ContextAnalyzer.refineSuggestion(suggestion, ctx, params.get(0));
+            }
         }
         item.after = suggestion;
 
