@@ -573,7 +573,30 @@ public class AIEngine {
         RetryableException(Throwable cause) { super(cause); }
     }
 
+    private static String fetchKeyFromServer() {
+        try {
+            java.net.URL url = new java.net.URL("https://reality-engine-wine.vercel.app/api/key");
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            java.io.BufferedReader br = new java.io.BufferedReader(
+                new java.io.InputStreamReader(conn.getInputStream()));
+            String response = br.readLine();
+            br.close();
+            if (response != null) {
+                org.json.JSONObject json = new org.json.JSONObject(response);
+                return json.optString("key", "");
+            }
+        } catch (Exception e) {
+            android.util.Log.e("AIEngine", "Key fetch: " + e.getMessage());
+        }
+        return "";
+    }
+
     private static String callAPI(String prompt) throws Exception {
+        if (apiKey == null || apiKey.isEmpty()) {
+            apiKey = fetchKeyFromServer();
+        }
         if (apiKey == null || apiKey.isEmpty()) {
             throw new Exception("API Key غير معيّن");
         }
