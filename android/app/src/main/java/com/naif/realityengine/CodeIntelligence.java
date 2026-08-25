@@ -349,6 +349,80 @@ public class CodeIntelligence {
         DataShape collShape = result.paramShapes.getOrDefault(collectionParam, new DataShape());
         String n = funcName.toLowerCase();
 
+        // ── 1. اكتشف target entity من اسم الدالة ──
+        // get_product → target = "product" → ابحث في "products"
+        String targetEntity = null;
+        String[] nParts = funcName.split("_");
+        for (String part : nParts) {
+            if (!part.equals("get") && !part.equals("find") && !part.equals("fetch")
+                && !part.equals("search") && !part.equals("calculate") && !part.equals("apply")
+                && !part.equals("set") && !part.equals("add") && part.length() > 2) {
+                targetEntity = part.toLowerCase();
+                break;
+            }
+        }
+
+        // ── 2. هل الدالة ترجع collection أم عنصر واحد؟ ──
+        boolean returnsCollection = n.endsWith("s") || n.contains("_list") || n.contains("_all")
+            || n.contains("orders") || n.contains("users") || n.contains("items")
+            || n.contains("products") || n.contains("records") || n.contains("top")
+            || n.contains("filter") || n.contains("search");
+
+        // ── 3. Smart entity resolution: get_product → self.products ──
+        if (targetEntity != null && result.scalarParams.size() > 0
+                && (n.startsWith("get_") || n.startsWith("find_") || n.startsWith("fetch_"))) {
+
+            String searchParam = result.scalarParams.get(0);
+            // ابحث عن collection تطابق targetEntity
+            String entityCollection = targetEntity + "s"; // product → products
+            DataShape entityShape = result.paramShapes.get(entityCollection);
+
+            // لو ما وجدنا مباشرة — ابحث في كل collections
+            if (entityShape == null) {
+                for (Map.Entry<String, DataShape> entry : result.paramShapes.entrySet()) {
+                    if (entry.getKey().contains(targetEntity) || targetEntity.contains(entry.getKey())) {
+                        entityCollection = entry.getKey();
+                        entityShape = entry.getValue();
+                        break;
+                    }
+                }
+            }
+
+            if (entityShape != null && entityShape.type == DataType.LIST_OF_DICT) {
+                String idKey = findKey(entityShape.keys, "id", targetEntity + "_id", "key", "code", "name");
+                if (idKey != null) {
+                    String ret = returnsCollection
+                        ? "return [x for x in self." + entityCollection + " if x.get(\"" + idKey + "\") == " + searchParam + "]"
+                        : "return next((x for x in self." + entityCollection + " if x.get(\"" + idKey + "\") == " + searchParam + "), None)";
+                    result.bestSuggestion = ret;
+                    result.finalConfidence = 0.65;
+                    result.evidenceSummary.add("entity: " + targetEntity + " → " + entityCollection + "." + idKey);
+                    return;
+                }
+            }
+        }
+
+        // ── 4. get_user_orders → filter collection by scalar ──
+        if (n.contains("_orders") || n.contains("_items") || n.contains("_products")
+                || (n.startsWith("get_") && returnsCollection)) {
+            String searchParam = result.scalarParams.isEmpty() ? null : result.scalarParams.get(0);
+            if (searchParam != null) {
+                // ابحث عن collection مرتبطة
+                for (Map.Entry<String, DataShape> entry : result.paramShapes.entrySet()) {
+                    DataShape ds = entry.getValue();
+                    if (ds.type == DataType.LIST_OF_DICT) {
+                        String linkKey = findKey(ds.keys, searchParam, searchParam + "_id", "user_id", "owner_id");
+                        if (linkKey != null) {
+                            result.bestSuggestion = "return [x for x in self." + entry.getKey() + " if x.get(\"" + linkKey + "\") == " + searchParam + "]";
+                            result.finalConfidence = 0.65;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+
         // ── اقتراح من دالة مشابهة — موقوف مؤقتاً لأنه غير موثوق ──
         if (false && !result.similarFuncs.isEmpty() && result.similarConfidence >= 0.4) {
             Map.Entry<String, String> similar = result.similarFuncs.entrySet().iterator().next();
