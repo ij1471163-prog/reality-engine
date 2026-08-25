@@ -131,12 +131,14 @@ public class AIEngine {
                                     List<StubDetector.Candidate> candidates,
                                     Map<String, String> relatedFiles,
                                     Callback callback) {
+        // جلب المفتاح لو ما موجود
         if (apiKey == null || apiKey.isEmpty()) {
-            apiKey = fetchKeyFromServer();
+            try {
+                apiKey = fetchKeyFromServer();
+            } catch (Exception ignored) {}
         }
         if (apiKey == null || apiKey.isEmpty()) {
-            mainHandler.post(() -> callback.onError(
-                "خطأ: لم يتم تعيين API Key"));
+            mainHandler.post(() -> callback.onError("خطأ: لم يتم تعيين API Key"));
             return;
         }
 

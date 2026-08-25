@@ -349,8 +349,8 @@ public class CodeIntelligence {
         DataShape collShape = result.paramShapes.getOrDefault(collectionParam, new DataShape());
         String n = funcName.toLowerCase();
 
-        // ── اقتراح من دالة مشابهة ──
-        if (!result.similarFuncs.isEmpty() && result.similarConfidence >= 0.4) {
+        // ── اقتراح من دالة مشابهة — موقوف مؤقتاً لأنه غير موثوق ──
+        if (false && !result.similarFuncs.isEmpty() && result.similarConfidence >= 0.4) {
             Map.Entry<String, String> similar = result.similarFuncs.entrySet().iterator().next();
             result.bestSuggestion = "# نمط مشابه لـ " + similar.getKey() + "()\n" + similar.getValue();
             result.finalConfidence = result.similarConfidence;
