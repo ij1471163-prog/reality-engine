@@ -132,8 +132,11 @@ public class AIEngine {
                                     Map<String, String> relatedFiles,
                                     Callback callback) {
         if (apiKey == null || apiKey.isEmpty()) {
+            apiKey = fetchKeyFromServer();
+        }
+        if (apiKey == null || apiKey.isEmpty()) {
             mainHandler.post(() -> callback.onError(
-                "خطأ: لم يتم تعيين API Key. استخدم AIEngine.setApiKey()"));
+                "خطأ: لم يتم تعيين API Key"));
             return;
         }
 
