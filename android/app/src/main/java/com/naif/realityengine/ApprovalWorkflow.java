@@ -148,8 +148,25 @@ public class ApprovalWorkflow {
                 if (trimmed.equals("pass") || trimmed.equals("...") ||
                     trimmed.startsWith("raise NotImplementedError")) {
                     String indent = " ".repeat(funcIndent + 4);
-                    for (String sl : suggestion.split("\n"))
-                        result.append(indent).append(sl).append("\n");
+                    // احذف الـ indent الزيادة من الـ suggestion
+                    String[] suggLines = suggestion.split("\n");
+                    // استخرج الـ indent الموجود في أول سطر من الـ suggestion
+                    int existingIndent = 0;
+                    for (String sl : suggLines) {
+                        if (!sl.trim().isEmpty()) {
+                            existingIndent = sl.length() - sl.stripLeading().length();
+                            break;
+                        }
+                    }
+                    for (String sl : suggLines) {
+                        if (sl.trim().isEmpty()) {
+                            result.append("\n");
+                        } else {
+                            // احذف الـ indent الموجود وأضف الصحيح
+                            String stripped = sl.length() >= existingIndent ? sl.substring(existingIndent) : sl.stripLeading();
+                            result.append(indent).append(stripped).append("\n");
+                        }
+                    }
                     replaced = true;
                     inFunc = false;
                     continue;
