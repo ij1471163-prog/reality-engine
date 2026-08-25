@@ -388,19 +388,41 @@ public class CodeIntelligence {
             || n.contains("filter") || n.contains("search");
 
         // ── 3. Smart entity resolution: get_product → self.products ──
+        // نفضل collection parameter مباشرة على collection تحتوي FK
         if (targetEntity != null && result.scalarParams.size() > 0
                 && (n.startsWith("get_") || n.startsWith("find_") || n.startsWith("fetch_"))) {
 
             String searchParam = result.scalarParams.get(0);
-            // ابحث عن collection تطابق targetEntity
-            String entityCollection = targetEntity + "s"; // product → products
-            DataShape entityShape = result.paramShapes.get(entityCollection);
 
-            // لو ما وجدنا مباشرة — ابحث في كل collections
+            // أولاً: هل فيه collection parameter مباشرة في params؟
+            String entityCollection = null;
+            DataShape entityShape = null;
+            for (String lp : result.listParams) {
+                if (lp.contains(targetEntity) || targetEntity.contains(lp.replace("s",""))
+                    || lp.equals(targetEntity + "s") || lp.equals(targetEntity + "es")) {
+                    entityCollection = lp;
+                    entityShape = result.paramShapes.get(lp);
+                    break;
+                }
+            }
+
+            // ثانياً: ابحث في paramShapes
+            if (entityShape == null) {
+                String directColl = targetEntity + "s";
+                if (result.paramShapes.containsKey(directColl)) {
+                    entityCollection = directColl;
+                    entityShape = result.paramShapes.get(directColl);
+                }
+            }
+
+            // ثالثاً: ابحث عن أي collection تطابق targetEntity (بدون FK collections)
             if (entityShape == null) {
                 for (Map.Entry<String, DataShape> entry : result.paramShapes.entrySet()) {
-                    if (entry.getKey().contains(targetEntity) || targetEntity.contains(entry.getKey())) {
-                        entityCollection = entry.getKey();
+                    String ek = entry.getKey();
+                    // تجنب collections التي تحتوي FK فقط (مثل purchases تحتوي customer_ref)
+                    boolean isEntityMatch = ek.contains(targetEntity) || targetEntity.contains(ek.replace("s",""));
+                    if (isEntityMatch) {
+                        entityCollection = ek;
                         entityShape = entry.getValue();
                         break;
                     }
