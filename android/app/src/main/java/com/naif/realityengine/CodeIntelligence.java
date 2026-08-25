@@ -557,6 +557,39 @@ public class CodeIntelligence {
             return;
         }
 
+        // ── discount/tax/rate → tier-based calculation ──
+        if (n.contains("discount") || n.contains("tax") || n.contains("rate")
+                || n.contains("fee") || n.contains("markup")) {
+            String tierParam = null, amountParam = null;
+            for (String p : params) {
+                String pl = p.toLowerCase();
+                if (pl.contains("tier") || pl.contains("type") || pl.contains("level")
+                    || pl.contains("class") || pl.contains("grade") || pl.contains("rank"))
+                    tierParam = p;
+                else if (pl.contains("total") || pl.contains("amount") || pl.contains("price")
+                    || pl.contains("cost") || pl.contains("value") || pl.contains("sum"))
+                    amountParam = p;
+            }
+            if (tierParam != null && amountParam != null) {
+                result.bestSuggestion = "rates = {\"gold\": 0.20, \"silver\": 0.10, \"basic\": 0.0}\n"
+                    + "    discount = rates.get(" + tierParam + ", 0.0)\n"
+                    + "    return " + amountParam + " * (1 - discount)";
+                result.finalConfidence = 0.65;
+                result.evidenceSummary.add("discount: " + amountParam + " * (1 - rates[" + tierParam + "])");
+                return;
+            }
+        }
+
+        // ── normalize/format/clean → string cleanup ──
+        if (n.contains("normalize") || n.contains("clean") || n.contains("format")
+                || n.contains("sanitize") || n.contains("trim")) {
+            String strParam = params.isEmpty() ? "value" : params.get(0);
+            result.bestSuggestion = "if not " + strParam + ": return None\n"
+                + "    return str(" + strParam + ").strip().lower()";
+            result.finalConfidence = 0.55;
+            return;
+        }
+
         // ── لا اقتراح موثوق ──
         result.bestSuggestion = null;
         result.finalConfidence = 0.0;
