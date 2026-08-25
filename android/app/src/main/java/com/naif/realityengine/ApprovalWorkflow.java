@@ -62,7 +62,7 @@ public class ApprovalWorkflow {
         String suggestion = null;
 
         // 2. لو confidence عالي — استخدم اقتراح CodeIntelligence
-        if (intel.finalConfidence >= 0.35 && intel.bestSuggestion != null) {
+        if (intel.finalConfidence >= 0.45 && intel.bestSuggestion != null && !intel.bestSuggestion.contains("نمط مشابه")) {
             suggestion = intel.bestSuggestion;
         }
 
