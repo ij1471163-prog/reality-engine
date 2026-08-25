@@ -131,18 +131,17 @@ public class AIEngine {
                                     List<StubDetector.Candidate> candidates,
                                     Map<String, String> relatedFiles,
                                     Callback callback) {
-        // جلب المفتاح لو ما موجود
-        if (apiKey == null || apiKey.isEmpty()) {
-            try {
-                apiKey = fetchKeyFromServer();
-            } catch (Exception ignored) {}
-        }
-        if (apiKey == null || apiKey.isEmpty()) {
-            mainHandler.post(() -> callback.onError("خطأ: لم يتم تعيين API Key"));
-            return;
-        }
-
         executor.submit(() -> {
+            // جلب المفتاح داخل background thread
+            if (apiKey == null || apiKey.isEmpty()) {
+                try {
+                    apiKey = fetchKeyFromServer();
+                } catch (Exception ignored) {}
+            }
+            if (apiKey == null || apiKey.isEmpty()) {
+                mainHandler.post(() -> callback.onError("خطأ: لم يتم تعيين API Key"));
+                return;
+            }
             try {
                 String prompt = buildContextualPrompt(fullCode, fileName, candidates, relatedFiles);
                 String rawResponse = callAPIWithRetry(prompt);
