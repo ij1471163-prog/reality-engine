@@ -575,7 +575,7 @@ public class AIEngine {
 
     private static String fetchKeyFromServer() {
         try {
-            java.net.URL url = new java.net.URL("https://reality-engine-wine.vercel.app/api/key");
+            java.net.URL url = new java.net.URL("https://reality-engine-api-livid.vercel.app/api/key");
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
