@@ -580,6 +580,48 @@ public class CodeIntelligence {
             }
         }
 
+        // ── top/popular/most/best → aggregation + sort ──
+        if (n.contains("top") || n.contains("popular") || n.contains("most")
+                || n.contains("best") || n.contains("highest") || n.contains("lowest")) {
+
+            // ابحث عن collection فيها qty/count + id
+            String aggColl = null;
+            String aggQtyKey = null;
+            String aggIdKey = null;
+
+            for (Map.Entry<String, DataShape> entry : result.paramShapes.entrySet()) {
+                DataShape ds = entry.getValue();
+                if (ds.type == DataType.LIST_OF_DICT) {
+                    String qk = findKey(ds.keys, "qty","quantity","count","num","units","sales","amount");
+                    String ik = findKey(ds.keys, "product_id","item_id","id","key","code");
+                    if (qk != null && ik != null) {
+                        aggColl = entry.getKey();
+                        aggQtyKey = qk;
+                        aggIdKey = ik;
+                        break;
+                    }
+                }
+            }
+
+            String limitParam = null;
+            for (String p : params) {
+                if (p.equals("limit") || p.equals("n") || p.equals("top") || p.equals("count"))
+                    limitParam = p;
+            }
+            if (limitParam == null) limitParam = "5";
+
+            if (aggColl != null && aggQtyKey != null && aggIdKey != null) {
+                result.bestSuggestion = "counts = {}\n"
+                    + "    for x in self." + aggColl + ":\n"
+                    + "        key = x.get(\"" + aggIdKey + "\")\n"
+                    + "        counts[key] = counts.get(key, 0) + x.get(\"" + aggQtyKey + "\", 1)\n"
+                    + "    return sorted(counts, key=counts.get, reverse=" + (n.contains("lowest") ? "False" : "True") + ")[:" + limitParam + "]";
+                result.finalConfidence = 0.62;
+                result.evidenceSummary.add("aggregation: " + aggColl + "." + aggQtyKey + " grouped by " + aggIdKey);
+                return;
+            }
+        }
+
         // ── normalize/format/clean → string cleanup ──
         if (n.contains("normalize") || n.contains("clean") || n.contains("format")
                 || n.contains("sanitize") || n.contains("trim")) {
