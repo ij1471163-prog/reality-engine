@@ -593,7 +593,9 @@ public class CodeIntelligence {
                 DataShape ds = entry.getValue();
                 if (ds.type == DataType.LIST_OF_DICT) {
                     String qk = findKey(ds.keys, "qty","quantity","count","num","units","sales","amount");
-                    String ik = findKey(ds.keys, "product_id","item_id","id","key","code");
+                    // نفضل foreign key (_id) على primary key (id) في aggregation
+                    String ik = findKey(ds.keys, "product_id","item_id","category_id","tag_id");
+                    if (ik == null) ik = findKey(ds.keys, "key","code","name"); // fallback
                     if (qk != null && ik != null) {
                         aggColl = entry.getKey();
                         aggQtyKey = qk;
