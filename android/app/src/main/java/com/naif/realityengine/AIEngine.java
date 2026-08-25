@@ -51,7 +51,7 @@ public class AIEngine {
 
     // ⚠️ تأكد من اسم الموديل بالضبط من https://ai.google.dev/gemini-api/docs/models
     // قبل الاعتماد عليه — ما قدرت أتحقق منه هنا.
-    private static final String MODEL = "gemini-2.5-flash";
+    private static final String MODEL = "gemini-3.6-flash";
 
     private static String API_URL =
         "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent";
