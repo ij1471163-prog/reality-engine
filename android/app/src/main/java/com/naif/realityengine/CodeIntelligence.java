@@ -612,6 +612,53 @@ public class CodeIntelligence {
             }
             if (limitParam == null) limitParam = "5";
 
+            // ── Cross-collection JOIN: لو فيه foreign key يربط collection ثانية ──
+            // مثال: orders.item_ref → items.ref, orders.units × items.unit_price
+            if (aggColl != null && aggIdKey != null) {
+                // ابحث عن collection ثانية مرتبطة بالـ foreign key
+                String fkEntity = aggIdKey.replace("_id","").replace("_ref","").replace("_key","");
+                String joinColl = null;
+                String joinIdKey = null;
+                String joinPriceKey = null;
+
+                for (Map.Entry<String, DataShape> entry2 : result.paramShapes.entrySet()) {
+                    if (entry2.getKey().equals(aggColl)) continue;
+                    DataShape ds2 = entry2.getValue();
+                    if (ds2.type == DataType.LIST_OF_DICT) {
+                        // هل هذه الـ collection تحتوي key يطابق fkEntity؟
+                        String jik = findKey(ds2.keys, "id", fkEntity+"_id", "ref", "code", "key");
+                        String jpk = findKey(ds2.keys, "price","unit_price","cost","value","amount","rate");
+                        if (jik != null && jpk != null) {
+                            joinColl = entry2.getKey();
+                            joinIdKey = jik;
+                            joinPriceKey = jpk;
+                            break;
+                        }
+                    }
+                }
+
+                if (joinColl != null) {
+                    // Cross-collection weighted aggregation
+                    String limitVar = null;
+                    for (String p : params) {
+                        if (p.equals("limit") || p.equals("n") || p.equals("top")) { limitVar = p; break; }
+                    }
+                    if (limitVar == null) limitVar = "5";
+                    String iterVar = aggColl.replaceAll("s$","");
+
+                    result.bestSuggestion = "totals = {}\n"
+                        + "    for " + iterVar + " in self." + aggColl + ":\n"
+                        + "        item = next((x for x in self." + joinColl + " if x.get(\"" + joinIdKey + "\") == " + iterVar + ".get(\"" + aggIdKey + "\")), None)\n"
+                        + "        if item:\n"
+                        + "            key = " + iterVar + ".get(\"" + aggIdKey + "\")\n"
+                        + "            totals[key] = totals.get(key, 0) + " + iterVar + ".get(\"" + (aggQtyKey != null ? aggQtyKey : "1") + "\", 1) * item.get(\"" + joinPriceKey + "\", 0)\n"
+                        + "    return sorted(totals.items(), key=lambda x: x[1], reverse=True)[:" + limitVar + "]";
+                    result.finalConfidence = 0.68;
+                    result.evidenceSummary.add("cross-join: " + aggColl + "." + aggIdKey + " → " + joinColl + "." + joinIdKey);
+                    return;
+                }
+            }
+
             if (aggColl != null && aggQtyKey != null && aggIdKey != null) {
                 result.bestSuggestion = "counts = {}\n"
                     + "    for x in self." + aggColl + ":\n"
