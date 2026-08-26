@@ -547,10 +547,11 @@ public class StubDetector {
                 && !line.startsWith("protected ")) continue;
 
             // استخرج اسم الدالة
-            Pattern sig = Pattern.compile(
+            // استخرج اسم الدالة
             Pattern sig = Pattern.compile(
                 "(?:public|private|protected)\\s+(?:static\\s+)?[\\w<>\\[\\]]+\\s+(\\w+)\\s*\\("
             );
+            Matcher sm = sig.matcher(line);
             if (!sm.find()) continue;
 
             String name = sm.group(1);
