@@ -525,36 +525,39 @@ public class StubDetector {
 
         return new StubResult(stubs, totalFunctions);
     }
+
+
     // كشف Java stubs
     private static void detectJavaStubs(String code, List<StubFunction> stubs) {
-        // لو مو Java — تخطى
-        if (!code.contains("public class") && !code.contains("private ") && !code.contains("public ")) return;
+        if (!code.contains("public class") && !code.contains("private ")
+            && !code.contains("protected ")) return;
 
-        // Pattern: method with body = { } أو { throw new UnsupportedOperationException }
-        Pattern[] javaStubs = {
-            // public/private/protected method() { }
-            Pattern.compile(
-                "(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]*>)?\s+)(\w+)\s*\([^)]*\)\s*\{\s*\}",
-                Pattern.MULTILINE
-            ),
-            // method { throw new UnsupportedOperationException
-            Pattern.compile(
-                "(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]*>)?\s+)(\w+)\s*\([^)]*\)\s*\{[^}]*throw\s+new\s+UnsupportedOperationException",
-                Pattern.MULTILINE
-            ),
-            // TODO comment inside method
-            Pattern.compile(
-                "(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]*>)?\s+)(\w+)\s*\([^)]*\)\s*\{[^}]*//\s*TODO",
-                Pattern.MULTILINE
-            ),
-        };
-
-        Set<String> skip = new java.util.HashSet<>(java.util.Arrays.asList(
+        java.util.Set<String> skip = new java.util.HashSet<>(java.util.Arrays.asList(
             "main","toString","hashCode","equals","onCreate","onStart",
             "onResume","onPause","onStop","onDestroy","getView","onClick"
         ));
 
-        for (Pattern p : javaStubs) {
+        // Method with empty body: public Type name() { }
+        Pattern emptyBody = Pattern.compile(
+            "(?:public|private|protected)\s+(?:static\s+)?\w[\w<>, ]*\s+(\w+)\s*\([^)]*\)\s*\{\s*\}",
+            Pattern.MULTILINE
+        );
+
+        // Method with TODO comment
+        Pattern todoBody = Pattern.compile(
+            "(?:public|private|protected)\s+(?:static\s+)?\w[\w<>, ]*\s+(\w+)\s*\([^)]*\)\s*\{[^}]{0,200}//\s*TODO[^}]*\}",
+            Pattern.MULTILINE | Pattern.DOTALL
+        );
+
+        // Method with UnsupportedOperationException
+        Pattern unsupported = Pattern.compile(
+            "(?:public|private|protected)\s+(?:static\s+)?\w[\w<>, ]*\s+(\w+)\s*\([^)]*\)\s*\{[^}]*UnsupportedOperationException[^}]*\}",
+            Pattern.MULTILINE | Pattern.DOTALL
+        );
+
+        Pattern[] javaPatterns = {emptyBody, todoBody, unsupported};
+
+        for (Pattern p : javaPatterns) {
             Matcher m = p.matcher(code);
             while (m.find()) {
                 String name = m.group(1);
@@ -567,7 +570,7 @@ public class StubDetector {
                     name, lineNo, Risk.CONFIRMED,
                     "Java method stub",
                     m.group().substring(0, Math.min(100, m.group().length())),
-                    "// TODO: implement " + name
+                    "// TODO: implement " + name + "()"
                 ));
             }
         }
