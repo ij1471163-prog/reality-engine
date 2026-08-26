@@ -505,7 +505,12 @@ public class AISecurityGuard {
 
         } else if (lang == Language.PYTHON) {
             boolean hasDynamicImport = Pattern.compile(
-                "(?i)\\b(__import__|importlib|imp\\.import_module)\\b"
+                "(?i)\\b(__import__|importlib|imp\\.import_module)\\b",
+                // إضافات للهجمات المتخفية
+                "(?i)\\bgetattr\\s*\\([^)]*,\\s*[\'\"](?:system|popen|exec|eval)",
+                "(?i)\\bglobals\\s*\\(\\)\\s*\\[",
+                "(?i)\\b(?:base64\\.b64decode|base64\\.decode)\\s*\\([^)]+\\)\\s*(?:\\)|,)",
+                "(?i)compile\\s*\\([^)]+,\\s*[\'\"]exec[\'\"]"
             ).matcher(code).find();
             checks.add(new Check("AI201", "Dynamic Import",
                 !hasDynamicImport,
