@@ -527,7 +527,8 @@ public class StubDetector {
     }
 
 
-    // كشف Java stubs
+
+    // كشف Java stubs - نهج بسيط سطر بسطر
     private static void detectJavaStubs(String code, List<StubFunction> stubs) {
         if (!code.contains("public class") && !code.contains("private ")
             && !code.contains("protected ")) return;
@@ -537,39 +538,54 @@ public class StubDetector {
             "onResume","onPause","onStop","onDestroy","getView","onClick"
         ));
 
-        // Method with empty body: public Type name() { }
-        Pattern emptyBody = Pattern.compile(
-            "(?:public|private|protected)\s+(?:static\s+)?\w[\w<>, ]*\s+(\w+)\s*\([^)]*\)\s*\{\s*\}",
-            Pattern.MULTILINE
-        );
+        String[] lines = code.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
 
-        // Method with TODO comment
-        Pattern todoBody = Pattern.compile(
-            "(?:public|private|protected)\s+(?:static\s+)?\w[\w<>, ]*\s+(\w+)\s*\([^)]*\)\s*\{[^}]{0,200}//\s*TODO[^}]*\}",
-            Pattern.MULTILINE | Pattern.DOTALL
-        );
+            // تحقق إن السطر فيه method signature
+            if (!line.startsWith("public ") && !line.startsWith("private ")
+                && !line.startsWith("protected ")) continue;
 
-        // Method with UnsupportedOperationException
-        Pattern unsupported = Pattern.compile(
-            "(?:public|private|protected)\s+(?:static\s+)?\w[\w<>, ]*\s+(\w+)\s*\([^)]*\)\s*\{[^}]*UnsupportedOperationException[^}]*\}",
-            Pattern.MULTILINE | Pattern.DOTALL
-        );
+            // استخرج اسم الدالة
+            Pattern sig = Pattern.compile(
+                "(?:public|private|protected)\s+(?:static\s+)?[\w<>\[\]]+\s+(\w+)\s*\("
+            );
+            Matcher sm = sig.matcher(line);
+            if (!sm.find()) continue;
 
-        Pattern[] javaPatterns = {emptyBody, todoBody, unsupported};
+            String name = sm.group(1);
+            if (skip.contains(name)) continue;
+            boolean exists = stubs.stream().anyMatch(s -> s.name.equals(name));
+            if (exists) continue;
 
-        for (Pattern p : javaPatterns) {
-            Matcher m = p.matcher(code);
-            while (m.find()) {
-                String name = m.group(1);
-                if (name == null || skip.contains(name)) continue;
-                boolean exists = stubs.stream().anyMatch(s -> s.name.equals(name));
-                if (exists) continue;
-                String before = code.substring(0, m.start());
-                int lineNo = before.split("\n", -1).length;
+            // جمع جسم الدالة
+            StringBuilder body = new StringBuilder(line);
+            int braces = 0;
+            boolean started = false;
+            int j = i;
+            while (j < lines.length) {
+                String bl = lines[j];
+                for (char c : bl.toCharArray()) {
+                    if (c == '{') { braces++; started = true; }
+                    else if (c == '}') braces--;
+                }
+                body.append("\n").append(bl);
+                j++;
+                if (started && braces <= 0) break;
+            }
+
+            String bodyStr = body.toString();
+
+            // هل هي stub؟
+            boolean isEmpty = bodyStr.matches("(?s).*\{\s*\}.*");
+            boolean hasTodo = bodyStr.contains("// TODO") || bodyStr.contains("//TODO");
+            boolean hasUnsupported = bodyStr.contains("UnsupportedOperationException");
+
+            if (isEmpty || hasTodo || hasUnsupported) {
                 stubs.add(new StubFunction(
-                    name, lineNo, Risk.CONFIRMED,
+                    name, i + 1, Risk.CONFIRMED,
                     "Java method stub",
-                    m.group().substring(0, Math.min(100, m.group().length())),
+                    line.substring(0, Math.min(100, line.length())),
                     "// TODO: implement " + name + "()"
                 ));
             }
