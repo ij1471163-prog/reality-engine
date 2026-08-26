@@ -602,6 +602,19 @@ public class CodeIntelligence {
             }
         }
 
+        // ── best/top single → max by score ──
+        if ((n.contains("best") || n.contains("top")) && !result.listParams.isEmpty()
+                && !n.contains("product") && !n.contains("item") && !n.contains("order")) {
+            String cp = result.listParams.get(0);
+            DataShape cs = result.paramShapes.getOrDefault(cp, new DataShape());
+            String sk = findKey(cs.keys, "score","rating","points","rank","level");
+            if (sk != null) {
+                result.bestSuggestion = "return max(" + cp + ", key=lambda x: x.get(\"" + sk + "\", 0)) if " + cp + " else None";
+                result.finalConfidence = 0.68;
+                return;
+            }
+        }
+
         // ── top/popular/most/best → aggregation + sort ──
         if (n.contains("top") || n.contains("popular") || n.contains("most")
                 || n.contains("best") || n.contains("highest") || n.contains("lowest")) {
