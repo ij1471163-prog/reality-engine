@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.Set;
 
 /**
  * StubDetector — كاشف الدوال الناقصة + مولّد اقتراحات مبدئية
@@ -520,8 +521,57 @@ public class StubDetector {
 
         stubs.sort((a, b) -> a.risk.compareTo(b.risk));
         detectJavaScriptStubs(code, stubs);
+        detectJavaStubs(code, stubs);
 
         return new StubResult(stubs, totalFunctions);
     }
+    // كشف Java stubs
+    private static void detectJavaStubs(String code, List<StubFunction> stubs) {
+        // لو مو Java — تخطى
+        if (!code.contains("public class") && !code.contains("private ") && !code.contains("public ")) return;
+
+        // Pattern: method with body = { } أو { throw new UnsupportedOperationException }
+        Pattern[] javaStubs = {
+            // public/private/protected method() { }
+            Pattern.compile(
+                "(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]*>)?\s+)(\w+)\s*\([^)]*\)\s*\{\s*\}",
+                Pattern.MULTILINE
+            ),
+            // method { throw new UnsupportedOperationException
+            Pattern.compile(
+                "(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]*>)?\s+)(\w+)\s*\([^)]*\)\s*\{[^}]*throw\s+new\s+UnsupportedOperationException",
+                Pattern.MULTILINE
+            ),
+            // TODO comment inside method
+            Pattern.compile(
+                "(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]*>)?\s+)(\w+)\s*\([^)]*\)\s*\{[^}]*//\s*TODO",
+                Pattern.MULTILINE
+            ),
+        };
+
+        Set<String> skip = new java.util.HashSet<>(java.util.Arrays.asList(
+            "main","toString","hashCode","equals","onCreate","onStart",
+            "onResume","onPause","onStop","onDestroy","getView","onClick"
+        ));
+
+        for (Pattern p : javaStubs) {
+            Matcher m = p.matcher(code);
+            while (m.find()) {
+                String name = m.group(1);
+                if (name == null || skip.contains(name)) continue;
+                boolean exists = stubs.stream().anyMatch(s -> s.name.equals(name));
+                if (exists) continue;
+                String before = code.substring(0, m.start());
+                int lineNo = before.split("\n", -1).length;
+                stubs.add(new StubFunction(
+                    name, lineNo, Risk.CONFIRMED,
+                    "Java method stub",
+                    m.group().substring(0, Math.min(100, m.group().length())),
+                    "// TODO: implement " + name
+                ));
+            }
+        }
+    }
+
 }
 
