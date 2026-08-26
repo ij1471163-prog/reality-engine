@@ -313,6 +313,22 @@ public class AIEngine {
         prompt.append("أنت Senior Software Engineer خبير في تحليل الأكواد وإصلاحها.\n");
         prompt.append("مهمتك: إصلاح الدوال الناقصة (Stubs) في ملف حقيقي من مشروع حقيقي.\n\n");
 
+        // استخرج البيانات الموجودة في الكود وأضفها للـ prompt
+        java.util.regex.Matcher dataMatcher = java.util.regex.Pattern.compile(
+            "^(\\w+)\\s*=\\s*\\[\\s*\\{[^]]{0,500}\\]",
+            java.util.regex.Pattern.MULTILINE
+        ).matcher(fullCode);
+        StringBuilder dataContext = new StringBuilder();
+        while (dataMatcher.find()) {
+            String varName = dataMatcher.group(1);
+            String sample = dataMatcher.group().substring(0, Math.min(200, dataMatcher.group().length()));
+            dataContext.append("- ").append(varName).append(" = ").append(sample).append("\n");
+        }
+        if (dataContext.length() > 0) {
+            prompt.append("📊 البيانات الموجودة في الكود (استخدمها لفهم أشكال البيانات):\n");
+            prompt.append(dataContext.toString()).append("\n");
+        }
+
         prompt.append("⚠️ قواعد صارمة جداً:\n");
         prompt.append("1. اقرأ الملف الكامل أولاً لفهم السياق والمتغيرات والدوال الأخرى\n");
         prompt.append("2. لا تُعدّل أي دالة مكتملة أو صحيحة\n");
