@@ -548,9 +548,9 @@ public class StubDetector {
 
             // استخرج اسم الدالة
             Pattern sig = Pattern.compile(
-                "(?:public|private|protected)\s+(?:static\s+)?[\w<>\[\]]+\s+(\w+)\s*\("
+            Pattern sig = Pattern.compile(
+                "(?:public|private|protected)\\s+(?:static\\s+)?[\\w<>\\[\\]]+\\s+(\\w+)\\s*\\("
             );
-            Matcher sm = sig.matcher(line);
             if (!sm.find()) continue;
 
             String name = sm.group(1);
@@ -577,7 +577,7 @@ public class StubDetector {
             String bodyStr = body.toString();
 
             // هل هي stub؟
-            boolean isEmpty = bodyStr.matches("(?s).*\{\s*\}.*");
+            boolean isEmpty = bodyStr.contains("{ }") || bodyStr.matches("(?s).*\\{\\s*\\}.*");
             boolean hasTodo = bodyStr.contains("// TODO") || bodyStr.contains("//TODO");
             boolean hasUnsupported = bodyStr.contains("UnsupportedOperationException");
 
