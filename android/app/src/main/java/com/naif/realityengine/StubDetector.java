@@ -594,3 +594,4 @@ public class StubDetector {
 
 }
 
+}
