@@ -584,10 +584,13 @@ public class StubDetector {
 
             if (isEmpty || hasTodo || hasUnsupported) {
                 stubs.add(new StubFunction(
-                    name, i + 1, Risk.CONFIRMED,
+                    name, i + 1, i + 1, i + 1,
+                    Risk.CONFIRMED,
                     "Java method stub",
                     line.substring(0, Math.min(100, line.length())),
-                    "// TODO: implement " + name + "()"
+                    "",
+                    "// TODO: implement " + name + "()",
+                    ""
                 ));
             }
         }
