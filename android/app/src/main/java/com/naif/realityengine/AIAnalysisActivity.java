@@ -10,6 +10,8 @@ import java.io.*;
 import java.util.*;
 
 public class AIAnalysisActivity extends AppCompatActivity {
+    private final java.util.Map<String, String> relatedFiles = new java.util.LinkedHashMap<>();
+    private static final int PICK_RELATED_FILE = 200;
 
     private static final int PICK_FILE = 1;
     private String fileCode = "";
@@ -92,6 +94,14 @@ public class AIAnalysisActivity extends AppCompatActivity {
         btnUpload.setOnClickListener(v -> pickFile());
         addView(btnUpload, 130, 0, 12);
 
+        // Related files button
+        Button btnRelated = new Button(this);
+        btnRelated.setText("📎 أضف ملف مرتبط");
+        btnRelated.setBackgroundColor(0xFF1C2128);
+        btnRelated.setTextColor(0xFF8B949E);
+        btnRelated.setOnClickListener(v -> pickRelatedFile());
+        addView(btnRelated, 90, 0, 8);
+
         // Analyze button
         Button btnAnalyze = new Button(this);
         btnAnalyze.setText("✨ تحليل وإصلاح بالذكاء الاصطناعي");
@@ -108,6 +118,13 @@ public class AIAnalysisActivity extends AppCompatActivity {
             tvStatus.setText("جاري إرسال الكود لـ Mistral AI...");
             runAI(btnAnalyze);
         });
+    }
+
+    private void pickRelatedFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, PICK_RELATED_FILE);
     }
 
     private void pickFile() {
