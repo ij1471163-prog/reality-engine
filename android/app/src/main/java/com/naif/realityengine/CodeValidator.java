@@ -252,7 +252,12 @@ public class CodeValidator {
             "any","all","abs","round","open","chr","ord","hex","bin","oct",
             "repr","hash","id","vars","dir","help","input","format",
             "re","os","sys","math","json","hashlib","datetime","collections",
-            "None","True","False","self","cls","super"
+            "None","True","False","self","cls","super",
+            "get","append","extend","update","pop","remove","add","clear",
+            "split","strip","lower","upper","replace","join","format","encode",
+            "decode","find","startswith","endswith","count","index","keys","values",
+            "items","copy","deepcopy","read","write","close","seek","tell",
+            "group","match","search","findall","sub","compile","groups"
         ));
         return builtins.contains(name);
     }
