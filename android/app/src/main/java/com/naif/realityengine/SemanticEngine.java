@@ -139,7 +139,10 @@ public class SemanticEngine {
         for (String token : tokens) {
             Intent matched = INTENT_WORDS.get(token);
             if (matched != null) {
-                intentScores.merge(matched, 0.5, Double::sum);
+                // FIND_BEST و FIND_WORST و CALCULATE_AVG لها أولوية أعلى
+                double weight = (matched == Intent.FIND_BEST || matched == Intent.FIND_WORST
+                    || matched == Intent.CALCULATE_AVG || matched == Intent.AGGREGATE) ? 0.8 : 0.5;
+                intentScores.merge(matched, weight, Double::sum);
                 result.evidence.add("token '" + token + "' → " + matched);
             }
             // partial match
@@ -170,7 +173,29 @@ public class SemanticEngine {
         boolean hasTier = result.paramRoles.containsValue("tier");
         boolean hasAmount = result.paramRoles.containsValue("amount");
 
-        // لو فيه search_key → FIND_ONE أقوى
+        // لو اسم الدالة يحتوي "average" أو "avg" → CALCULATE_AVG دائماً
+        if (n.contains("average") || n.contains("avg") || n.contains("mean")) {
+            intentScores.put(Intent.CALCULATE_AVG, 1.0);
+            intentScores.put(Intent.CALCULATE_TOTAL, 0.0);
+        }
+
+        // لو اسم الدالة يحتوي "best" أو "top" → FIND_BEST دائماً
+        if (n.contains("best") || n.contains("highest") || (n.contains("top") && !n.contains("products"))) {
+            intentScores.put(Intent.FIND_BEST, 1.0);
+            intentScores.put(Intent.FIND_ONE, 0.0);
+        }
+
+        // لو اسم الدالة يحتوي "worst" أو "lowest" → FIND_WORST دائماً
+        if (n.contains("worst") || n.contains("lowest") || n.contains("minimum_user")) {
+            intentScores.put(Intent.FIND_WORST, 1.0);
+        }
+
+        // لو اسم الدالة يحتوي "active" → CALCULATE_COUNT
+        if (n.contains("active") && n.contains("count")) {
+            intentScores.put(Intent.CALCULATE_COUNT, 1.0);
+        }
+
+        // لو اسم الدالة يحتوي "search_key → FIND_ONE أقوى
         if (hasSearchKey && hasCollection) {
             intentScores.merge(Intent.FIND_ONE, 0.3, Double::sum);
         }
