@@ -195,6 +195,23 @@ public class SemanticEngine {
             intentScores.put(Intent.CALCULATE_COUNT, 1.0);
         }
 
+        // لو اسم الدالة يحتوي "active" بدون count → FIND_MANY
+        if (n.contains("active") && !n.contains("count") && !n.contains("num")) {
+            intentScores.put(Intent.FIND_MANY, 0.8);
+            intentScores.put(Intent.FIND_ONE, 0.0);
+        }
+
+        // لو فيه tier/type + amount → discount
+        boolean hasTierParam = false, hasAmountParam = false;
+        for (Map.Entry<String, String> e : result.paramRoles.entrySet()) {
+            if (e.getValue().equals("tier")) hasTierParam = true;
+            if (e.getValue().equals("amount")) hasAmountParam = true;
+        }
+        if (hasTierParam && hasAmountParam) {
+            intentScores.put(Intent.CALCULATE_TOTAL, 0.9);
+            result.evidence.add("tier + amount → discount");
+        }
+
         // لو اسم الدالة يحتوي filter words → FILTER دائماً
         if (n.contains("expensive") || n.contains("cheap") || n.contains("above")
                 || n.contains("below") || n.contains("minimum") || n.contains("maximum")
@@ -266,6 +283,18 @@ public class SemanticEngine {
         String activeKey= findKey(collShape.keys, "active","enabled","is_active","status","available");
 
         switch (result.intent) {
+            case FIND_MANY:
+                if (collParam != null && activeKey != null) {
+                    return "return [x for x in " + collParam + " if x.get(\"" + activeKey + "\")]";
+                }
+                if (collParam != null && searchParam != null && idKey != null) {
+                    return "return [x for x in " + collParam + " if x.get(\"" + idKey + "\") == " + searchParam + "]";
+                }
+                if (collParam != null) {
+                    return "return list(" + collParam + ")";
+                }
+                break;
+
             case FIND_ONE:
                 if (collParam != null && searchParam != null && idKey != null) {
                     // هل الـ searchParam يطابق أحد الـ keys؟
