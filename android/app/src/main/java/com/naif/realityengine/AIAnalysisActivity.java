@@ -160,7 +160,7 @@ public class AIAnalysisActivity extends AppCompatActivity {
         String keyHint = keyDebug.isEmpty() ? "EMPTY" : "..." + keyDebug.substring(Math.max(0, keyDebug.length()-4));
         tvStatus.setText("مفتاح AI: " + keyHint + " | جاري التحليل...");
 
-        AIEngine.analyze(fileCode, fileName, new AIEngine.Callback() {
+        AIEngine.analyzeFile(fileCode, fileName, StubDetector.toCandidates(fileCode, StubDetector.detect(fileCode)), relatedFiles, new AIEngine.Callback() {
             @Override
             public void onResult(String result) {
                 runOnUiThread(() -> {
