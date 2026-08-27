@@ -195,6 +195,15 @@ public class SemanticEngine {
             intentScores.put(Intent.CALCULATE_COUNT, 1.0);
         }
 
+        // لو اسم الدالة يحتوي filter words → FILTER دائماً
+        if (n.contains("expensive") || n.contains("cheap") || n.contains("above")
+                || n.contains("below") || n.contains("minimum") || n.contains("maximum")
+                || (n.contains("filter") && !n.contains("unfilter"))) {
+            intentScores.put(Intent.FILTER, 1.0);
+            intentScores.put(Intent.FIND_ONE, 0.0);
+            intentScores.put(Intent.FIND_MANY, 0.0);
+        }
+
         // لو اسم الدالة يحتوي "search_key → FIND_ONE أقوى
         if (hasSearchKey && hasCollection) {
             intentScores.merge(Intent.FIND_ONE, 0.3, Double::sum);
