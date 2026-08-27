@@ -253,7 +253,7 @@ public class CodeValidator {
             "repr","hash","id","vars","dir","help","input","format",
             "re","os","sys","math","json","hashlib","datetime","collections",
             "None","True","False","self","cls","super",
-            "get","append","extend","update","pop","remove","add","clear",
+            "get","append","extend","update","pop","remove","add","clear","key","value","item","obj","el","elem","k","v","i","j","n","s","p","q","r","t","u","w",
             "split","strip","lower","upper","replace","join","format","encode",
             "decode","find","startswith","endswith","count","index","keys","values",
             "items","copy","deepcopy","read","write","close","seek","tell",
