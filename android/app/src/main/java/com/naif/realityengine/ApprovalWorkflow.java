@@ -61,8 +61,16 @@ public class ApprovalWorkflow {
 
         String suggestion = null;
 
-        // 2. لو confidence عالي — استخدم اقتراح CodeIntelligence
-        if (intel.finalConfidence >= 0.45 && intel.bestSuggestion != null && !intel.bestSuggestion.contains("نمط مشابه")) {
+        // 2. SemanticEngine — فهم النية
+        java.util.List<String> sparams = CodeIntelligence.extractParams(fullCode, stub.name);
+        SemanticEngine.SemanticResult semantic = SemanticEngine.analyze(stub.name, sparams, intel);
+        if (semantic.confidence >= 0.4 && semantic.suggestedCode != null) {
+            suggestion = semantic.suggestedCode;
+        }
+
+        // 3. لو SemanticEngine ما اقترح — استخدم CodeIntelligence
+        if (suggestion == null && intel.finalConfidence >= 0.45
+                && intel.bestSuggestion != null && !intel.bestSuggestion.contains("نمط مشابه")) {
             suggestion = intel.bestSuggestion;
         }
 
