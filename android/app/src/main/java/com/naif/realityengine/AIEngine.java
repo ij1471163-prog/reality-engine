@@ -325,8 +325,11 @@ public class AIEngine {
             dataContext.append("- ").append(varName).append(" = ").append(sample).append("\n");
         }
         if (dataContext.length() > 0) {
-            prompt.append("📊 البيانات الموجودة في الكود (استخدمها لفهم أشكال البيانات):\n");
-            prompt.append(dataContext.toString()).append("\n");
+            prompt.append("\n🔴 مهم جداً — البيانات الحقيقية في الكود:\n");
+            prompt.append(dataContext.toString());
+            prompt.append("\n⚠️ استخدم هذه البيانات لفهم أشكال المتغيرات وأنواعها.\n");
+            prompt.append("مثلاً: items هي list[dict] فيها price وquantity وname.\n");
+            prompt.append("و users هي list[dict] فيها username وemail وscore وactive.\n\n");
         }
 
         prompt.append("⚠️ قواعد صارمة جداً:\n");
