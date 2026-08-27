@@ -348,7 +348,24 @@ public class AIEngine {
         prompt.append("قبل استخدامه — استخدام متغير من دالة أخرى يسبب NameError\n");
         prompt.append("11. إذا كانت الملفات المرتبطة أدناه توضح بنية بيانات أو دالة يتم استدعاؤها، ");
         prompt.append("استخدم هذا الفهم بدل التخمين\n");
-        prompt.append("12. استخدم دالة (function) ").append(TOOL_NAME).append(" حصرًا لإرجاع نتيجتك\n\n");
+        prompt.append("12. استخدم دالة (function) ").append(TOOL_NAME).append(" حصرًا لإرجاع نتيجتك\n");
+        prompt.append("13. لكل دالة ناقصة، فكّر: وش النية؟ (بحث/حساب/فلتر/ترتيب) ثم اكتب كود يتماشى مع هذه النية\n");
+        prompt.append("14. لو الدالة اسمها find_best_X → استخدم max(), لو find_worst_X → min()\n");
+        prompt.append("15. لو الدالة اسمها calculate_average → اقسم على len(), لا تعيد نفس كود calculate_total\n\n");
+
+        // تحليل SemanticEngine للدوال الناقصة
+        prompt.append("🧠 تحليل ذكي للدوال الناقصة:\n");
+        for (StubDetector.Candidate c : candidates) {
+            java.util.List<String> cparams = CodeIntelligence.extractParams(fullCode, c.functionName);
+            SemanticEngine.SemanticResult sem = SemanticEngine.analyze(c.functionName, cparams,
+                CodeIntelligence.analyze(fullCode, c.functionName));
+            prompt.append("- ").append(c.functionName).append("() → النية: ")
+                  .append(sem.intent.name()).append(" (").append(String.format("%.0f%%", sem.confidence*100)).append(")\n");
+            if (sem.suggestedCode != null) {
+                prompt.append("  اقتراح المحرك: ").append(sem.suggestedCode.replace("\n","↵")).append("\n");
+            }
+        }
+        prompt.append("\n");
 
         prompt.append("📁 الملف الرئيسي المستهدف بالتعديل: ").append(fileName).append("\n\n");
 
