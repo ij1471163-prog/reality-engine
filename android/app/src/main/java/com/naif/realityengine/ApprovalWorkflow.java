@@ -74,6 +74,22 @@ public class ApprovalWorkflow {
             suggestion = intel.bestSuggestion;
         }
 
+        // 4. CodeValidator — تحقق من الكود قبل عرضه
+        if (suggestion != null) {
+            CodeValidator.ValidationResult validation =
+                CodeValidator.validate(suggestion, stub.name, sparams, fullCode);
+
+            if (validation.status == CodeValidator.ValidationStatus.INVALID) {
+                // لو فيه إصلاح تلقائي — استخدمه
+                if (validation.fixedCode != null) {
+                    suggestion = validation.fixedCode;
+                } else {
+                    // ارفض الاقتراح
+                    suggestion = null;
+                }
+            }
+        }
+
         // 3. fallback — StubDetector الاعتيادي
         if (suggestion == null || suggestion.isEmpty()) {
             ContextAnalyzer.CodeContext ctx = ContextAnalyzer.analyze(fullCode, stub.name);
