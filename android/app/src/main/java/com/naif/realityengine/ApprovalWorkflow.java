@@ -200,7 +200,8 @@ public class ApprovalWorkflow {
                         } else {
                             // احذف الـ indent الموجود وأضف الصحيح
                             String stripped = sl.length() >= existingIndent ? sl.substring(existingIndent) : sl.stripLeading();
-                            result.append(indent).append(stripped).append("\n");
+                            // تجاهل الـ indent الزيادة في السطور الداخلية
+                            result.append(indent).append(stripped.stripLeading()).append("\n");
                         }
                     }
                     replaced = true;
