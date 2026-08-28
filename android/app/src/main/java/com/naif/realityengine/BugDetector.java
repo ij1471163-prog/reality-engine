@@ -155,5 +155,3 @@ public class BugDetector {
             }
         }
     }
-}
-}
