@@ -54,6 +54,7 @@ public class AIEngine {
     private static final String MODEL = "gemini-3.6-flash";
 
     private static final String PROXY_URL = "https://reality-engine-api-livid.vercel.app/api/chat";
+    private static String API_URL = PROXY_URL;
 
     private static final int MAX_TOKENS = 8000;
     private static final int CONNECT_TIMEOUT_MS = 30000;

@@ -2,6 +2,7 @@ package com.naif.realityengine;
 
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.ClipData;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -202,7 +203,7 @@ public class MainActivity extends AppCompatActivity {
             openAnalysis(data.getData());
         } else if (req == PICK_MULTIPLE && res == RESULT_OK && data != null) {
             // رفع ملفات متعددة — نفتح AIAnalysisActivity مع الملف الرئيسي
-            android.net.ClipData clipData = data.getClipData();
+            ClipData clipData = data.getClipData();
             android.net.Uri mainUri = data.getData();
 
             if (clipData != null && clipData.getItemCount() > 0) {
