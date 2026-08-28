@@ -402,6 +402,21 @@ public class AIAnalysisActivity extends AppCompatActivity {
                     if (btnAnalyze != null) btnAnalyze.setEnabled(true);
                 }
             }
+        } else if (req == PICK_RELATED_FILE) {
+            if (res == RESULT_OK && data != null) {
+                try {
+                    android.net.Uri uri = data.getData();
+                    String relFileName = uri.getLastPathSegment();
+                    if (relFileName == null) relFileName = "related_file";
+                    String relContent = readFile(uri);
+                    if (!relContent.isEmpty()) {
+                        relatedFiles.put(relFileName, relContent);
+                        tvStatus.setText("✅ أُضيف: " + relFileName + " (" + relatedFiles.size() + " ملف مرتبط)");
+                    }
+                } catch (Exception e) {
+                    tvStatus.setText("❌ خطأ: " + e.getMessage());
+                }
+            }
         } else if (req == SAVE_AI_FILE) {
             if (res == RESULT_OK && data != null) {
                 try {
