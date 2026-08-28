@@ -116,15 +116,29 @@ public class EngineAnalyzer {
         report.mediumFixable = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.MEDIUM).count();
         report.lowFixable    = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.LOW).count();
 
+        // Bug Detection دائماً
+        BugDetector.BugReport bugReport = BugDetector.detect(code);
+        StringBuilder bugSummary = new StringBuilder();
+        if (!bugReport.bugs.isEmpty()) {
+            bugSummary.append("\n\n🐛 أخطاء مكتشفة (").append(bugReport.bugs.size()).append("):\n");
+            for (BugDetector.Bug bug : bugReport.bugs) {
+                String icon = bug.severity == BugDetector.Severity.CRITICAL ? "🔴"
+                    : bug.severity == BugDetector.Severity.HIGH ? "🟠" : "🟡";
+                bugSummary.append(icon).append(" ").append(bug.title)
+                    .append(" — السطر ").append(bug.line).append("\n");
+            }
+        }
+
         if (report.stubs.isEmpty()) {
-            report.engineMessage  = "ما وجد المحرك أي دوال ناقصة.";
-            report.recommendation = "الملف يبدو مكتملاً.";
+            report.engineMessage  = "ما وجد المحرك أي دوال ناقصة." + bugSummary;
+            report.recommendation = bugReport.bugs.isEmpty() ? "الملف يبدو مكتملاً." : "يوجد أخطاء — استخدم AI للإصلاح.";
         } else {
             report.engineMessage  = "وجد المحرك " + report.stubs.size() + " دالة ناقصة:\n"
                 + report.highFixable   + " واضحة ✓  •  "
                 + report.mediumFixable + " راجع ⚠️  •  "
                 + report.lowFixable    + " صعب ✗";
             report.recommendation = "راجع كل اقتراح قبل الموافقة.";
+            report.engineMessage += bugSummary;
         }
 
         return report;
