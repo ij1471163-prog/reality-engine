@@ -404,8 +404,29 @@ public class AIAnalysisActivity extends AppCompatActivity {
                 fileName = uri.getLastPathSegment();
                 fileCode = readFile(uri);
                 originalCode = fileCode;
+
+                // قراءة الملفات المرتبطة لو جاءت من رفع مشروع
+                java.util.ArrayList<String> relatedUris = getIntent().getStringArrayListExtra("related_uris");
+                if (relatedUris != null) {
+                    for (String uriStr : relatedUris) {
+                        try {
+                            android.net.Uri relUri = android.net.Uri.parse(uriStr);
+                            String relName = relUri.getLastPathSegment();
+                            if (relName != null) {
+                                int slash = relName.lastIndexOf('/');
+                                if (slash >= 0) relName = relName.substring(slash + 1);
+                            }
+                            String relContent = readFile(relUri);
+                            if (!relContent.isEmpty() && relName != null) {
+                                relatedFiles.put(relName, relContent);
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+
                 if (!fileCode.isEmpty()) {
-                    tvStatus.setText("✅ " + fileName + " — " + fileCode.split("\n").length + " سطر");
+                    String relInfo = relatedFiles.isEmpty() ? "" : " + " + relatedFiles.size() + " ملف مرتبط";
+                    tvStatus.setText("✅ " + fileName + " — " + fileCode.split("\n").length + " سطر" + relInfo);
                     Button btnAnalyze = findViewById(android.R.id.button1);
                     if (btnAnalyze != null) btnAnalyze.setEnabled(true);
                 }
