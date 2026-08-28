@@ -585,6 +585,8 @@ public class BugDetector {
             return m.group(1).split(",").length;
         }
         return 0;
+    }
+
 
     // ═══════════════════════════════════════════════════
     // إصلاح تلقائي للأخطاء المكتشفة
