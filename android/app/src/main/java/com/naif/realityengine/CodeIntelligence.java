@@ -726,6 +726,72 @@ public class CodeIntelligence {
     // مساعدات
     // ═══════════════════════════════════════════════════
 
+    // استخراج nested keys مثل items[price, qty]
+    static Map<String, List<String>> extractNestedKeys(String code, String var) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        // ابحث عن assignment
+        java.util.regex.Pattern assignPat = java.util.regex.Pattern.compile(
+            "\\b" + java.util.regex.Pattern.quote(var) + "\\s*=\\s*\\[", 
+            java.util.regex.Pattern.MULTILINE
+        );
+        java.util.regex.Matcher am = assignPat.matcher(code);
+        if (!am.find()) return result;
+        String block = code.substring(am.start());
+
+        // استخرج أول dict
+        java.util.regex.Matcher dm = java.util.regex.Pattern.compile(
+            "\\{([^{}]*(?:\\{[^{}]*\\}[^{}]*)*)\\}"
+        ).matcher(block);
+        if (dm.find()) {
+            List<String> topKeys = new ArrayList<>();
+            java.util.regex.Matcher km = java.util.regex.Pattern.compile("\"(\\w+)\"\\s*:").matcher(dm.group(1));
+            while (km.find()) topKeys.add(km.group(1));
+            result.put("__top__", topKeys);
+        }
+
+        // استخرج nested items
+        java.util.regex.Matcher nm = java.util.regex.Pattern.compile(
+            "\"(\\w+)\"\\s*:\\s*\\[\\s*\\{([^}]+)\\}"
+        ).matcher(block);
+        while (nm.find()) {
+            String nestedKey = nm.group(1);
+            List<String> nestedKeys = new ArrayList<>();
+            java.util.regex.Matcher nkm = java.util.regex.Pattern.compile("\"(\\w+)\"\\s*:").matcher(nm.group(2));
+            while (nkm.find()) nestedKeys.add(nkm.group(1));
+            result.put(nestedKey, nestedKeys);
+        }
+        return result;
+    }
+
+    // تصنيف params ذكي
+    static void classifyParamsSmart(List<String> params, IntelligenceResult result) {
+        List<String> rateWords = Arrays.asList("rate","ratio","percent","factor","discount","tax","fee","limit","threshold");
+        List<String> collWords = Arrays.asList("orders","items","users","products","records","entries","list","data");
+        List<String> dictWords = Arrays.asList("order","item","user","product","record","entry","obj","data");
+
+        result.listParams.clear();
+        result.scalarParams.clear();
+
+        for (String p : params) {
+            String pl = p.toLowerCase();
+            boolean isRate = rateWords.stream().anyMatch(pl::contains);
+            boolean isColl = collWords.contains(pl) || (pl.endsWith("s") && pl.length() > 3);
+            boolean isDict = dictWords.contains(pl);
+            boolean isId = pl.endsWith("_id") || pl.endsWith("_ref");
+
+            if (isRate || isId) {
+                result.scalarParams.add(p);
+            } else if (isColl) {
+                result.listParams.add(p);
+            } else if (isDict) {
+                // dict param - نضيفه كـ scalar للاستخدام في جسم الدالة
+                result.scalarParams.add(p);
+            } else {
+                result.scalarParams.add(p);
+            }
+        }
+    }
+
     private static String findKey(List<String> keys, String... candidates) {
         for (String c : candidates)
             if (keys.contains(c)) return c;
