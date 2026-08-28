@@ -111,7 +111,7 @@ public class ApprovalActivity extends AppCompatActivity {
         }
 
         StubDetector.StubFunction stub = stubs.get(currentIndex);
-        ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code);
+        ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code, new java.util.LinkedHashMap<>());
 
         tvFuncName.setText(stub.name + "()  —  " + (currentIndex + 1) + "/" + stubs.size());
         tvSafetyScore.setText("Safety Score: " + item.safetyScore + "/100");
@@ -132,7 +132,7 @@ public class ApprovalActivity extends AppCompatActivity {
     // ── Approve ───────────────────────────────────────────
     private void handleApprove() {
         StubDetector.StubFunction stub = stubs.get(currentIndex);
-        ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code);
+        ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code, new java.util.LinkedHashMap<>());
 
         if (item.suggestion != null) {
             String before = code;
