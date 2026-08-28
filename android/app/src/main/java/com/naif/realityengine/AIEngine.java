@@ -212,12 +212,8 @@ public class AIEngine {
         StubDetector.StubResult result = StubDetector.detect(code);
         List<StubDetector.Candidate> candidates = StubDetector.toCandidates(code, result);
 
-        if (candidates == null || candidates.isEmpty()) {
-            mainHandler.post(() -> callback.onResult(
-                "{\"fixes\":[],\"file_name\":\"" + fileName + "\",\"rejected_count\":0}"));
-            return;
-        }
-
+        // لو ما في stubs — ادخل وضع تدقيق الأخطاء
+        if (candidates == null) candidates = new java.util.ArrayList<>();
         analyzeFile(code, fileName, candidates, callback);
     }
 
