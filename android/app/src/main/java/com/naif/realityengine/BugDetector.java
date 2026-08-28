@@ -153,3 +153,6 @@ public class BugDetector {
                     t.replaceAll("([^=!<>])==([^=])", "$1===$2"),
                     i + 1, Severity.MEDIUM));
 }
+        }
+    }
+}
