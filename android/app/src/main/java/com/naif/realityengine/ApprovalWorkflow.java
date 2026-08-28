@@ -25,7 +25,8 @@ public class ApprovalWorkflow {
 
     public static WorkflowItem process(
             StubDetector.StubFunction stub,
-            String fullCode) {
+            String fullCode,
+            java.util.Map<String, String> relatedFiles) {
 
         WorkflowItem item = new WorkflowItem();
         item.id           = stub.name + "_" + System.currentTimeMillis();
@@ -56,8 +57,19 @@ public class ApprovalWorkflow {
         item.stage    = Stage.ANALYZING;
         item.progress = 30;
         // 1. CodeIntelligence — تحليل عميق بأدلة متعددة
+        // دمج الملفات المرتبطة مع الكود الرئيسي
+        String contextCode = fullCode;
+        if (relatedFiles != null && !relatedFiles.isEmpty()) {
+            StringBuilder ctx = new StringBuilder(fullCode);
+            for (java.util.Map.Entry<String, String> e : relatedFiles.entrySet()) {
+                ctx.append("\n# --- ").append(e.getKey()).append(" ---\n");
+                ctx.append(e.getValue());
+            }
+            contextCode = ctx.toString();
+        }
+
         CodeIntelligence.IntelligenceResult intel =
-            CodeIntelligence.analyze(fullCode, stub.name);
+            CodeIntelligence.analyze(contextCode, stub.name);
 
         String suggestion = null;
 
