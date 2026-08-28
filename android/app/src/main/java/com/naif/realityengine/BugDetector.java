@@ -645,3 +645,9 @@ public class BugDetector {
         return changed ? String.join("\n", fixed) : null;
     }
 }
+}
+}
+}
+}
+}
+}
