@@ -226,6 +226,14 @@ public class AIAnalysisActivity extends AppCompatActivity {
             }
         }
 
+        // لو ما في proposals — عرض تقرير الأخطاء
+        if (proposals.isEmpty() && !aiResult.isEmpty()) {
+            showRawResultWithAction(aiResult);
+            btnAnalyze.setText("✨ تحليل وإصلاح بالذكاء الاصطناعي");
+            btnAnalyze.setEnabled(true);
+            return;
+        }
+
         btnAnalyze.setText("✨ تحليل وإصلاح بالذكاء الاصطناعي");
         btnAnalyze.setEnabled(true);
 
