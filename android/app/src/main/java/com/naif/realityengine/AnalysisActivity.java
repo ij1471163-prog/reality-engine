@@ -48,6 +48,16 @@ public class AnalysisActivity extends AppCompatActivity {
         // Analyze
         report = EngineAnalyzer.analyze(fileCode, fileName);
 
+        // Bug Detection
+        BugDetector.BugReport bugReport = BugDetector.detect(fileCode);
+        if (!bugReport.bugs.isEmpty()) {
+            StringBuilder bugMsg = new StringBuilder("\n\n🐛 أخطاء مكتشفة (").append(bugReport.bugs.size()).append("):\n");
+            for (BugDetector.Bug bug : bugReport.bugs) {
+                bugMsg.append("• ").append(bug.title).append(" — السطر ").append(bug.line).append("\n");
+            }
+            report.engineMessage = report.engineMessage + bugMsg.toString();
+        }
+
         // Show results
         TextView tvFileName      = findViewById(R.id.tvFileName);
         TextView tvEngineMessage = findViewById(R.id.tvEngineMessage);
