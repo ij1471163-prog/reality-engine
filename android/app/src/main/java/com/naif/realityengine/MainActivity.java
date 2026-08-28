@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat;
 
 public class MainActivity extends AppCompatActivity {
 
+    private static final int PICK_MULTIPLE = 300;
     private static final int PICK_FILE    = 1;
     private static final int PERM_REQUEST = 2;
     private static final String PREFS     = "reality_prefs";
@@ -66,6 +67,27 @@ public class MainActivity extends AppCompatActivity {
         btnAI.setOnClickListener(v -> {
             Intent intent = new Intent(this, AIAnalysisActivity.class);
             startActivity(intent);
+        });
+
+        // زر رفع مشروع (ملفات متعددة)
+        android.widget.Button btnProject = new android.widget.Button(this);
+        btnProject.setText("📁 رفع مشروع");
+        btnProject.setBackgroundColor(0xFF1C2128);
+        btnProject.setTextColor(0xFF58A6FF);
+        btnProject.setTextSize(15);
+        android.widget.LinearLayout.LayoutParams projParams = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        projParams.setMargins(0, 8, 0, 0);
+        btnProject.setLayoutParams(projParams);
+        ((android.widget.LinearLayout) btnPickFile.getParent()).addView(btnProject);
+
+        btnProject.setOnClickListener(v -> {
+            if (!prefs.getBoolean(AGREED, false)) {
+                showWelcomeDialog(prefs);
+            } else {
+                openMultiFilePicker();
+            }
         });
 
         // طلب إذن الكتابة
@@ -165,11 +187,42 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(intent, PICK_FILE);
     }
 
+    private void openMultiFilePicker() {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("*/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(intent, PICK_MULTIPLE);
+    }
+
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req == PICK_FILE && res == RESULT_OK && data != null)
+        if (req == PICK_FILE && res == RESULT_OK && data != null) {
             openAnalysis(data.getData());
+        } else if (req == PICK_MULTIPLE && res == RESULT_OK && data != null) {
+            // رفع ملفات متعددة — نفتح AIAnalysisActivity مع الملف الرئيسي
+            android.net.ClipData clipData = data.getClipData();
+            android.net.Uri mainUri = data.getData();
+
+            if (clipData != null && clipData.getItemCount() > 0) {
+                mainUri = clipData.getItemAt(0).getUri();
+            }
+
+            if (mainUri != null) {
+                Intent intent = new Intent(this, AIAnalysisActivity.class);
+                intent.setData(mainUri);
+                // أضف الملفات الإضافية كـ related files
+                if (clipData != null) {
+                    java.util.ArrayList<String> uriStrings = new java.util.ArrayList<>();
+                    for (int i = 1; i < clipData.getItemCount(); i++) {
+                        uriStrings.add(clipData.getItemAt(i).getUri().toString());
+                    }
+                    intent.putStringArrayListExtra("related_uris", uriStrings);
+                }
+                startActivity(intent);
+            }
+        }
     }
 
     private void handleIncomingFile(Intent intent) {
