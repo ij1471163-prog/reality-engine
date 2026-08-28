@@ -89,8 +89,8 @@ public class BugDetector {
             String t = lines[i].trim();
             if (t.startsWith("for ") || t.startsWith("for(") || t.contains(".forEach(")) inLoop = true;
             if (inLoop && Pattern.compile("^\\s*(total|sum|count|revenue|result)\\s*=\\s*[^=+\\-\\n]").matcher(lines[i]).find()) {
-                report.addBug(new Bug("\u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u062a\u0631\u0627\u0643\u0645: = \u0628\u062f\u0644 +=",
-                    "\u0627\u0644\u0645\u062a\u063a\u064a\u0631 \u064a\u064f\u0639\u064a\u064e\u0651\u0646 \u0628\u062f\u0644 \u0623\u0646 \u064a\u062a\u0631\u0627\u0643\u0645",
+                report.addBug(new Bug("خطأ في التراكم: = بدل +=",
+                    "المتغير يُعيَّن بدل أن يتراكم",
                     lines[i].trim(), i + 1, Severity.CRITICAL));
             }
             if (t.isEmpty() || t.equals("}")) inLoop = false;
@@ -101,8 +101,8 @@ public class BugDetector {
         Pattern p = Pattern.compile("(==|!=)\\s*None");
         for (int i = 0; i < lines.length; i++) {
             if (!lines[i].trim().startsWith("#") && p.matcher(lines[i]).find()) {
-                report.addBug(new Bug("\u0645\u0642\u0627\u0631\u0646\u0629 None \u0628\u0640 ==",
-                    "\u0627\u0633\u062a\u062e\u062f\u0645 is None",
+                report.addBug(new Bug("مقارنة None بـ ==",
+                    "استخدم is None",
                     lines[i].trim().replace("== None", "is None"),
                     i + 1, Severity.MEDIUM));
             }
@@ -116,8 +116,8 @@ public class BugDetector {
                 String coll = m.group(1);
                 for (int j = i + 1; j < Math.min(i + 8, lines.length); j++) {
                     if (lines[j].contains(coll + ".remove(")) {
-                        report.addBug(new Bug("\u062a\u0639\u062f\u064a\u0644 \u0642\u0627\u0626\u0645\u0629 \u0623\u062b\u0646\u0627\u0621 iteration",
-                            "\u0627\u0633\u062a\u062e\u062f\u0645 .copy()",
+                        report.addBug(new Bug("تعديل قائمة أثناء iteration",
+                            "استخدم .copy()",
                             "for item in " + coll + ".copy():",
                             i + 1, Severity.HIGH));
                         break;
@@ -132,8 +132,8 @@ public class BugDetector {
             if (lines[i].contains(".forEach(")) {
                 for (int j = i + 1; j < Math.min(i + 6, lines.length); j++) {
                     if (lines[j].trim().startsWith("return ")) {
-                        report.addBug(new Bug("return \u062f\u0627\u062e\u0644 forEach \u0644\u0627 \u064a\u0639\u0645\u0644",
-                            "\u0627\u0633\u062a\u062e\u062f\u0645 .find()",
+                        report.addBug(new Bug("return داخل forEach لا يعمل",
+                            "استخدم .find()",
                             lines[i].trim().replace(".forEach(", ".find("),
                             j + 1, Severity.HIGH));
                         break;
@@ -148,8 +148,8 @@ public class BugDetector {
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
             if (!t.startsWith("//") && p.matcher(lines[i]).find() && t.contains("if ")) {
-                report.addBug(new Bug("\u0645\u0642\u0627\u0631\u0646\u0629 == \u0628\u062f\u0644 ===",
-                    "\u0627\u0633\u062a\u062e\u062f\u0645 ===",
+                report.addBug(new Bug("مقارنة == بدل ===",
+                    "استخدم ===",
                     t.replaceAll("([^=!<>])==([^=])", "$1===$2"),
                     i + 1, Severity.MEDIUM));
             }
