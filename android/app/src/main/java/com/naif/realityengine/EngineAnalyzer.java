@@ -129,6 +129,22 @@ public class EngineAnalyzer {
             }
         }
 
+        // JSAnalyzer للملفات JS/HTML
+        if (fileName.endsWith(".js") || fileName.endsWith(".html") || fileName.endsWith(".jsx")) {
+            JSAnalyzer.AnalysisResult jsResult = JSAnalyzer.analyze(code);
+            if (jsResult.hasIssues()) {
+                StringBuilder jsMsg = new StringBuilder("\n\n🐛 أخطاء JavaScript (").append(jsResult.issues.size()).append("):\n");
+                for (JSAnalyzer.Issue issue : jsResult.issues) {
+                    String icon = issue.severity == JSAnalyzer.Severity.CRITICAL ? "🔴"
+                        : issue.severity == JSAnalyzer.Severity.HIGH ? "🟠" : "🟡";
+                    jsMsg.append(icon).append(" ").append(issue.title)
+                        .append(" — السطر ").append(issue.line).append("\n");
+                }
+                report.engineMessage = (report.stubs.isEmpty() ? "ما وجد المحرك دوال ناقصة." : report.engineMessage) + jsMsg;
+                report.recommendation = "يوجد أخطاء — استخدم AI للإصلاح.";
+            }
+        }
+
         if (report.stubs.isEmpty()) {
             report.engineMessage  = "ما وجد المحرك أي دوال ناقصة." + bugSummary;
             report.recommendation = bugReport.bugs.isEmpty() ? "الملف يبدو مكتملاً." : "يوجد أخطاء — استخدم AI للإصلاح.";
