@@ -118,19 +118,25 @@ public class BugDetector {
             if (line.trim().startsWith("//") || line.trim().startsWith("#")) continue;
             Matcher m = p.matcher(line);
             while (m.find()) {
-                String divisor = m.group(1);
-                // تحقق إن ما فيه فحص قبلها
+                String numerator = m.group(1);
+                String divisor = m.group(2);
+                // تجاهل: أرقام ثابتة، keywords، CSS values
+                if (divisor.matches("\d+") || divisor.length() <= 1) continue;
+                if (divisor.equals("len") || divisor.equals("length") || divisor.equals("size")) continue;
+                // لازم يكون في سياق حساب حقيقي
+                if (!line.contains("=") && !line.contains("return")) continue;
                 boolean hasCheck = code.contains("if " + divisor + " != 0")
                     || code.contains("if " + divisor + " > 0")
                     || code.contains("if len(" + divisor)
-                    || code.contains("if " + divisor);
-                if (!hasCheck && !divisor.matches("\\d+") && divisor.length() > 1) {
+                    || code.contains("if " + divisor + ":");
+                if (!hasCheck) {
                     report.addBug(new Bug(
                         "قسمة على صفر محتملة",
                         "القسمة على '" + divisor + "' بدون التحقق أنه ليس صفراً",
                         line.trim(),
-                        "if " + divisor + " != 0:\n    " + line.trim(),
-                        i + 1, Severity.HIGH
+                        "if " + divisor + " != 0:
+    " + line.trim(),
+                        i + 1, Severity.MEDIUM
                     ));
                     break;
                 }
