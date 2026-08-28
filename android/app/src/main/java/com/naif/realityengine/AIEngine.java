@@ -686,39 +686,9 @@ public class AIEngine {
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(READ_TIMEOUT_MS);
 
-            String systemPrompt =
-                "أنت Senior Software Engineer دقيق جدًا. تلتزم حرفيًا بالتعليمات المعطاة. " +
-                "لا ترجع أبدًا كودًا وهميًا (NotImplementedError/TODO/pass) ولا تنسخ منطق دالة لدالة أخرى. " +
-                "استخدم دالة " + TOOL_NAME + " دائمًا لإرجاع نتيجتك النهائية.";
-
-            JSONObject part = new JSONObject().put("text", prompt);
-            JSONObject content = new JSONObject()
-                .put("role", "user")
-                .put("parts", new JSONArray().put(part));
-
-            JSONObject systemInstruction = new JSONObject()
-                .put("parts", new JSONArray().put(new JSONObject().put("text", systemPrompt)));
-
-            JSONObject functionDeclarations = new JSONObject()
-                .put("functionDeclarations", new JSONArray().put(buildFixesFunctionDeclaration()));
-
-            // نجبر الموديل يستدعي الدالة دائمًا بدل ما يرجع نص حر
-            JSONObject functionCallingConfig = new JSONObject()
-                .put("mode", "ANY")
-                .put("allowedFunctionNames", new JSONArray().put(TOOL_NAME));
-            JSONObject toolConfig = new JSONObject()
-                .put("functionCallingConfig", functionCallingConfig);
-
-            JSONObject generationConfig = new JSONObject()
-                .put("temperature", 0.1)
-                .put("maxOutputTokens", MAX_TOKENS);
-
+            // إرسال للـ proxy بـ format بسيط
             JSONObject body = new JSONObject();
-            body.put("contents", new JSONArray().put(content));
-            body.put("systemInstruction", systemInstruction);
-            body.put("tools", new JSONArray().put(functionDeclarations));
-            body.put("toolConfig", toolConfig);
-            body.put("generationConfig", generationConfig);
+            body.put("prompt", prompt);
 
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(body.toString().getBytes(StandardCharsets.UTF_8));
