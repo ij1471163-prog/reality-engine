@@ -486,6 +486,16 @@ public class AIEngine {
 
         try {
             JSONObject responseJson = new JSONObject(rawResponseJson);
+
+            // لو جاء من الـ proxy → {"result": "..."}
+            if (responseJson.has("result")) {
+                String text = responseJson.optString("result", "");
+                if (!text.isEmpty()) {
+                    return parseModifications(text);
+                }
+                return results;
+            }
+
             JSONArray candidatesArray = responseJson.optJSONArray("candidates");
             if (candidatesArray == null || candidatesArray.length() == 0) return results;
 
