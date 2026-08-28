@@ -152,10 +152,4 @@ public class BugDetector {
                     "\u0627\u0633\u062a\u062e\u062f\u0645 ===",
                     t.replaceAll("([^=!<>])==([^=])", "$1===$2"),
                     i + 1, Severity.MEDIUM));
-            }
-        }
-    }
-}
-}
-}
 }
