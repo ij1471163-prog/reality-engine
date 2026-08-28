@@ -62,6 +62,19 @@ public class AIAnalysisActivity extends AppCompatActivity {
     private void buildMainUI() {
         layoutMain.removeAllViews();
 
+        // قراءة fileCode من Intent لو جاء من AnalysisActivity
+        if (fileCode.isEmpty()) {
+            String intentCode = getIntent().getStringExtra("fileCode");
+            String intentName = getIntent().getStringExtra("fileName");
+            if (intentCode != null && !intentCode.isEmpty()) {
+                fileCode = intentCode;
+                originalCode = fileCode;
+            }
+            if (intentName != null && !intentName.isEmpty()) {
+                fileName = intentName;
+            }
+        }
+
         // Title
         TextView tvTitle = new TextView(this);
         tvTitle.setText("✨ تحليل بالذكاء الاصطناعي");
