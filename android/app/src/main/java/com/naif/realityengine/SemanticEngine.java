@@ -311,19 +311,6 @@ public class SemanticEngine {
                     return "return next((x for x in " + collParam + " if x == " + searchParam + "), None)";
                 }
                 break;
-
-            case FIND_MANY:
-                if (collParam != null && searchParam != null && idKey != null) {
-                    return "return [x for x in " + collParam + " if x.get(\"" + idKey + "\") == " + searchParam + "]";
-                }
-                if (collParam != null && activeKey != null) {
-                    return "return [x for x in " + collParam + " if x.get(\"" + activeKey + "\")]";
-                }
-                if (collParam != null) {
-                    return "return list(" + collParam + ")";
-                }
-                break;
-
             case CALCULATE_TOTAL:
                 if (collParam != null && priceKey != null && qtyKey != null) {
                     // لو اسم الدالة يحتوي "order" → ربما cross-collection
