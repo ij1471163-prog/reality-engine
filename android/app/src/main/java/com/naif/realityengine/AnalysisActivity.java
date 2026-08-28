@@ -28,7 +28,16 @@ public class AnalysisActivity extends AppCompatActivity {
         if (uri == null) { finish(); return; }
 
         // Read file
-        fileName = uri.getLastPathSegment();
+        String rawName = uri.getLastPathSegment();
+        // استخرج اسم الملف فقط
+        if (rawName != null) {
+            rawName = rawName.replace("%2F", "/").replace("%3A", ":");
+            int slash = rawName.lastIndexOf('/');
+            if (slash >= 0) rawName = rawName.substring(slash + 1);
+            int colon = rawName.lastIndexOf(':');
+            if (colon >= 0) rawName = rawName.substring(colon + 1);
+        }
+        fileName = rawName != null ? rawName : "unknown";
         fileCode = readFile(uri);
 
         if (fileCode.isEmpty()) {
