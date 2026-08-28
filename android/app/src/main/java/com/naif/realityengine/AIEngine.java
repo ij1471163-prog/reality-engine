@@ -53,8 +53,7 @@ public class AIEngine {
     // قبل الاعتماد عليه — ما قدرت أتحقق منه هنا.
     private static final String MODEL = "gemini-3.6-flash";
 
-    private static String API_URL =
-        "https://generativelanguage.googleapis.com/v1beta/models/" + MODEL + ":generateContent";
+    private static final String PROXY_URL = "https://reality-engine-api-livid.vercel.app/api/chat";
 
     private static final int MAX_TOKENS = 8000;
     private static final int CONNECT_TIMEOUT_MS = 30000;
@@ -626,24 +625,41 @@ public class AIEngine {
         RetryableException(Throwable cause) { super(cause); }
     }
 
-    private static String fetchKeyFromServer() {
+    private static String sessionToken = null;
+    private static long tokenExpiry = 0;
+
+    private static String fetchSessionToken() {
         try {
-            java.net.URL url = new java.net.URL("https://reality-engine-api-livid.vercel.app/api/key");
+            // لو Token لا يزال صالح
+            if (sessionToken != null && System.currentTimeMillis() < tokenExpiry - 60000) {
+                return sessionToken;
+            }
+            java.net.URL url = new java.net.URL("https://reality-engine-api-livid.vercel.app/api/session");
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.getOutputStream().write("{}".getBytes());
             java.io.BufferedReader br = new java.io.BufferedReader(
                 new java.io.InputStreamReader(conn.getInputStream()));
             String response = br.readLine();
             br.close();
             if (response != null) {
                 org.json.JSONObject json = new org.json.JSONObject(response);
-                return json.optString("key", "");
+                sessionToken = json.optString("token", "");
+                tokenExpiry = System.currentTimeMillis() + 600000; // 10 دقائق
+                return sessionToken;
             }
         } catch (Exception e) {
-            android.util.Log.e("AIEngine", "Key fetch: " + e.getMessage());
+            android.util.Log.e("AIEngine", "Session fetch: " + e.getMessage());
         }
         return "";
+    }
+
+    private static String fetchKeyFromServer() {
+        return fetchSessionToken();
     }
 
     private static String callAPI(String prompt) throws Exception {
@@ -658,10 +674,11 @@ public class AIEngine {
         try {
             // ⚠️ جربنا x-goog-api-key header وطلع 401/ACCESS_TOKEN_TYPE_UNSUPPORTED.
             // رجعنا لطريقة ?key= بالـURL — الطريقة الكلاسيكية الأكثر توثيقًا تاريخيًا لـGemini.
-            URL url = new URL(API_URL + "?key=" + apiKey);
+            URL url = new URL(PROXY_URL);
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
             // Gemini يقبل المفتاح كـheader بدل ما يكون بالـURL (أنظف من ناحية اللوقات)
             // المفتاح صار بالـURL (?key=) بدل الـheader — شوف السطر اللي بنى url فوق
             conn.setDoOutput(true);
