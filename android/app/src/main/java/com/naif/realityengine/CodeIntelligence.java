@@ -793,3 +793,4 @@ public class CodeIntelligence {
         }
         return inFunc ? body.toString() : null;
     }
+}

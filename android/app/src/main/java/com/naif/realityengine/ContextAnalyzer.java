@@ -154,4 +154,3 @@ public class ContextAnalyzer {
         return suggestion;
     }
 }
-}
