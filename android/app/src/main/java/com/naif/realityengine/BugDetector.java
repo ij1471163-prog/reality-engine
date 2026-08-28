@@ -586,5 +586,68 @@ public class BugDetector {
             return m.group(1).split(",").length;
         }
         return 0;
+
+    // ═══════════════════════════════════════════════════
+    // إصلاح تلقائي للأخطاء المكتشفة
+    // ═══════════════════════════════════════════════════
+
+    public static String autoFix(String code, BugReport report) {
+        String[] lines = code.split("\n");
+        String[] fixed = lines.clone();
+        boolean changed = false;
+
+        for (Bug bug : report.bugs) {
+            int idx = bug.line - 1;
+            if (idx < 0 || idx >= fixed.length) continue;
+
+            // صلح: = بدل += في accumulator
+            if (bug.title.contains("التراكم")) {
+                String line = fixed[idx];
+                String fixedLine = line.replaceFirst(
+                    "^(\\s*)(total|sum|count|result)\\s*=\\s*(.+)",
+                    "$1$2 += $3"
+                );
+                if (!fixedLine.equals(line)) {
+                    fixed[idx] = fixedLine;
+                    changed = true;
+                }
+            }
+
+            // صلح: forEach → find لو فيه return
+            if (bug.title.contains("forEach")) {
+                for (int i = Math.max(0, idx - 5); i < idx; i++) {
+                    if (fixed[i].contains(".forEach(")) {
+                        fixed[i] = fixed[i].replace(".forEach(", ".find(");
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            // صلح: == → === في JavaScript
+            if (bug.title.contains("مقارنة غير صارمة")) {
+                fixed[idx] = fixed[idx].replaceAll("([^=!<>])==([^=])", "$1===$2");
+                changed = true;
+            }
+
+            // صلح: var → const
+            if (bug.title.contains("استخدام var")) {
+                fixed[idx] = fixed[idx].replaceFirst("var ", "const ");
+                changed = true;
+            }
+
+            // صلح: == None → is None في Python
+            if (bug.title.contains("مقارنة None")) {
+                fixed[idx] = fixed[idx].replace("== None", "is None").replace("!= None", "is not None");
+                changed = true;
+            }
+        }
+
+        return changed ? String.join("\n", fixed) : null;
     }
+}
+}
+}
+}
+}
 }
