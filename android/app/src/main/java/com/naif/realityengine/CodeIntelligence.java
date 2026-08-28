@@ -349,6 +349,31 @@ public class CodeIntelligence {
         DataShape collShape = result.paramShapes.getOrDefault(collectionParam, new DataShape());
         String n = funcName.toLowerCase();
 
+        // استخرج nested keys من كل collections
+        Map<String, List<String>> nestedKeys = new LinkedHashMap<>();
+        for (String lp : result.listParams) {
+            Map<String, List<String>> nk = extractNestedKeys(code, lp);
+            nestedKeys.putAll(nk);
+        }
+        // أيضاً ابحث في orders/items/users مباشرة
+        for (String collName : new String[]{"orders","items","users","products","records"}) {
+            if (code.contains(collName + " =") || code.contains(collName + "=")) {
+                Map<String, List<String>> nk = extractNestedKeys(code, collName);
+                if (!nk.isEmpty()) nestedKeys.putAll(nk);
+            }
+        }
+
+        // استخرج top keys وnested item keys
+        List<String> topKeys = nestedKeys.getOrDefault("__top__", collShape.keys);
+        List<String> itemKeys = nestedKeys.getOrDefault("items", new ArrayList<>());
+        String priceKeyN = findKey(itemKeys, "price","cost","value","amount");
+        String qtyKeyN = findKey(itemKeys, "qty","quantity","count","units");
+        String statusKey = findKey(topKeys, "status","state","type");
+        String customerKey = findKey(topKeys, "customer","user","username","owner");
+
+        // صلح تصنيف params
+        classifyParamsSmart(params, result);
+
         // ── 1. اكتشف target entity من اسم الدالة ──
         // get_product → target = "product" → ابحث في "products"
         // get_user_orders → explicit collection = "orders"
