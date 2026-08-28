@@ -310,8 +310,22 @@ public class AIEngine {
                                                    Map<String, String> relatedFiles) {
         StringBuilder prompt = new StringBuilder();
 
+        // لو ما في stubs → وضع تدقيق الأخطاء
+        boolean hasStubs = !candidates.isEmpty();
+
         prompt.append("أنت Senior Software Engineer خبير في تحليل الأكواد وإصلاحها.\n");
-        prompt.append("مهمتك: إصلاح الدوال الناقصة (Stubs) في ملف حقيقي من مشروع حقيقي.\n\n");
+        if (hasStubs) {
+            prompt.append("مهمتك: إصلاح الدوال الناقصة (Stubs) في ملف حقيقي من مشروع حقيقي.\n\n");
+        } else {
+            prompt.append("مهمتك: تدقيق الكود وإصلاح الأخطاء المنطقية.\n");
+            prompt.append("لا توجد دوال ناقصة — ابحث عن:\n");
+            prompt.append("• أخطاء في المنطق (= بدل ==، += بدل =)\n");
+            prompt.append("• forEach مع return لا يعمل\n");
+            prompt.append("• null/undefined بدون فحص\n");
+            prompt.append("• أخطاء في الحسابات\n");
+            prompt.append("• أي خطأ منطقي آخر\n\n");
+            prompt.append("أرجع الإصلاحات بنفس format الدوال الناقصة:\n\n");
+        }
 
         // استخرج البيانات الموجودة في الكود وأضفها للـ prompt
         java.util.regex.Matcher dataMatcher = java.util.regex.Pattern.compile(
