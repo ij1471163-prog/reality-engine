@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   const hour = 60 * 60 * 1000;
   const ipReqs = (requests.get(ip) || []).filter(t => now - t < hour);
   
-  if (ipReqs.length >= 3) {
+  if (ipReqs.length >= 10) {
     return res.status(429).json({ error: 'Too many requests' });
   }
   
