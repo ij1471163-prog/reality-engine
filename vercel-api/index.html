@@ -82,6 +82,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
       <button class="btn btn-s" onclick="goBack()">← رجوع</button>
       <button class="btn btn-p" onclick="fixAllWithAI()">🤖 إصلاح الكل بـ AI</button>
       <button class="btn btn-ok" id="btn-dl" onclick="dlAll()" style="display:none">⬇️ تنزيل</button>
+      <button class="btn btn-p" id="btn-fixall" onclick="fixAllEngine()" style="display:none">⚡ إصلاح الكل بالمحرك</button>
       <div class="tb-r" id="ri"></div>
     </div>
     <div id="il"></div>
@@ -180,6 +181,7 @@ function renderRes(tot,st,bg){
     <div class="st"><div class="sn">${bg}</div><div class="sl">أخطاء</div></div>`;
   document.getElementById('ri').textContent=tot+' مشكلة في '+fc+' ملف';
   document.getElementById('btn-dl').style.display=tot>0?'inline-block':'none';
+  document.getElementById('btn-fixall').style.display=tot>0?'inline-block':'none';
   const il=document.getElementById('il');
   if(!tot){il.innerHTML='<div class="empty">✅ لا مشاكل في هذا المشروع</div>';return}
   let h='';let idx=0;
@@ -303,6 +305,43 @@ ${F[fn]}
     toast('✅ تم إصلاح المشروع بـ AI');
   }catch(e){toast('❌ '+e.message,'e')}
   finally{btn.innerHTML='🤖 إصلاح الكل بـ AI';btn.disabled=false}
+}
+
+function fixAllEngine(){
+  // طبق كل الاقتراحات من المحرك
+  let fixed = 0;
+  Object.keys(R).forEach(fn => {
+    R[fn].issues.forEach(issue => {
+      if (!issue.fix) return;
+      const lines = F[fn].split('\n');
+      const li = issue.line - 1;
+      if (li < 0 || li >= lines.length) return;
+      // ابحث عن def وحذف الجسم
+      let defLine = li;
+      for (let i = li; i >= Math.max(0, li-3); i--) {
+        if (/^def\s+/.test(lines[i].trim())) { defLine = i; break; }
+      }
+      let endLine = defLine + 1;
+      while (endLine < lines.length && 
+        (lines[endLine].trim() === '' || lines[endLine].trim() === 'pass' || lines[endLine].trim().startsWith('#')))
+        endLine++;
+      const ind = lines[defLine].match(/^(\s*)/)[1];
+      const fixLines = issue.fix.split('\n').map(l => ind + '    ' + l.trimStart());
+      lines.splice(defLine + 1, endLine - defLine - 1, ...fixLines);
+      F[fn] = lines.join('\n');
+      fixed++;
+    });
+    // أعد التحليل
+    R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
+  });
+  // تنزيل
+  Object.entries(F).forEach(([n, c]) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([c], {type:'text/plain'}));
+    a.download = n;
+    a.click();
+  });
+  toast('✅ تم إصلاح ' + fixed + ' مشكلة وتنزيل الملف');
 }
 
 function dlAll(){Object.entries(F).forEach(([n,c])=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/plain'}));a.download=n;a.click()});toast('جاري التنزيل...')}
