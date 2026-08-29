@@ -93,14 +93,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <div class="toast" id="toast"></div>
 <script>
 // حماية الوصول
-const _up = new URLSearchParams(window.location.search);
-const _wt = _up.get('t');
-if (!_wt) {
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:20px;font-family:Arial;text-align:center">⛔<br>افتح من التطبيق فقط</div>';
-  throw new Error('unauthorized');
-}
-fetch('/api/webtoken',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
-  .then(r=>r.json()).then(d=>{if(d.token!==_wt)document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:20px;text-align:center">⛔<br>رابط منتهي الصلاحية</div>';}).catch(()=>{});
+
 let F={},R={};
 const dz=document.getElementById('dz');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
@@ -350,6 +343,14 @@ function sz(b){return b<1024?b+'B':(b/1024).toFixed(1)+'KB'}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function escQ(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n')}
 function toast(msg,t='s'){const el=document.getElementById('toast');el.textContent=msg;el.style.background=t==='e'?'#b91c1c':t==='w'?'#9a6700':'#238636';el.style.display='block';setTimeout(()=>el.style.display='none',3000)}
+
+// حماية مؤجلة - بعد تحميل الصفحة
+window.addEventListener('load', function() {
+  const _wt = new URLSearchParams(window.location.search).get('t');
+  if (!_wt) {
+    document.getElementById('s-upload').innerHTML = '<div style="text-align:center;padding:48px;color:#f85149;font-size:18px">⛔ افتح من التطبيق فقط</div>';
+  }
+});
 </script>
 </body>
 </html>
