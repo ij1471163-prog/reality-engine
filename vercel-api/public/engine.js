@@ -161,6 +161,15 @@ function suggestFix(funcName, params, code) {
 
   // Intent detection
   if (n.includes('best') || n.includes('top')) {
+    // لو فيه nested items احسب التوتال
+    if (n.includes('customer') || n.includes('user')) {
+      const pk = priceK || 'price'; const qk = qtyK || 'quantity';
+      return `totals = {}
+for o in ${c}:
+    k = o.get("${customerK||'customer'}")
+    totals[k] = totals.get(k, 0) + sum(i["${pk}"]*i.get("${qk}",1) for i in o.get("items",[]))
+return max(totals, key=totals.get) if totals else None`;
+    }
     const byKey = scoreK || 'score';
     return `return max(${c}, key=lambda x: x.get("${byKey}", 0))`;
   }
@@ -211,8 +220,9 @@ function suggestFix(funcName, params, code) {
     const emailK = fk(keys, 'email', 'mail', 'contact');
     if (emailK && scalar) return `user = next((x for x in ${c} if x.get("${customerK||'username'}") == ${scalar}), None)\n    return user["${emailK}"] if user else None`;
   }
-  if (n.includes('orders') && scalar) {
-    return `return [x for x in ${c} if x.get("${customerK||'customer'}") == ${scalar}]`;
+  if ((n.includes('orders') || n.includes('by')) && scalar) {
+    const searchK = keys.find(k => k === scalar) || customerK || 'customer';
+    return `return [x for x in ${c} if x.get("${searchK}") == ${scalar}]`;
   }
   return null;
 }
