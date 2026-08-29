@@ -94,9 +94,135 @@ function analyzeCode(code,fileName){
     });
   }
 
+  enhanceStubs(issues, code);
   issues.forEach(iss=>{
     const c=calcConf(iss,code);
-    iss.conf=c.score;iss.cIcon=c.icon;iss.cAct=c.action;iss.cEv=c.ev;
+    if(!iss.fix||iss.conf<72){iss.conf=c.score;iss.cIcon=c.icon;iss.cAct=c.action;}
+    iss.cEv=c.ev;
+  });
+  return issues;
+}
+
+// ─── Semantic Engine ─────────────────────────────────
+function extractKeys(code, varName) {
+  const keys = [], nested = {};
+  const m = new RegExp('\\b' + varName + '\\s*=\\s*\\[').exec(code);
+  if (!m) return {keys, nested};
+  const block = code.slice(m.index, m.index + 1000);
+  const dm = /\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/.exec(block);
+  if (dm) {
+    let km; const re = /"(\w+)"\s*:/g;
+    while ((km = re.exec(dm[1])) !== null) keys.push(km[1]);
+  }
+  const nm = /"(\w+)"\s*:\s*\[\s*\{([^}]+)\}/g; let nm2;
+  while ((nm2 = nm.exec(block)) !== null) {
+    const nk = []; let nkm; const re2 = /"(\w+)"\s*:/g;
+    while ((nkm = re2.exec(nm2[2])) !== null) nk.push(nkm[1]);
+    nested[nm2[1]] = nk;
+  }
+  return {keys, nested};
+}
+
+function fk(keys, ...candidates) {
+  return candidates.find(c => keys.includes(c)) || null;
+}
+
+function suggestFix(funcName, params, code) {
+  const n = funcName.toLowerCase();
+  const RATE = ['rate','ratio','discount','tax','fee','percent','factor','limit'];
+  const COLL = ['orders','items','users','products','records','entries','list'];
+  const DICT = ['order','item','user','product','record','entry'];
+
+  const listP = params.filter(p => COLL.includes(p.toLowerCase()) || (p.endsWith('s') && p.length > 3 && !RATE.some(r => p.toLowerCase().includes(r))));
+  const scalarP = params.filter(p => !listP.includes(p));
+  const coll = listP[0] || null;
+  const scalar = scalarP.find(p => RATE.some(r => p.toLowerCase().includes(r)) || p.endsWith('_id') || p.endsWith('_ref')) || scalarP[0] || null;
+  const dictP = params.find(p => DICT.includes(p.toLowerCase())) || null;
+
+  const allColls = [...new Set([...COLL, ...params.filter(p => p.endsWith('s'))])];
+  let keys = [], nested = {}, itemKeys = [];
+  for (const c of allColls) {
+    const {keys: k, nested: nk} = extractKeys(code, c);
+    if (k.length) { keys = k; nested = nk; break; }
+  }
+  itemKeys = nested.items || nested.products || nested.entries || [];
+
+  const idK = fk(keys, 'id', 'order_id', 'user_id', 'product_id');
+  const customerK = fk(keys, 'customer', 'user', 'username', 'owner', 'name');
+  const statusK = fk(keys, 'status', 'state', 'type');
+  const activeK = fk(keys, 'active', 'enabled', 'is_active');
+  const scoreK = fk(keys, 'score', 'rating', 'points', 'value');
+  const priceK = fk(itemKeys, 'price', 'cost', 'amount') || fk(keys, 'price', 'cost', 'amount');
+  const qtyK = fk(itemKeys, 'qty', 'quantity', 'count', 'units') || 'quantity';
+
+  const c = coll || 'items';
+  const d = dictP || 'item';
+  const s = scalar || 'value';
+
+  // Intent detection
+  if (n.includes('best') || n.includes('top')) {
+    const byKey = scoreK || priceK || 'score';
+    return `return max(${c}, key=lambda x: x.get("${byKey}", 0))`;
+  }
+  if (n.includes('average') || n.includes('avg')) {
+    const k = priceK || 'price';
+    return `return sum(x["${k}"] for x in ${c}) / len(${c}) if ${c} else 0`;
+  }
+  if (n.includes('total') || n.includes('revenue') || n.includes('sum')) {
+    if (priceK && qtyK && itemKeys.length)
+      return `return sum(i["${priceK}"] * i["${qtyK}"] for i in ${d}["items"])`;
+    if (priceK)
+      return `return sum(x["${priceK}"] for x in ${c})`;
+    return `return sum(x.get("price", 0) * x.get("quantity", 1) for x in ${c})`;
+  }
+  if ((n.includes('filter') || n.includes('active') || n.includes('pending') || n.includes('available')) && coll) {
+    const filterStatuses = ['active','pending','delivered','cancelled','available'];
+    const st = filterStatuses.find(s => n.includes(s));
+    if (st && statusK) return `return [x for x in ${c} if x.get("${statusK}") == "${st}"]`;
+    if (activeK) return `return [x for x in ${c} if x.get("${activeK}")]`;
+    if (statusK) return `return [x for x in ${c} if x.get("${statusK}") == "${st||'active'}"]`;
+  }
+  if (n.includes('find') || n.includes('get') || n.includes('search')) {
+    if (scalar && idK) return `return next((x for x in ${c} if x.get("${idK}") == ${scalar}), None)`;
+    if (scalar && customerK) return `return next((x for x in ${c} if x.get("${customerK}") == ${scalar}), None)`;
+  }
+  if (n.includes('count')) {
+    if (activeK) return `return sum(1 for x in ${c} if x.get("${activeK}"))`;
+    return `return len(${c})`;
+  }
+  if (n.includes('discount') || n.includes('tax')) {
+    return `return ${d}["price"] * (1 - ${s})`;
+  }
+  if (n.includes('normalize') || n.includes('format') || n.includes('clean')) {
+    return `return str(${d}).strip().lower()`;
+  }
+  if (n.includes('validate') || n.includes('check') || n.includes('verify')) {
+    return `return ${d} is not None and bool(${d})`;
+  }
+  if (n.includes('email')) {
+    const emailK = fk(keys, 'email', 'mail', 'contact');
+    if (emailK && scalar) return `user = next((x for x in ${c} if x.get("${customerK||'username'}") == ${scalar}), None)\n    return user["${emailK}"] if user else None`;
+  }
+  if (n.includes('orders') && scalar) {
+    return `return [x for x in ${c} if x.get("${customerK||'customer'}") == ${scalar}]`;
+  }
+  return null;
+}
+
+function enhanceStubs(issues, code) {
+  issues.forEach(issue => {
+    if (issue.type !== 'stub') return;
+    const m = issue.ev.match(/^def\s+(\w+)\s*\(([^)]*)\)/);
+    if (!m) return;
+    const funcName = m[1];
+    const params = m[2].split(',').map(p => p.trim().split('=')[0].trim()).filter(Boolean);
+    const fix = suggestFix(funcName, params, code);
+    if (fix) {
+      issue.fix = fix;
+      issue.conf = 72;
+      issue.cIcon = '🟡';
+      issue.cAct = 'اقتراح محرك';
+    }
   });
   return issues;
 }
