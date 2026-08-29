@@ -250,6 +250,46 @@ function enhanceStubs(issues, code) {
 }
 // ─── Java Analyzer ───────────────────────────────────
 
+function suggestJavaFix(issue, code) {
+  const n = issue.title.toLowerCase();
+  const ev = issue.ev;
+  
+  // دالة فارغة - اقترح بناءً على الاسم والـ return type
+  if (issue.title.includes('دالة فارغة')) {
+    const m = ev.match(/(\w+)\s+(\w+)\s*\(([^)]*)\)/);
+    if (!m) return null;
+    const returnType = m[1], name = m[2], params = m[3];
+    const nl = name.toLowerCase();
+    
+    if (returnType === 'void') return '// TODO: implement ' + name;
+    if (returnType === 'boolean') {
+      if (nl.includes('valid') || nl.includes('check')) return 'return ' + (params.split(',')[0]?.trim().split(' ').pop()||'value') + ' != null;';
+      return 'return false;';
+    }
+    if (returnType === 'String') {
+      if (nl.includes('get') || nl.includes('find')) return 'return null; // TODO: implement';
+      if (nl.includes('format') || nl.includes('to')) return 'return String.valueOf(' + (params.split(',')[0]?.trim().split(' ').pop()||'value') + ');';
+      return 'return "";';
+    }
+    if (returnType === 'int' || returnType === 'long') {
+      if (nl.includes('count') || nl.includes('size')) return 'return 0;';
+      if (nl.includes('total') || nl.includes('sum')) return 'return 0; // TODO: calculate';
+      return 'return 0;';
+    }
+    if (returnType === 'double' || returnType === 'float') {
+      if (nl.includes('total') || nl.includes('sum') || nl.includes('calculate')) return 'return 0.0; // TODO: calculate';
+      return 'return 0.0;';
+    }
+    if (returnType.startsWith('List') || returnType.startsWith('ArrayList')) return 'return new ArrayList<>();';
+    if (returnType.startsWith('Map')) return 'return new HashMap<>();';
+    return 'return null;';
+  }
+  
+  if (n.includes('catch')) return 'e.printStackTrace();';
+  if (n.includes('equals')) return ev.replace(/(\w+)\s*==\s*(".*?")/, '$1.equals($2)');
+  return null;
+}
+
 function analyzeJava(code, fileName) {
   const issues = [];
   const lines = code.split('\n');
@@ -323,6 +363,7 @@ function analyzeJava(code, fileName) {
   });
 
   issues.forEach(iss => {
+    if (!iss.fix) iss.fix = suggestJavaFix(iss, code);
     const c = calcConf(iss, code);
     iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
   });
