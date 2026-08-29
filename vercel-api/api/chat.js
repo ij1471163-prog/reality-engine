@@ -49,8 +49,9 @@ export default async function handler(req, res) {
       }
     );
     const data = await response.json();
+    console.log('Gemini response:', JSON.stringify(data).slice(0,500));
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    if (!text) return res.status(502).json({ error: 'No response from AI' });
+    if (!text) return res.status(502).json({ error: 'No response from AI', debug: JSON.stringify(data).slice(0,200) });
     res.status(200).json({ result: text });
   } catch (e) {
     res.status(502).json({ error: 'AI error' });
