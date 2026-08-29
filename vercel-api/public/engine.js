@@ -139,7 +139,7 @@ function suggestFix(funcName, params, code) {
   const scalar = scalarP.find(p => RATE.some(r => p.toLowerCase().includes(r)) || p.endsWith('_id') || p.endsWith('_ref')) || scalarP[0] || null;
   const dictP = params.find(p => DICT.includes(p.toLowerCase())) || null;
 
-  const allColls = [...new Set([...COLL, ...params.filter(p => p.endsWith('s'))])];
+  const allColls = [...new Set([...params.filter(p => p.endsWith('s')), ...COLL])];
   let keys = [], nested = {}, itemKeys = [];
   for (const c of allColls) {
     const {keys: k, nested: nk} = extractKeys(code, c);
