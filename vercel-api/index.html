@@ -175,8 +175,8 @@ function renderRes(tot,st,bg){
     <div class="st"><div class="sn">${st}</div><div class="sl">دوال ناقصة</div></div>
     <div class="st"><div class="sn">${bg}</div><div class="sl">أخطاء</div></div>`;
   document.getElementById('ri').textContent=tot+' مشكلة في '+fc+' ملف';
-  document.getElementById('btn-dl').style.display=tot>0?'inline-block':'none';
-  document.getElementById('btn-fixall').style.display=tot>0?'inline-block':'none';
+  document.getElementById('btn-dl').style.display='inline-block';
+  document.getElementById('btn-fixall').style.display='inline-block';
   const il=document.getElementById('il');
   if(!tot){il.innerHTML='<div class="empty">✅ لا مشاكل في هذا المشروع</div>';return}
   let h='';let idx=0;
