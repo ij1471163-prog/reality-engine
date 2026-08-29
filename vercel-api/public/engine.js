@@ -75,7 +75,7 @@ function analyzeCode(code,fileName){
         for(let j=i+1;j<Math.min(i+8,lines.length);j++){
           const jt=lines[j].trim();
           if(jt.startsWith('return ')||/;\s*return\s+\w/.test(jt)||jt.includes(' return '))hasR=true;
-          if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return ')&&!jt.startsWith('//'))hasSE=true;
+          if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return ')&&!jt.startsWith('//')&&!jt.startsWith('if')&&!jt.startsWith('console'))hasSE=true;
           if(/^\}\)/.test(jt))break;
         }
         if(hasR)issues.push({type:'bug',sev:'h',
