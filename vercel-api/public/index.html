@@ -96,6 +96,18 @@ if (!webToken) {
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:18px;font-family:Arial">⛔ غير مصرح بالوصول</div>';
   throw new Error('No token');
 }
+// تحقق من web token
+const urlParams = new URLSearchParams(window.location.search);
+const webToken = urlParams.get('t');
+if (!webToken) {
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:18px;font-family:Arial">⛔ افتح من التطبيق فقط</div>';
+  throw new Error('No token');
+}
+// تحقق من الـ token مع الـ server
+fetch('/api/webtoken', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
+  .then(r => r.json())
+  .then(d => { if(d.token !== webToken) { document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:18px">⛔ رابط منتهي الصلاحية</div>'; } })
+  .catch(() => {});
 let F={},R={};
 const dz=document.getElementById('dz');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
