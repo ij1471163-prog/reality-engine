@@ -180,8 +180,10 @@ return max(totals, key=totals.get) if totals else None`;
   if (n.includes('total') || n.includes('revenue') || n.includes('sum')) {
     if (priceK && qtyK && itemKeys.length)
       return `return sum(i["${priceK}"] * i["${qtyK}"] for i in ${d}["items"])`;
-    if (priceK)
-      return `return sum(x["${priceK}"] for x in ${c})`;
+    if (priceK) {
+      const qt = qtyK || 'quantity';
+      return `return sum(x["${priceK}"] * x.get("${qt}", 1) for x in ${c})`;
+    }
     return `return sum(x.get("price", 0) * x.get("quantity", 1) for x in ${c})`;
   }
   if (n.includes('expensive') || n.includes('cheap') || n.includes('minimum') || n.includes('maximum')) {
@@ -218,7 +220,9 @@ return max(totals, key=totals.get) if totals else None`;
     return `return ${d}["price"] * (1 - ${s})`;
   }
   if (n.includes('normalize') || n.includes('format') || n.includes('clean')) {
-    return `return str(${d}).strip().lower()`;
+    const nameK = customerK || 'username';
+    if (dictP) return `return ${d}.get("${nameK}", "").strip().lower() if isinstance(${d}, dict) else str(${d}).strip().lower()`;
+    return `return ${d}.strip().lower() if isinstance(${d}, str) else str(${d}).strip().lower()`;
   }
   if (n.includes('validate') || n.includes('check') || n.includes('verify')) {
     return `return ${d} is not None and bool(${d})`;
