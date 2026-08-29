@@ -151,73 +151,11 @@ function calcConf(issue,code){
   return{score,icon,action,ev};
 }
 
-function analyze(code,name){
-  const lg=lang(name);const issues=[];
-  let work=code;
-  if(lg==='html'){
-    const sc=[];const re=/<script[^>]*>([\s\S]*?)<\/script>/gi;let m;
-    while((m=re.exec(code))!==null)sc.push(m[1]);
-    work=sc.join('\n');
-  }
-  if(lg==='python'){
-    const lines=code.split('\n');let li=-1;
-    lines.forEach((line,i)=>{
-      const t=line.trim();const ind=line.search(/\S|$/);
-      if(/^def\s+\w+.*:$/.test(t)&&(lines[i+1]?.trim()==='pass'||lines[i+2]?.trim()==='pass'))
-        issues.push({type:'stub',sev:'m',title:'دالة ناقصة',line:i+2,ev:t,fix:null});
-      if(/^for\s+\w+\s+in\s+/.test(t))li=ind;
-      const inL=li>=0&&ind>li;
-      if(inL&&/^(total|sum|count|revenue|result)\s*=\s*[^=+\-\n]/.test(t)){
-        const v=t.match(/^(\w+)\s*=/)?.[1];
-        if(v&&new RegExp('\\b'+v+'\\s*=\\s*0\\b').test(code)){
-          const fx=line.replace(/^(\s*)(\w+)\s*=\s*(.+)/,'$1$2 += $3').trim();
-          issues.push({type:'bug',sev:'c',title:'خطأ في التراكم: = بدل +=',line:i+1,ev:t,fix:fx});
-        }
-      }
-      if(t.startsWith('def ')&&i>0)li=-1;
-      if(/[=!]=\s*None/.test(line)&&!t.startsWith('#'))
-        issues.push({type:'bug',sev:'m',title:'قارن بـ is None',line:i+1,ev:t,fix:t.replace('== None','is None').replace('!= None','is not None')});
-      if(t==='except:')
-        issues.push({type:'bug',sev:'m',title:'Bare except',line:i+1,ev:t,fix:'except Exception as e:'});
-    });
-  }
-  if(lg==='js'||lg==='html'){
-    const lines=work.split('\n');let inL=false;
-    lines.forEach((line,i)=>{
-      const t=line.trim();
-      if(line.includes('.forEach(')){
-        let hasR=false,hasSE=false;
-        for(let j=i+1;j<Math.min(i+8,lines.length);j++){
-          const jt=lines[j].trim();
-          if(jt.startsWith('return '))hasR=true;
-          if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return ')&&!jt.startsWith('//'))hasSE=true;
-          if(/^\}\)/.test(jt))break;
-        }
-        if(hasR){
-          issues.push({type:'bug',sev:'h',
-            title:hasSE?'return داخل forEach مع side effects':'return داخل forEach لا يُرجع قيمة',
-            line:i+2,ev:line.trim(),fix:hasSE?null:line.replace('.forEach(','.find(').trim()});
-        }
-        inL=true;
-      }
-      if(/for\s*\(/.test(line))inL=true;
-      if(inL&&/^\s*(total|sum|count)\s*=\s*[^=+\-]/.test(line)){
-        const v=t.match(/^(\w+)\s*=/)?.[1];
-        if(v){const fx=line.replace(/(\s*)(\w+)\s*=\s*(.+)/,'$1$2 += $3').trim();
-          issues.push({type:'bug',sev:'c',title:'خطأ في التراكم: = بدل +=',line:i+1,ev:t,fix:fx});}
-      }
-      if(/[^=!<>]==[^=]/.test(line)&&/if\s*\(/.test(line))
-        issues.push({type:'bug',sev:'m',title:'استخدم === بدل ==',line:i+1,ev:t,fix:t.replace(/([^=!<>])==([^=])/g,'$1===$2')});
-      if(/^\}\)$|^\}$/.test(t))inL=false;
-    });
-  }
-  issues.forEach(iss=>{const c=calcConf(iss,code);iss.conf=c.score;iss.cIcon=c.icon;iss.cAct=c.action;iss.cEv=c.ev});
-  return issues;
-}
+
 
 function analyzeAll(){
   R={};let tot=0,st=0,bg=0;
-  Object.entries(F).forEach(([n,c])=>{const iss=analyze(c,n);R[n]={code:c,issues:iss};tot+=iss.length;st+=iss.filter(i=>i.type==='stub').length;bg+=iss.filter(i=>i.type==='bug').length});
+  Object.entries(F).forEach(([n,c])=>{const iss=analyzeCode(c,n);R[n]={code:c,issues:iss};tot+=iss.length;st+=iss.filter(i=>i.type==='stub').length;bg+=iss.filter(i=>i.type==='bug').length});
   renderRes(tot,st,bg);
 }
 
@@ -269,7 +207,7 @@ function applyFix(fn,li,oldL,newL,idx){
   const ind=lines[li].match(/^(\s*)/)[1];
   lines[li]=ind+newL.trimStart();
   F[fn]=lines.join('\n');
-  const newIss=analyze(F[fn],fn);
+  const newIss=analyzeCode(F[fn],fn);
   const gone=!newIss.some(ni=>ni.title===R[fn].issues.find(oi=>oi.line===li+1)?.title&&Math.abs(ni.line-(li+1))<=2);
   R[fn]={code:F[fn],issues:newIss};
   if(gone)toast('✅ تم التحقق — المشكلة اختفت');
