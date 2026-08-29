@@ -312,10 +312,21 @@ function fixAllEngine(){
       if (!issue.fix) return;
       const li = issue.line - 1;
       if (li < 0 || li >= lines.length) return;
-      // استبدل السطر مباشرة
-      const ind = lines[li].match(/^(\s*)/)[1];
-      lines[li] = ind + issue.fix.trimStart();
-      fixed++;
+      // forEach fix: ابحث عن سطر forEach قبل السطر الحالي
+      if (issue.title.includes('forEach')) {
+        for (let i = li; i >= Math.max(0, li-5); i--) {
+          if (lines[i].includes('.forEach(')) {
+            const ind = lines[i].match(/^(\s*)/)[1];
+            lines[i] = ind + issue.fix.trimStart();
+            fixed++;
+            break;
+          }
+        }
+      } else {
+        const ind = lines[li].match(/^(\s*)/)[1];
+        lines[li] = ind + issue.fix.trimStart();
+        fixed++;
+      }
     });
     F[fn] = lines.join('\n');
     R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
