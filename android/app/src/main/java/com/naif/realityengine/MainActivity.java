@@ -70,6 +70,44 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        // زر الموقع الويب
+        android.widget.Button btnWeb = new android.widget.Button(this);
+        btnWeb.setText("🌐 تحليل مشاريع كبيرة");
+        btnWeb.setBackgroundColor(0xFF0D1117);
+        btnWeb.setTextColor(0xFF58A6FF);
+        btnWeb.setTextSize(15);
+        android.widget.LinearLayout.LayoutParams webParams = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        webParams.setMargins(0, 8, 0, 0);
+        btnWeb.setLayoutParams(webParams);
+        ((android.widget.LinearLayout) btnPickFile.getParent()).addView(btnWeb);
+
+        btnWeb.setOnClickListener(v -> {
+            new Thread(() -> {
+                try {
+                    java.net.URL url = new java.net.URL("https://reality-engine-api-livid.vercel.app/api/webtoken");
+                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true);
+                    conn.getOutputStream().write("{}".getBytes());
+                    java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()));
+                    String res = br.readLine();
+                    org.json.JSONObject json = new org.json.JSONObject(res);
+                    String token = json.optString("token", "");
+                    String webUrl = "https://reality-engine-api-livid.vercel.app?t=" + token;
+                    android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+                    h.post(() -> {
+                        Intent webIntent = new Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(webUrl));
+                        startActivity(webIntent);
+                    });
+                } catch (Exception e) {
+                    android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+                    h.post(() -> android.widget.Toast.makeText(MainActivity.this, "❌ " + e.getMessage(), android.widget.Toast.LENGTH_SHORT).show());
+                }
+            }).start();
+        });
+
         // زر رفع مشروع (ملفات متعددة)
         android.widget.Button btnProject = new android.widget.Button(this);
         btnProject.setText("📁 رفع مشروع");
