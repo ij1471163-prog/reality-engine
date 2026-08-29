@@ -197,7 +197,10 @@ return max(totals, key=totals.get) if totals else None`;
     if (statusK) return `return [x for x in ${c} if x.get("${statusK}") == "${st||'active'}"]`;
   }
   if (n.includes('find') || n.includes('get') || n.includes('search')) {
-    if (scalar && idK) return `return next((x for x in ${c} if x.get("${idK}") == ${scalar}), None)`;
+    // get_X_orders → ارجع list بفلتر customerK
+    if (n.endsWith('_orders') && scalar && customerK)
+      return `return [x for x in ${c} if x.get("${customerK}") == ${scalar}]`;
+    if (scalar && idK && !n.endsWith('_orders')) return `return next((x for x in ${c} if x.get("${idK}") == ${scalar}), None)`;
     // لو scalar اسمه يطابق key في البيانات استخدمه مباشرة
     const matchKey = keys.find(k => k === scalar);
     // لكن لو n.includes orders/by استخدم customerK
