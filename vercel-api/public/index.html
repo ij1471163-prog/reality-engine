@@ -336,7 +336,20 @@ function fixAllEngine(){
   toast('✅ تم إصلاح ' + fixed + ' مشكلة وتنزيل الملف');
 }
 
-function dlAll(){Object.entries(F).forEach(([n,c])=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/plain'}));a.download=n;a.click()});toast('جاري التنزيل...')}
+function dlAll(){
+  Object.entries(F).forEach(([n,c])=>{
+    const a=document.createElement('a');
+    const blob=new Blob([c],{type:'text/plain;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    a.href=url;
+    a.download=n;
+    a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);document.body.removeChild(a);},1000);
+  });
+  toast('✅ تم التنزيل');
+}
 
 function icon(n){if(n.endsWith('.py'))return'🐍';if(/\.(js|ts|jsx)$/.test(n))return'📜';if(n.endsWith('.java'))return'☕';if(n.endsWith('.html'))return'🌐';return'📄'}
 function sz(b){return b<1024?b+'B':(b/1024).toFixed(1)+'KB'}
