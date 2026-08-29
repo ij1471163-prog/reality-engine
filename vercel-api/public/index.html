@@ -153,7 +153,7 @@ function calcConf(issue,code){
 
 
 
-function analyzeAll(){console.log('analyzeAll called, files:', Object.keys(F));
+function analyzeAll(){alert('Files: '+Object.keys(F).join(', ')+' | analyzeCode: '+(typeof analyzeCode));
   R={};let tot=0,st=0,bg=0;
   Object.entries(F).forEach(([n,c])=>{console.log('analyzing:', n, 'code length:', c.length);const iss=analyzeCode(c,n);console.log('issues found:', iss.length);R[n]={code:c,issues:iss};tot+=iss.length;st+=iss.filter(i=>i.type==='stub').length;bg+=iss.filter(i=>i.type==='bug').length});
   renderRes(tot,st,bg);
