@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Reality Engine</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
+*{
+  if (fileName.endsWith('.java')) return analyzeJava(code, fileName);box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 .header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:center;gap:12px}
 .logo{font-size:22px;font-weight:700;color:#a371f7}
