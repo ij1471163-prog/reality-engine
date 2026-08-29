@@ -1,94 +1,305 @@
-# Reality Engine — Hard Test
-# المطلوب: إكمال الدوال الناقصة فقط
-# ممنوع تعديل الدوال المكتملة
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reality Engine</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
+.header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:center;gap:12px}
+.logo{font-size:22px;font-weight:700;color:#a371f7}
+.logo span{color:#58a6ff}
+.sub{color:#8b949e;font-size:13px;margin-right:auto}
+.container{max-width:960px;margin:0 auto;padding:24px}
+.drop{border:2px dashed #30363d;border-radius:12px;padding:48px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:24px}
+.drop:hover,.drop.drag{border-color:#6e40c9;background:#161b2244}
+.drop h2{font-size:18px;margin-bottom:8px}
+.drop p{color:#8b949e;font-size:13px;margin-bottom:20px}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:.15s}
+.btn:hover{filter:brightness(1.1)}
+.btn-p{background:#6e40c9;color:#fff}
+.btn-s{background:#21262d;color:#58a6ff;border:1px solid #30363d}
+.btn-ok{background:#238636;color:#fff}
+.btn-sm{padding:6px 12px;font-size:12px}
+.files{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:16px}
+.fc{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;position:relative}
+.fc .ic{font-size:24px;margin-bottom:6px}
+.fc .nm{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:left}
+.fc .mt{color:#8b949e;font-size:11px;margin-top:4px}
+.fc .rm{position:absolute;top:6px;left:8px;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px}
+.fc .rm:hover{color:#f85149}
+.tb{display:flex;gap:8px;margin-bottom:20px;align-items:center;flex-wrap:wrap}
+.tb-r{margin-right:auto;color:#8b949e;font-size:13px}
+.sum{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.st{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center}
+.sn{font-size:32px;font-weight:700;color:#a371f7;line-height:1}
+.sl{font-size:12px;color:#8b949e;margin-top:4px}
+.issue{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:10px}
+.it{display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.bc{background:#b91c1c33;color:#f85149;border:1px solid #b91c1c55}
+.bh{background:#92400e33;color:#f0883e;border:1px solid #92400e55}
+.bm{background:#78350f33;color:#d29922;border:1px solid #78350f55}
+.bs{background:#6e40c933;color:#a371f7;border:1px solid #6e40c955}
+.itl{font-weight:600;font-size:14px;flex:1}
+.iloc{color:#8b949e;font-size:12px;white-space:nowrap}
+.code{background:#010409;border:1px solid #30363d;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:12px;margin:6px 0;white-space:pre-wrap;overflow-x:auto;direction:ltr;text-align:left}
+.code-fix{border-color:#23863666;background:#0d1a0f}
+.ia{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.empty{text-align:center;padding:48px;color:#8b949e}
+.toast{position:fixed;bottom:24px;right:24px;background:#238636;color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;z-index:999;display:none}
+#inp{display:none}
+@media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">⚡ Reality<span>Engine</span></div>
+  <div class="sub">محلل المشاريع البرمجية</div>
+</div>
+<div class="container">
+  <div id="s-upload">
+    <div class="drop" id="dz" onclick="document.getElementById('inp').click()">
+      <h2>📁 ارفع ملفات مشروعك</h2>
+      <p>Python · JavaScript · Java · HTML — حتى 10 ملفات · 500KB لكل ملف</p>
+      <button class="btn btn-p" onclick="event.stopPropagation();document.getElementById('inp').click()">اختر الملفات</button>
+    </div>
+    <input type="file" id="inp" multiple accept=".py,.js,.ts,.java,.html,.jsx">
+    <div id="fs" style="display:none">
+      <div class="files" id="fg"></div>
+      <div class="tb">
+        <button class="btn btn-p" onclick="analyzeAll()">🔍 تحليل</button>
+        <button class="btn btn-s" onclick="clearAll()">🗑 مسح</button>
+        <div class="tb-r" id="fc"></div>
+      </div>
+    </div>
+  </div>
+  <div id="s-res" style="display:none">
+    <div class="sum" id="sum"></div>
+    <div class="tb">
+      <button class="btn btn-s" onclick="goBack()">← رجوع</button>
+      <button class="btn btn-ok" id="btn-dl" onclick="dlAll()" style="display:none">⬇️ تنزيل</button>
+      <div class="tb-r" id="ri"></div>
+    </div>
+    <div id="il"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let F={},R={};
+const dz=document.getElementById('dz');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');load(e.dataTransfer.files)});
+document.getElementById('inp').addEventListener('change',e=>load(e.target.files));
 
-def calculate_item_total(item):
-    return item["price"] * item["quantity"]
+function load(fl){
+  for(const f of fl){
+    if(Object.keys(F).length>=10){toast('الحد 10 ملفات','e');break}
+    if(f.size>512000){toast(f.name+': يتجاوز 500KB','e');continue}
+    const r=new FileReader();
+    r.onload=e=>{F[f.name]=e.target.result;renderF()};
+    r.readAsText(f);
+  }
+}
 
+function renderF(){
+  const ns=Object.keys(F);
+  document.getElementById('fs').style.display=ns.length?'block':'none';
+  document.getElementById('fc').textContent=ns.length+' ملف';
+  document.getElementById('fg').innerHTML=ns.map(n=>`
+    <div class="fc">
+      <button class="rm" onclick="del('${esc(n)}')">×</button>
+      <div class="ic">${icon(n)}</div>
+      <div class="nm">${esc(n)}</div>
+      <div class="mt">${sz(new Blob([F[n]]).size)}</div>
+    </div>`).join('');
+}
 
-def calculate_total(items):
-    # ناقصة
-    pass
+function del(n){delete F[n];renderF()}
+function clearAll(){F={};renderF()}
+function goBack(){document.getElementById('s-res').style.display='none';document.getElementById('s-upload').style.display='block'}
 
+function lang(n){
+  if(n.endsWith('.py'))return'python';
+  if(/\.(js|ts|jsx)$/.test(n))return'js';
+  if(n.endsWith('.java'))return'java';
+  if(n.endsWith('.html'))return'html';
+  return'?';
+}
 
-def find_user(username, users):
-    # ناقصة
-    pass
+function escRe(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}
 
+function calcConf(issue,code){
+  let score=0,ev=[];
+  score+=20;ev.push('النمط مكتشف +20');
+  if(issue.title.includes('التراكم')){
+    const v=issue.ev&&issue.ev.match(/^(\w+)\s*=/)?.[1];
+    if(v&&new RegExp('\\b'+escRe(v)+'\\s*=\\s*0\\b').test(code)){score+=20;ev.push('المتغير مهيأ بـ 0 +20')}
+  }else if(issue.type==='stub'){score+=20;ev.push('pass مؤكد +20')}
+  else if(issue.title.includes('forEach')&&/\.forEach\s*\(/.test(code)){score+=20;ev.push('forEach موجود +20')}
+  else if(issue.title.includes('None')&&/==\s*None/.test(code)){score+=20;ev.push('None مقارنة موجودة +20')}
+  else{score+=10;ev.push('سياق جزئي +10')}
+  if(issue.fix&&issue.fix.length<120&&!issue.fix.startsWith('#')){score+=10;ev.push('إصلاح مباشر +10')}
+  if(issue.fix){const o=(issue.fix.match(/[{[(]/g)||[]).length,c=(issue.fix.match(/[}\])]/g)||[]).length;if(o===c){score+=25;ev.push('أقواس متوازنة +25')}}
+  if(issue.verified){score+=5;ev.push('تم التحقق +5')}
+  score=Math.min(100,score);
+  const icon=score>=90?'🟢':score>=60?'🟡':'🔴';
+  const action=score>=90?'ثقة عالية':score>=60?'مشكلة محتملة':'اكتشاف غير مؤكد';
+  return{score,icon,action,ev};
+}
 
-def get_user_email(username, users):
-    user = find_user(username, users)
-    return user["email"] if user else None
+function analyze(code,name){
+  const lg=lang(name);const issues=[];
+  let work=code;
+  if(lg==='html'){
+    const sc=[];const re=/<script[^>]*>([\s\S]*?)<\/script>/gi;let m;
+    while((m=re.exec(code))!==null)sc.push(m[1]);
+    work=sc.join('\n');
+  }
+  if(lg==='python'){
+    const lines=code.split('\n');let li=-1;
+    lines.forEach((line,i)=>{
+      const t=line.trim();const ind=line.search(/\S|$/);
+      if(/^def\s+\w+.*:$/.test(t)&&lines[i+1]?.trim()==='pass')
+        issues.push({type:'stub',sev:'m',title:'دالة ناقصة',line:i+2,ev:t,fix:null});
+      if(/^for\s+\w+\s+in\s+/.test(t))li=ind;
+      const inL=li>=0&&ind>li;
+      if(inL&&/^(total|sum|count|revenue|result)\s*=\s*[^=+\-\n]/.test(t)){
+        const v=t.match(/^(\w+)\s*=/)?.[1];
+        if(v&&new RegExp('\\b'+v+'\\s*=\\s*0\\b').test(code)){
+          const fx=line.replace(/^(\s*)(\w+)\s*=\s*(.+)/,'$1$2 += $3').trim();
+          issues.push({type:'bug',sev:'c',title:'خطأ في التراكم: = بدل +=',line:i+1,ev:t,fix:fx});
+        }
+      }
+      if(t.startsWith('def ')&&i>0)li=-1;
+      if(/[=!]=\s*None/.test(line)&&!t.startsWith('#'))
+        issues.push({type:'bug',sev:'m',title:'قارن بـ is None',line:i+1,ev:t,fix:t.replace('== None','is None').replace('!= None','is not None')});
+      if(t==='except:')
+        issues.push({type:'bug',sev:'m',title:'Bare except',line:i+1,ev:t,fix:'except Exception as e:'});
+    });
+  }
+  if(lg==='js'||lg==='html'){
+    const lines=work.split('\n');let inL=false;
+    lines.forEach((line,i)=>{
+      const t=line.trim();
+      if(line.includes('.forEach(')){
+        let hasR=false,hasSE=false;
+        for(let j=i+1;j<Math.min(i+8,lines.length);j++){
+          const jt=lines[j].trim();
+          if(jt.startsWith('return '))hasR=true;
+          if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return ')&&!jt.startsWith('//'))hasSE=true;
+          if(/^\}\)/.test(jt))break;
+        }
+        if(hasR){
+          issues.push({type:'bug',sev:'h',
+            title:hasSE?'return داخل forEach مع side effects':'return داخل forEach لا يُرجع قيمة',
+            line:i+2,ev:line.trim(),fix:hasSE?null:line.replace('.forEach(','.find(').trim()});
+        }
+        inL=true;
+      }
+      if(/for\s*\(/.test(line))inL=true;
+      if(inL&&/^\s*(total|sum|count)\s*=\s*[^=+\-]/.test(line)){
+        const v=t.match(/^(\w+)\s*=/)?.[1];
+        if(v){const fx=line.replace(/(\s*)(\w+)\s*=\s*(.+)/,'$1$2 += $3').trim();
+          issues.push({type:'bug',sev:'c',title:'خطأ في التراكم: = بدل +=',line:i+1,ev:t,fix:fx});}
+      }
+      if(/[^=!<>]==[^=]/.test(line)&&/if\s*\(/.test(line))
+        issues.push({type:'bug',sev:'m',title:'استخدم === بدل ==',line:i+1,ev:t,fix:t.replace(/([^=!<>])==([^=])/g,'$1===$2')});
+      if(/^\}\)$|^\}$/.test(t))inL=false;
+    });
+  }
+  issues.forEach(iss=>{const c=calcConf(iss,code);iss.conf=c.score;iss.cIcon=c.icon;iss.cAct=c.action;iss.cEv=c.ev});
+  return issues;
+}
 
+function analyzeAll(){
+  R={};let tot=0,st=0,bg=0;
+  Object.entries(F).forEach(([n,c])=>{const iss=analyze(c,n);R[n]={code:c,issues:iss};tot+=iss.length;st+=iss.filter(i=>i.type==='stub').length;bg+=iss.filter(i=>i.type==='bug').length});
+  renderRes(tot,st,bg);
+}
 
-def get_expensive_items(items, minimum_price):
-    # ناقصة
-    pass
+function renderRes(tot,st,bg){
+  document.getElementById('s-upload').style.display='none';
+  document.getElementById('s-res').style.display='block';
+  const fc=Object.keys(F).length;
+  document.getElementById('sum').innerHTML=`
+    <div class="st"><div class="sn">${fc}</div><div class="sl">ملف</div></div>
+    <div class="st"><div class="sn" style="color:${tot?'#f85149':'#3fb950'}">${tot}</div><div class="sl">مشكلة</div></div>
+    <div class="st"><div class="sn">${st}</div><div class="sl">دوال ناقصة</div></div>
+    <div class="st"><div class="sn">${bg}</div><div class="sl">أخطاء</div></div>`;
+  document.getElementById('ri').textContent=tot+' مشكلة في '+fc+' ملف';
+  document.getElementById('btn-dl').style.display=tot>0?'inline-block':'none';
+  const il=document.getElementById('il');
+  if(!tot){il.innerHTML='<div class="empty">✅ لا مشاكل في هذا المشروع</div>';return}
+  let h='';let idx=0;
+  Object.entries(R).forEach(([fn,{issues}])=>{
+    issues.forEach(iss=>{
+      const sc={c:'bc',h:'bh',m:'bm',stub:'bs'}[iss.type==='stub'?'stub':iss.sev]||'bm';
+      const sl={c:'حرج',h:'عالي',m:'متوسط'}[iss.sev]||'';
+      const cc=iss.conf>=90?'#3fb950':iss.conf>=60?'#d29922':'#f85149';
+      const canA=iss.fix&&iss.conf>=90;
+      const needR=iss.fix&&iss.conf>=60&&iss.conf<90;
+      h+=`<div class="issue" id="i${idx}">
+        <div class="it">
+          <span class="badge ${sc}">${sl}</span>
+          <div class="itl">${esc(iss.title)}</div>
+          <div class="iloc">${esc(fn)} — س${iss.line}</div>
+          <span style="color:${cc};font-size:12px;font-weight:700;cursor:help" title="${(iss.cEv||[]).join('\n')}">${iss.cIcon} ${iss.conf}% — ${esc(iss.cAct)}</span>
+        </div>
+        <div class="code">${esc(iss.ev)}</div>
+        ${iss.fix?`<div class="code code-fix">✅ ${esc(iss.fix)}</div>`:''}
+        <div class="ia">
+          ${canA?`<button class="btn btn-ok btn-sm" onclick="applyFix('${esc(fn)}',${iss.line-1},'${escQ(iss.ev)}','${escQ(iss.fix)}',${idx})">🟢 تطبيق آمن</button>`:''}
+          ${needR?`<button class="btn btn-s btn-sm" onclick="applyFix('${esc(fn)}',${iss.line-1},'${escQ(iss.ev)}','${escQ(iss.fix)}',${idx})">🟡 تطبيق مع مراجعة</button>`:''}
+          <button class="btn btn-s btn-sm" onclick="askAI('${esc(fn)}','${escQ(iss.ev)}','${escQ(iss.title)}')">🤖 AI</button>
+        </div>
+      </div>`;
+      idx++;
+    });
+  });
+  il.innerHTML=h;
+}
 
+function applyFix(fn,li,oldL,newL,idx){
+  const lines=F[fn].split('\n');
+  if(li<0||li>=lines.length)return;
+  const ind=lines[li].match(/^(\s*)/)[1];
+  lines[li]=ind+newL.trimStart();
+  F[fn]=lines.join('\n');
+  const newIss=analyze(F[fn],fn);
+  const gone=!newIss.some(ni=>ni.title===R[fn].issues.find(oi=>oi.line===li+1)?.title&&Math.abs(ni.line-(li+1))<=2);
+  R[fn]={code:F[fn],issues:newIss};
+  if(gone)toast('✅ تم التحقق — المشكلة اختفت');
+  else toast('⚠️ تم التطبيق — راجع النتيجة','w');
+  let t=0,s=0,b=0;
+  Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
+  renderRes(t,s,b);
+}
 
-def normalize_user(user):
-    # ناقصة
-    pass
+async function askAI(fn,ev,title){
+  const btn=event.target;btn.innerHTML='⏳';btn.disabled=true;
+  try{
+    const sr=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    if(!sr.ok)throw new Error('تجاوزت الحد — انتظر ساعة');
+    const{token}=await sr.json();
+    const pr=`اشرح هذا الخطأ وأعطني الإصلاح الصحيح:\nالملف: ${fn}\nالمشكلة: ${title}\nالكود:\n${ev}`;
+    const cr=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({prompt:pr})});
+    if(!cr.ok)throw new Error('خطأ في AI');
+    const{result}=await cr.json();
+    alert('🤖 Reality Engine AI:\n\n'+result);
+  }catch(e){alert('❌ '+e.message)}
+  finally{btn.innerHTML='🤖 AI';btn.disabled=false}
+}
 
+function dlAll(){Object.entries(F).forEach(([n,c])=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/plain'}));a.download=n;a.click()});toast('جاري التنزيل...')}
 
-def calculate_average_price(items):
-    # ناقصة
-    pass
-
-
-def find_best_user(users):
-    # ناقصة
-    pass
-
-
-# دالة مكتملة — ممنوع تعديلها
-def format_username(username):
-    return str(username).strip().lower()
-
-
-# دالة مكتملة — ممنوع تعديلها
-def add_tax(price, tax_rate):
-    return price + (price * tax_rate)
-
-
-class UserManager:
-
-    def __init__(self, users):
-        self.users = users
-
-    def find(self, username):
-        # ناقصة
-        pass
-
-    def count_active(self):
-        # ناقصة
-        pass
-
-
-# اختبار بيانات واقعية
-users = [
-    {
-        "username": "ali",
-        "email": "ali@example.com",
-        "active": True,
-        "score": 95
-    },
-    {
-        "username": "ahmed",
-        "email": "ahmed@example.com",
-        "active": False,
-        "score": 72
-    },
-    {
-        "username": "sara",
-        "email": "sara@example.com",
-        "active": True,
-        "score": 88
-    }
-]
-
-items = [
-    {"name": "Phone", "price": 2500, "quantity": 2},
-    {"name": "Mouse", "price": 150, "quantity": 3},
-    {"name": "Keyboard", "price": 300, "quantity": 1}
-]
+function icon(n){if(n.endsWith('.py'))return'🐍';if(/\.(js|ts|jsx)$/.test(n))return'📜';if(n.endsWith('.java'))return'☕';if(n.endsWith('.html'))return'🌐';return'📄'}
+function sz(b){return b<1024?b+'B':(b/1024).toFixed(1)+'KB'}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function escQ(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n')}
+function toast(msg,t='s'){const el=document.getElementById('toast');el.textContent=msg;el.style.background=t==='e'?'#b91c1c':t==='w'?'#9a6700':'#238636';el.style.display='block';setTimeout(()=>el.style.display='none',3000)}
+</script>
+</body>
+</html>
