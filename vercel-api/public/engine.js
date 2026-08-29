@@ -198,8 +198,11 @@ return max(totals, key=totals.get) if totals else None`;
   }
   if (n.includes('find') || n.includes('get') || n.includes('search')) {
     if (scalar && idK) return `return next((x for x in ${c} if x.get("${idK}") == ${scalar}), None)`;
-    // لو scalar نفس اسم key في البيانات استخدمه مباشرة
+    // لو scalar اسمه يطابق key في البيانات استخدمه مباشرة
     const matchKey = keys.find(k => k === scalar);
+    // لكن لو n.includes orders/by استخدم customerK
+    if (n.includes('order') && scalar && customerK && scalar !== customerK)
+      return `return [x for x in ${c} if x.get("${customerK}") == ${scalar}]`;
     if (scalar && matchKey) return `return next((x for x in ${c} if x.get("${matchKey}") == ${scalar}), None)`;
     if (scalar && customerK) return `return next((x for x in ${c} if x.get("${customerK}") == ${scalar}), None)`;
   }
