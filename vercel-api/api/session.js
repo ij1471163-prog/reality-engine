@@ -1,40 +1,32 @@
-import crypto from 'crypto';
+const requests = new Map();
 
-const sessions = new Map();
-const rateLimits = new Map();
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).end();
 
-const MAX_SESSIONS_PER_IP = 5;
-const SESSION_TTL = 30 * 60 * 1000; // 30 دقيقة
-
-export default function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-  
-  // Rate limit per IP
+  // Rate limit: 3 tokens per IP per hour
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] || 'unknown';
   const now = Date.now();
-  const ipSessions = rateLimits.get(ip) || [];
-  const recentSessions = ipSessions.filter(t => now - t < SESSION_TTL);
+  const hour = 60 * 60 * 1000;
+  const ipReqs = (requests.get(ip) || []).filter(t => now - t < hour);
   
-  if (recentSessions.length >= MAX_SESSIONS_PER_IP) {
-    return res.status(429).json({ error: 'Too many sessions' });
+  if (ipReqs.length >= 3) {
+    return res.status(429).json({ error: 'Too many requests' });
   }
+  
+  requests.set(ip, [...ipReqs, now]);
 
-  // توليد token
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = now + SESSION_TTL;
+  const master = process.env.MASTER_SECRET || '';
+  if (!master) return res.status(500).end();
 
-  sessions.set(token, { ip, expiresAt, requests: 0 });
-  rateLimits.set(ip, [...recentSessions, now]);
+  // Token = HMAC(master, IP + timestamp/10min)
+  const window = Math.floor(now / (10 * 60 * 1000));
+  const crypto = await import('crypto');
+  const token = crypto.createHmac('sha256', master)
+    .update(ip + window)
+    .digest('hex');
 
-  // تنظيف sessions منتهية
-  for (const [t, s] of sessions.entries()) {
-    if (now > s.expiresAt) sessions.delete(t);
-  }
-
-  res.status(200).json({ token, expiresAt });
+  res.status(200).json({ 
+    token, 
+    expiresIn: 600 // 10 دقائق
+  });
 }
-
-export { sessions };

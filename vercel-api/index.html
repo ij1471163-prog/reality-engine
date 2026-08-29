@@ -1,0 +1,94 @@
+# Reality Engine — Hard Test
+# المطلوب: إكمال الدوال الناقصة فقط
+# ممنوع تعديل الدوال المكتملة
+
+def calculate_item_total(item):
+    return item["price"] * item["quantity"]
+
+
+def calculate_total(items):
+    # ناقصة
+    pass
+
+
+def find_user(username, users):
+    # ناقصة
+    pass
+
+
+def get_user_email(username, users):
+    user = find_user(username, users)
+    return user["email"] if user else None
+
+
+def get_expensive_items(items, minimum_price):
+    # ناقصة
+    pass
+
+
+def normalize_user(user):
+    # ناقصة
+    pass
+
+
+def calculate_average_price(items):
+    # ناقصة
+    pass
+
+
+def find_best_user(users):
+    # ناقصة
+    pass
+
+
+# دالة مكتملة — ممنوع تعديلها
+def format_username(username):
+    return str(username).strip().lower()
+
+
+# دالة مكتملة — ممنوع تعديلها
+def add_tax(price, tax_rate):
+    return price + (price * tax_rate)
+
+
+class UserManager:
+
+    def __init__(self, users):
+        self.users = users
+
+    def find(self, username):
+        # ناقصة
+        pass
+
+    def count_active(self):
+        # ناقصة
+        pass
+
+
+# اختبار بيانات واقعية
+users = [
+    {
+        "username": "ali",
+        "email": "ali@example.com",
+        "active": True,
+        "score": 95
+    },
+    {
+        "username": "ahmed",
+        "email": "ahmed@example.com",
+        "active": False,
+        "score": 72
+    },
+    {
+        "username": "sara",
+        "email": "sara@example.com",
+        "active": True,
+        "score": 88
+    }
+]
+
+items = [
+    {"name": "Phone", "price": 2500, "quantity": 2},
+    {"name": "Mouse", "price": 150, "quantity": 3},
+    {"name": "Keyboard", "price": 300, "quantity": 1}
+]
