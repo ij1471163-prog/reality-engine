@@ -327,13 +327,8 @@ function fixAllEngine(){
     F[fn] = lines.join('\n');
     R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
   });
-  Object.entries(F).forEach(([n, c]) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([c], {type:'text/plain'}));
-    a.download = n;
-    a.click();
-  });
-  toast('✅ تم إصلاح ' + fixed + ' مشكلة وتنزيل الملف');
+  toast('✅ تم إصلاح ' + fixed + ' مشكلة');
+  dlAll();
 }
 
 function dlAll(){
