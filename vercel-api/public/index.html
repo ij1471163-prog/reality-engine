@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reality Engine</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh}
+.header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:center;gap:12px}
+.header h1{font-size:20px;color:#a371f7}
+.header span{color:#8b949e;font-size:13px;margin-right:auto}
+.container{max-width:960px;margin:0 auto;padding:24px}
+.upload-zone{border:2px dashed #30363d;border-radius:12px;padding:48px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:24px}
+.upload-zone:hover,.upload-zone.drag{border-color:#6e40c9;background:#161b22}
+.upload-zone h2{font-size:18px;margin-bottom:8px}
+.upload-zone p{color:#8b949e;font-size:13px;margin-bottom:16px}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:.2s}
+.btn:hover{opacity:.85}
+.btn-primary{background:#6e40c9;color:#fff}
+.btn-secondary{background:#21262d;color:#58a6ff;border:1px solid #30363d}
+.btn-success{background:#238636;color:#fff}
+.btn-sm{padding:6px 12px;font-size:12px}
+.files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:16px}
+.file-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;position:relative}
+.file-card .name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-card .meta{color:#8b949e;font-size:11px;margin-top:4px}
+.file-card .remove{position:absolute;top:8px;left:8px;background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;line-height:1}
+.summary{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 20px;text-align:center;flex:1;min-width:100px}
+.stat-num{font-size:28px;font-weight:700;color:#a371f7}
+.stat-label{font-size:12px;color:#8b949e}
+.issue{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:10px}
+.issue-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.badge{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge-critical{background:#b91c1c22;color:#f85149;border:1px solid #b91c1c44}
+.badge-high{background:#92400e22;color:#f0883e;border:1px solid #92400e44}
+.badge-medium{background:#78350f22;color:#d29922;border:1px solid #78350f44}
+.badge-stub{background:#6e40c922;color:#a371f7;border:1px solid #6e40c944}
+.issue-title{font-weight:600;font-size:14px}
+.issue-loc{color:#8b949e;font-size:12px}
+.code{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;margin:6px 0;white-space:pre-wrap;overflow-x:auto;direction:ltr;text-align:left}
+.code-fix{border-color:#23863644}
+.issue-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toolbar{display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap}
+.toolbar span{color:#8b949e;font-size:13px;margin-right:auto}
+#input-file{display:none}
+.empty{text-align:center;padding:40px;color:#8b949e}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>⚡ Reality Engine</h1>
+  <span>محلل المشاريع البرمجية</span>
+</div>
+<div class="container">
+  <div class="upload-zone" id="dropZone">
+    <h2>📁 ارفع ملفات مشروعك</h2>
+    <p>Python · JavaScript · Java · HTML — حتى 10 ملفات · 500KB لكل ملف</p>
+    <button class="btn btn-primary" onclick="document.getElementById('input-file').click()">اختر الملفات</button>
+    <input type="file" id="input-file" multiple accept=".py,.js,.ts,.java,.html,.jsx,.css">
+  </div>
+
+  <div id="files-section" style="display:none">
+    <div class="files-grid" id="files-grid"></div>
+    <div class="toolbar">
+      <button class="btn btn-primary" id="btn-analyze" onclick="analyzeAll()">🔍 تحليل المشروع</button>
+      <button class="btn btn-secondary" onclick="clearAll()">مسح الكل</button>
+      <span id="files-count"></span>
+    </div>
+  </div>
+
+  <div id="results-section" style="display:none">
+    <div class="summary" id="summary"></div>
+    <div class="toolbar">
+      <button class="btn btn-success" id="btn-download" onclick="downloadFixed()" style="display:none">⬇️ تنزيل المشروع المصلح</button>
+      <button class="btn btn-secondary" onclick="showFiles()">← رجوع</button>
+      <span id="results-count"></span>
+    </div>
+    <div id="issues-list"></div>
+  </div>
+</div>
+
+<script>
+const MAX_FILES = 10;
+const MAX_SIZE = 500 * 1024;
+let projectFiles = {};
+let analysisResults = {};
+
+// ── Upload ──────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+document.getElementById('input-file').addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(fileList) {
+    for (const file of fileList) {
+        if (Object.keys(projectFiles).length >= MAX_FILES) { alert('الحد الأقصى 10 ملفات'); break; }
+        if (file.size > MAX_SIZE) { alert(`${file.name}: الحجم يتجاوز 500KB`); continue; }
+        const reader = new FileReader();
+        reader.onload = e => {
+            projectFiles[file.name] = e.target.result;
+            renderFiles();
+        };
+        reader.readAsText(file);
+    }
+}
+
+function renderFiles() {
+    const grid = document.getElementById('files-grid');
+    grid.innerHTML = '';
+    const names = Object.keys(projectFiles);
+    names.forEach(name => {
+        const size = new Blob([projectFiles[name]]).size;
+        grid.innerHTML += `<div class="file-card">
+            <button class="remove" onclick="removeFile('${name}')">×</button>
+            <div class="name">${name}</div>
+            <div class="meta">${getLangIcon(name)} ${formatSize(size)}</div>
+        </div>`;
+    });
+    document.getElementById('files-section').style.display = names.length ? 'block' : 'none';
+    document.getElementById('files-count').textContent = `${names.length} ملف`;
+}
+
+function removeFile(name) { delete projectFiles[name]; renderFiles(); }
+function clearAll() { projectFiles = {}; renderFiles(); document.getElementById('results-section').style.display = 'none'; }
+function showFiles() { document.getElementById('results-section').style.display = 'none'; document.getElementById('files-section').style.display = 'block'; }
+
+// ── Engine ──────────────────────────────────────────
+function detectLang(fileName) {
+    if (fileName.endsWith('.py')) return 'python';
+    if (/\.(js|ts|jsx)$/.test(fileName)) return 'javascript';
+    if (fileName.endsWith('.java')) return 'java';
+    if (fileName.endsWith('.html')) return 'html';
+    return 'unknown';
+}
+
+function analyzeCode(code, fileName) {
+    const lang = detectLang(fileName);
+    const issues = [];
+    // استخرج JS من HTML
+    let workCode = code;
+    if (lang === 'html') {
+        const scripts = [];
+        const re = /<script[^>]*>([sS]*?)</script>/gi;
+        let m;
+        while ((m = re.exec(code)) !== null) scripts.push(m[1]);
+        workCode = scripts.join('\n');
+    }
+    if (lang === 'python') {
+        const lines = code.split('\n');
+        let inLoop = false;
+        lines.forEach((line, i) => {
+            const t = line.trim();
+            if (/^defs+w+.*:$/.test(t) && lines[i+1]?.trim() === 'pass')
+                issues.push({type:'stub',severity:'medium',title:'دالة ناقصة',line:i+2,evidence:t,fix:null});
+            if (/^fors+w+s+ins+/.test(t)) inLoop = true;
+            if (inLoop && /^(total|sum|count|revenue)s*=s*[^=+-]/.test(t)) {
+                const fix = line.replace(/^(s*w+)s*=s*(.+)/,'$1 += $2').trim();
+                issues.push({type:'bug',severity:'critical',title:'خطأ في التراكم: = بدل +=',line:i+1,evidence:t,fix});
+            }
+            if (/^(return|def )s/.test(t)) inLoop = false;
+            if (/==s*None|!=s*None/.test(line) && !t.startsWith('#'))
+                issues.push({type:'bug',severity:'medium',title:'مقارنة None بـ ==',line:i+1,evidence:t,fix:t.replace('== None','is None').replace('!= None','is not None')});
+        });
+    }
+    if (lang === 'javascript' || lang === 'html') {
+        const lines = workCode.split('\n');
+        let inLoop = false;
+        lines.forEach((line, i) => {
+            const t = line.trim();
+            if (line.includes('.forEach(')) {
+                inLoop = true;
+                for (let j=i+1;j<Math.min(i+6,lines.length);j++) {
+                    if (lines[j].trim().startsWith('return ')) {
+                        issues.push({type:'bug',severity:'high',title:'return داخل forEach لا يعمل',line:i+2,evidence:lines[j].trim(),fix:line.replace('.forEach(','.find(').trim()});
+                        break;
+                    }
+                }
+            }
+            if (/fors*(/.test(line)) inLoop = true;
+            if (inLoop && /^s*(total|sum|count)s*=s*[^=+-]/.test(line)) {
+                const fix = line.replace(/(s*w+)s*=s*(.+)/,'$1 += $2').trim();
+                issues.push({type:'bug',severity:'critical',title:'خطأ في التراكم: = بدل +=',line:i+1,evidence:t,fix});
+            }
+            if (/[^=!<>]==[^=]/.test(line) && /ifs*(/.test(line))
+                issues.push({type:'bug',severity:'medium',title:'مقارنة == بدل ===',line:i+1,evidence:t,fix:t.replace(/([^=!<>])==([^=])/,'$1===$2')});
+            if (/^})$|^}$/.test(t)) inLoop = false;
+        });
+    }
+    return issues;
+}
+
+// ── Analyze All ─────────────────────────────────────
+function analyzeAll() {
+    analysisResults = {};
+    let totalIssues = 0, totalStubs = 0, totalBugs = 0;
+
+    Object.entries(projectFiles).forEach(([name, code]) => {
+        const issues = analyzeCode(code, name);
+        analysisResults[name] = { code, issues };
+        totalIssues += issues.length;
+        totalStubs += issues.filter(i=>i.type==='stub').length;
+        totalBugs += issues.filter(i=>i.type==='bug').length;
+    });
+
+    renderResults(totalIssues, totalStubs, totalBugs);
+}
+
+function renderResults(total, stubs, bugs) {
+    document.getElementById('files-section').style.display = 'none';
+    document.getElementById('results-section').style.display = 'block';
+
+    document.getElementById('summary').innerHTML = `
+        <div class="stat"><div class="stat-num">${Object.keys(projectFiles).length}</div><div class="stat-label">ملف</div></div>
+        <div class="stat"><div class="stat-num">${total}</div><div class="stat-label">مشكلة</div></div>
+        <div class="stat"><div class="stat-num">${stubs}</div><div class="stat-label">دوال ناقصة</div></div>
+        <div class="stat"><div class="stat-num">${bugs}</div><div class="stat-label">أخطاء منطقية</div></div>
+    `;
+
+    const list = document.getElementById('issues-list');
+    if (total === 0) {
+        list.innerHTML = '<div class="empty">✅ لم يتم اكتشاف أي مشاكل في هذا المشروع</div>';
+        return;
+    }
+
+    let html = '';
+    Object.entries(analysisResults).forEach(([fileName, {issues}]) => {
+        issues.forEach((issue, idx) => {
+            html += `<div class="issue">
+                <div class="issue-header">
+                    <span class="badge badge-${issue.severity === 'critical' ? 'critical' : issue.type === 'stub' ? 'stub' : issue.severity === 'high' ? 'high' : 'medium'}">${issue.severity.toUpperCase()}</span>
+                    <span class="issue-title">${issue.title}</span>
+                    <span class="issue-loc">${fileName} — السطر ${issue.line}</span>
+                </div>
+                <div class="code">${escHtml(issue.evidence)}</div>
+                ${issue.fix ? `<div class="code code-fix">✅ ${escHtml(issue.fix)}</div>` : ''}
+                <div class="issue-actions">
+                    ${issue.fix ? `<button class="btn btn-success btn-sm" onclick="applyFix('${fileName}',${issue.line-1},'${escAttr(issue.evidence)}','${escAttr(issue.fix)}')">✅ تطبيق الإصلاح</button>` : ''}
+                    <button class="btn btn-secondary btn-sm" onclick="askAI('${fileName}','${escAttr(issue.evidence)}')">🤖 اسأل AI</button>
+                </div>
+            </div>`;
+        });
+    });
+
+    list.innerHTML = html;
+    document.getElementById('results-count').textContent = `${total} مشكلة`;
+    document.getElementById('btn-download').style.display = total > 0 ? 'inline-block' : 'none';
+}
+
+// ── Apply Fix ────────────────────────────────────────
+function applyFix(fileName, lineIdx, oldLine, newLine) {
+    const lines = projectFiles[fileName].split('\n');
+    if (lines[lineIdx]?.trim() === oldLine.trim()) {
+        const indent = lines[lineIdx].match(/^(\s*)/)[1];
+        lines[lineIdx] = indent + newLine;
+        projectFiles[fileName] = lines.join('\n');
+        analyzeAll();
+    }
+}
+
+// ── AI ───────────────────────────────────────────────
+async function askAI(fileName, evidence) {
+    const prompt = `اشرح هذا الخطأ واقترح إصلاحًا:\nالملف: ${fileName}\nالكود: ${evidence}`;
+    try {
+        const sesRes = await fetch('/api/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+        const {token} = await sesRes.json();
+        const chatRes = await fetch('/api/chat', {
+            method:'POST',
+            headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+            body:JSON.stringify({prompt})
+        });
+        const {result} = await chatRes.json();
+        alert('🤖 AI:\n\n' + result);
+    } catch(e) {
+        alert('خطأ في الاتصال بـ AI: ' + e.message);
+    }
+}
+
+// ── Download ─────────────────────────────────────────
+function downloadFixed() {
+    Object.entries(projectFiles).forEach(([name, code]) => {
+        const blob = new Blob([code], {type:'text/plain'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+    });
+}
+
+// ── Utils ────────────────────────────────────────────
+function getLangIcon(name) {
+    if (name.endsWith('.py')) return '🐍';
+    if (/\.(js|ts|jsx)$/.test(name)) return '📜';
+    if (name.endsWith('.java')) return '☕';
+    if (name.endsWith('.html')) return '🌐';
+    return '📄';
+}
+function formatSize(bytes) { return bytes < 1024 ? bytes+'B' : (bytes/1024).toFixed(1)+'KB'; }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escAttr(s) { return String(s).replace(/'/g,"\\'").replace(/\n/g,'\\n'); }
+</script>
+</body>
+</html>
