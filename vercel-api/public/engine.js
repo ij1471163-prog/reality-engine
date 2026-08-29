@@ -189,6 +189,9 @@ function suggestFix(funcName, params, code) {
   }
   if (n.includes('find') || n.includes('get') || n.includes('search')) {
     if (scalar && idK) return `return next((x for x in ${c} if x.get("${idK}") == ${scalar}), None)`;
+    // لو scalar نفس اسم key في البيانات استخدمه مباشرة
+    const matchKey = keys.find(k => k === scalar);
+    if (scalar && matchKey) return `return next((x for x in ${c} if x.get("${matchKey}") == ${scalar}), None)`;
     if (scalar && customerK) return `return next((x for x in ${c} if x.get("${customerK}") == ${scalar}), None)`;
   }
   if (n.includes('count')) {
