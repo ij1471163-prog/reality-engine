@@ -325,7 +325,7 @@ function fixAllEngine(){
         (lines[endLine].trim() === '' || lines[endLine].trim() === 'pass' || lines[endLine].trim().startsWith('#')))
         endLine++;
       const ind = lines[defLine].match(/^(\s*)/)[1];
-      const fixLines = issue.fix.split('\n').map(l => ind + '    ' + l.trimStart());
+      const fixLines = issue.fix.split('\n').map((l, li) => li === 0 ? ind + '    ' + l.trimStart() : ind + '    ' + l);
       lines.splice(defLine + 1, endLine - defLine - 1, ...fixLines);
       fixed++;
     });
