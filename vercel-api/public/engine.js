@@ -161,17 +161,9 @@ function suggestFix(funcName, params, code) {
 
   // Intent detection
   if (n.includes('best') || n.includes('top')) {
-    // لو فيه nested items احسب التوتال
-    if (n.includes('customer') || n.includes('user')) {
-      const pk = priceK || 'price'; const qk = qtyK || 'quantity';
-      return `totals = {}
-for o in ${c}:
-    k = o.get("${customerK||'customer'}")
-    totals[k] = totals.get(k, 0) + sum(i["${pk}"]*i.get("${qk}",1) for i in o.get("items",[]))
-return max(totals, key=totals.get) if totals else None`;
-    }
-    const byKey = scoreK || 'score';
-    return `return max(${c}, key=lambda x: x.get("${byKey}", 0))`;
+    if (scoreK) return `return max(${c}, key=lambda x: x.get("${scoreK}", 0))`;
+    if (priceK) return `return max(${c}, key=lambda x: x.get("${priceK}", 0))`;
+    return `return max(${c}, key=lambda x: x.get("score", 0))`;
   }
   if (n.includes('average') || n.includes('avg')) {
     const k = priceK || 'price';
