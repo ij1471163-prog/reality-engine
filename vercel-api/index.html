@@ -80,6 +80,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
     <div class="sum" id="sum"></div>
     <div class="tb">
       <button class="btn btn-s" onclick="goBack()">← رجوع</button>
+      <button class="btn btn-p" onclick="fixAllWithAI()">🤖 إصلاح الكل بـ AI</button>
       <button class="btn btn-ok" id="btn-dl" onclick="dlAll()" style="display:none">⬇️ تنزيل</button>
       <div class="tb-r" id="ri"></div>
     </div>
@@ -248,6 +249,44 @@ async function askAI(fn,ev,title){
     }
   }catch(e){alert('❌ '+e.message)}
   finally{btn.innerHTML='🤖 AI';btn.disabled=false}
+}
+
+async function fixAllWithAI(){
+  const names = Object.keys(F);
+  if(!names.length) return;
+  const btn = event.target;
+  btn.innerHTML='⏳ جاري...'; btn.disabled=true;
+  try{
+    const sr=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    if(!sr.ok) throw new Error('تجاوزت الحد — انتظر ساعة');
+    const{token}=await sr.json();
+    for(const fn of names){
+      const issues=R[fn]?.issues||[];
+      if(!issues.length) continue;
+      const prompt=`أنت مبرمج خبير. أصلح هذا الكود — أكمل الدوال الناقصة وصلح الأخطاء المنطقية.
+أرجع الكود الكامل المصلح فقط بدون شرح بين \`\`\` و \`\`\`.
+
+الكود:
+\`\`\`
+${F[fn]}
+\`\`\``;
+      const cr=await fetch('/api/chat',{method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+        body:JSON.stringify({prompt})});
+      if(!cr.ok) throw new Error('خطأ في AI');
+      const{result}=await cr.json();
+      const fixed=result.match(/```(?:\w+)?\n([\s\S]*?)```/)?.[1]?.trim();
+      if(fixed){
+        F[fn]=fixed;
+        R[fn]={code:fixed,issues:analyzeCode(fixed,fn)};
+      }
+    }
+    let t=0,s=0,b=0;
+    Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
+    renderRes(t,s,b);
+    toast('✅ تم إصلاح المشروع بـ AI');
+  }catch(e){toast('❌ '+e.message,'e')}
+  finally{btn.innerHTML='🤖 إصلاح الكل بـ AI';btn.disabled=false}
 }
 
 function dlAll(){Object.entries(F).forEach(([n,c])=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/plain'}));a.download=n;a.click()});toast('جاري التنزيل...')}
