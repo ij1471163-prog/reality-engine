@@ -223,7 +223,7 @@ async function askAI(fn,ev,title){
     const sr=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     if(!sr.ok)throw new Error('تجاوزت الحد — انتظر ساعة');
     const{token}=await sr.json();
-    const pr=`اشرح هذا الخطأ وأعطني الإصلاح الصحيح:\nالملف: ${fn}\nالمشكلة: ${title}\nالكود:\n${ev}`;
+    const pr=`أكمل هذه الدالة الناقصة بكود صحيح فقط بدون شرح:\nالملف: ${fn}\nالبيانات المتاحة في الكود:\n${Object.values(F)[0]?.slice(0,500)||''}\nالدالة:\n${ev}\n\nأرجع فقط:\nAFTER:\n\`\`\`\nالكود المكتمل\n\`\`\``;
     const cr=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({prompt:pr})});
     if(!cr.ok)throw new Error('خطأ في AI');
     const{result}=await cr.json();
