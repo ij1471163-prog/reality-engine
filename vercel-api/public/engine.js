@@ -23,6 +23,7 @@ function calcConf(issue,code){
 }
 
 function analyzeCode(code,fileName){
+  if(typeof analyzeJava!=='undefined'&&fileName.endsWith('.java'))return analyzeJava(code,fileName);
   const issues=[];
   const ext=fileName.split('.').pop();
   
