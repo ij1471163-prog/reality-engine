@@ -312,7 +312,8 @@ function fixAllEngine(){
   Object.keys(R).forEach(fn => {
     const issues = analyzeCode(F[fn], fn);
     let lines = F[fn].split('\n');
-    issues.forEach(issue => {
+    // نصلح من الأسفل للأعلى لتجنب index drift
+    issues.slice().reverse().forEach(issue => {
       if (!issue.fix) return;
       const li = issue.line - 1;
       let defLine = li;
