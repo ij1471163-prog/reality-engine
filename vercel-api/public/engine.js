@@ -161,7 +161,7 @@ function suggestFix(funcName, params, code) {
 
   // Intent detection
   if (n.includes('best') || n.includes('top')) {
-    const byKey = scoreK || priceK || 'score';
+    const byKey = scoreK || 'score';
     return `return max(${c}, key=lambda x: x.get("${byKey}", 0))`;
   }
   if (n.includes('average') || n.includes('avg')) {
@@ -174,6 +174,11 @@ function suggestFix(funcName, params, code) {
     if (priceK)
       return `return sum(x["${priceK}"] for x in ${c})`;
     return `return sum(x.get("price", 0) * x.get("quantity", 1) for x in ${c})`;
+  }
+  if (n.includes('expensive') || n.includes('cheap') || n.includes('minimum') || n.includes('maximum')) {
+    const pk = priceK || 'price';
+    if (scalar) return `return [x for x in ${c} if x.get("${pk}", 0) >= ${scalar}]`;
+    return `return [x for x in ${c} if x.get("${pk}", 0) > 0]`;
   }
   if ((n.includes('filter') || n.includes('active') || n.includes('pending') || n.includes('available')) && coll) {
     const filterStatuses = ['active','pending','delivered','cancelled','available'];
