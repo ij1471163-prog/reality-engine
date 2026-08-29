@@ -308,33 +308,29 @@ ${F[fn]}
 }
 
 function fixAllEngine(){
-  // طبق كل الاقتراحات من المحرك
   let fixed = 0;
   Object.keys(R).forEach(fn => {
-    R[fn].issues.forEach(issue => {
+    const issues = analyzeCode(F[fn], fn);
+    let lines = F[fn].split('\n');
+    issues.forEach(issue => {
       if (!issue.fix) return;
-      const lines = F[fn].split('\n');
       const li = issue.line - 1;
-      if (li < 0 || li >= lines.length) return;
-      // ابحث عن def وحذف الجسم
       let defLine = li;
       for (let i = li; i >= Math.max(0, li-3); i--) {
         if (/^def\s+/.test(lines[i].trim())) { defLine = i; break; }
       }
       let endLine = defLine + 1;
-      while (endLine < lines.length && 
+      while (endLine < lines.length &&
         (lines[endLine].trim() === '' || lines[endLine].trim() === 'pass' || lines[endLine].trim().startsWith('#')))
         endLine++;
       const ind = lines[defLine].match(/^(\s*)/)[1];
       const fixLines = issue.fix.split('\n').map(l => ind + '    ' + l.trimStart());
       lines.splice(defLine + 1, endLine - defLine - 1, ...fixLines);
-      F[fn] = lines.join('\n');
       fixed++;
     });
-    // أعد التحليل
+    F[fn] = lines.join('\n');
     R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
   });
-  // تنزيل
   Object.entries(F).forEach(([n, c]) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([c], {type:'text/plain'}));
