@@ -89,6 +89,13 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 </div>
 <div class="toast" id="toast"></div>
 <script>
+// تحقق من web token
+const urlParams = new URLSearchParams(window.location.search);
+const webToken = urlParams.get('t');
+if (!webToken) {
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:18px;font-family:Arial">⛔ غير مصرح بالوصول</div>';
+  throw new Error('No token');
+}
 let F={},R={};
 const dz=document.getElementById('dz');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
