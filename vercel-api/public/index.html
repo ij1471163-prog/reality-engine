@@ -302,7 +302,7 @@ ${F[fn]}
   finally{btn.innerHTML='🤖 إصلاح الكل بـ AI';btn.disabled=false}
 }
 
-function fixAllEngine(){alert('fixAllEngine started, files: '+Object.keys(F).join(', '));
+function fixAllEngine(){
   let fixed = 0;
   Object.keys(R).forEach(fn => {
     const issues = analyzeCode(F[fn], fn);
@@ -311,17 +311,10 @@ function fixAllEngine(){alert('fixAllEngine started, files: '+Object.keys(F).joi
     issues.slice().reverse().forEach(issue => {
       if (!issue.fix) return;
       const li = issue.line - 1;
-      let defLine = li;
-      for (let i = li; i >= Math.max(0, li-3); i--) {
-        if (/^def\s+/.test(lines[i].trim())) { defLine = i; break; }
-      }
-      let endLine = defLine + 1;
-      while (endLine < lines.length &&
-        (lines[endLine].trim() === '' || lines[endLine].trim() === 'pass' || lines[endLine].trim().startsWith('#')))
-        endLine++;
-      const ind = lines[defLine].match(/^(\s*)/)[1];
-      const fixLines = issue.fix.split('\n').map((l, li) => li === 0 ? ind + '    ' + l.trimStart() : ind + '    ' + l);
-      lines.splice(defLine + 1, endLine - defLine - 1, ...fixLines);
+      if (li < 0 || li >= lines.length) return;
+      // استبدل السطر مباشرة
+      const ind = lines[li].match(/^(\s*)/)[1];
+      lines[li] = ind + issue.fix.trimStart();
       fixed++;
     });
     F[fn] = lines.join('\n');
