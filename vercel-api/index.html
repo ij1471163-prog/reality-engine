@@ -162,7 +162,7 @@ function analyze(code,name){
     const lines=code.split('\n');let li=-1;
     lines.forEach((line,i)=>{
       const t=line.trim();const ind=line.search(/\S|$/);
-      if(/^def\s+\w+.*:$/.test(t)&&lines[i+1]?.trim()==='pass')
+      if(/^def\s+\w+.*:$/.test(t)&&(lines[i+1]?.trim()==='pass'||lines[i+2]?.trim()==='pass'))
         issues.push({type:'stub',sev:'m',title:'دالة ناقصة',line:i+2,ev:t,fix:null});
       if(/^for\s+\w+\s+in\s+/.test(t))li=ind;
       const inL=li>=0&&ind>li;
