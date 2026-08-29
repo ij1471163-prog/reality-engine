@@ -227,7 +227,7 @@ async function askAI(fn,ev,title){
     const cr=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({prompt:pr})});
     if(!cr.ok)throw new Error('خطأ في AI');
     const{result}=await cr.json();
-    alert('🤖 AI Fix:\n\n'+result);
+    prompt('🤖 Reality Engine AI — انسخ الكود:',result);
   }catch(e){alert('❌ '+e.message)}
   finally{btn.innerHTML='🤖 AI';btn.disabled=false}
 }
