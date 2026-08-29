@@ -206,7 +206,14 @@ function applyFix(fn,li,oldL,newL,idx){
   const lines=F[fn].split('\n');
   if(li<0||li>=lines.length)return;
   const ind=lines[li].match(/^(\s*)/)[1];
-  lines[li]=ind+newL.trimStart();
+  // ابحث عن def وحذف الجسم كاملاً (pass/comments)
+  let defLine=li;
+  for(let i=li;i>=Math.max(0,li-3);i--){if(/^def\s+/.test(lines[i].trim())){defLine=i;break;}}
+  let endLine=defLine+1;
+  while(endLine<lines.length&&(lines[endLine].trim()===''||lines[endLine].trim()==='pass'||lines[endLine].trim().startsWith('#')))endLine++;
+  // استبدل الدالة بالإصلاح
+  const fixLines=newL.split('\n').map(l=>ind+l.trimStart());
+  lines.splice(defLine,endLine-defLine,lines[defLine],...fixLines);
   F[fn]=lines.join('\n');
   const newIss=analyzeCode(F[fn],fn);
   const gone=!newIss.some(ni=>ni.title===R[fn].issues.find(oi=>oi.line===li+1)?.title&&Math.abs(ni.line-(li+1))<=2);
