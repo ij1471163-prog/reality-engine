@@ -89,25 +89,15 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 </div>
 <div class="toast" id="toast"></div>
 <script>
-// تحقق من web token
-const urlParams = new URLSearchParams(window.location.search);
-const webToken = urlParams.get('t');
-if (!webToken) {
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:18px;font-family:Arial">⛔ غير مصرح بالوصول</div>';
-  throw new Error('No token');
+// حماية الوصول
+const _up = new URLSearchParams(window.location.search);
+const _wt = _up.get('t');
+if (!_wt) {
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:20px;font-family:Arial;text-align:center">⛔<br>افتح من التطبيق فقط</div>';
+  throw new Error('unauthorized');
 }
-// تحقق من web token
-const urlParams = new URLSearchParams(window.location.search);
-const webToken = urlParams.get('t');
-if (!webToken) {
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:18px;font-family:Arial">⛔ افتح من التطبيق فقط</div>';
-  throw new Error('No token');
-}
-// تحقق من الـ token مع الـ server
-fetch('/api/webtoken', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
-  .then(r => r.json())
-  .then(d => { if(d.token !== webToken) { document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:18px">⛔ رابط منتهي الصلاحية</div>'; } })
-  .catch(() => {});
+fetch('/api/webtoken',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+  .then(r=>r.json()).then(d=>{if(d.token!==_wt)document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0d1117;color:#f85149;font-size:20px;text-align:center">⛔<br>رابط منتهي الصلاحية</div>';}).catch(()=>{});
 let F={},R={};
 const dz=document.getElementById('dz');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
