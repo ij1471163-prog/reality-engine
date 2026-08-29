@@ -148,7 +148,7 @@ function suggestFix(funcName, params, code) {
   itemKeys = nested.items || nested.products || nested.entries || [];
 
   const idK = fk(keys, 'id', 'order_id', 'user_id', 'product_id');
-  const customerK = fk(keys, 'customer', 'user', 'username', 'owner', 'name');
+  const customerK = fk(keys, 'username', 'customer', 'user', 'owner', 'name');
   const statusK = fk(keys, 'status', 'state', 'type');
   const activeK = fk(keys, 'active', 'enabled', 'is_active');
   const scoreK = fk(keys, 'score', 'rating', 'points', 'value');
