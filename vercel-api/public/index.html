@@ -227,7 +227,25 @@ async function askAI(fn,ev,title){
     const cr=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({prompt:pr})});
     if(!cr.ok)throw new Error('خطأ في AI');
     const{result}=await cr.json();
-    prompt('🤖 Reality Engine AI — انسخ الكود:',result);
+    const after = result.match(/```(?:python|js)?\n([\s\S]*?)```/)?.[1]?.trim() || result;
+    if(confirm('🤖 AI اقترح:\n\n'+after.slice(0,200)+'\n\n..هل تطبق الإصلاح؟')) {
+      const lines = F[fn].split('\n');
+      // ابحث عن الدالة واستبدلها
+      let start=-1,end=-1;
+      lines.forEach((l,i)=>{if(l.includes(ev.split('(')[0].trim()))start=i});
+      if(start>=0){
+        end=start+1;
+        while(end<lines.length&&(lines[end].startsWith(' ')||lines[end].startsWith('\t')||lines[end].trim()===''))end++;
+        lines.splice(start,end-start,...after.split('\n'));
+        F[fn]=lines.join('\n');
+        const ni=analyzeCode(F[fn],fn);
+        R[fn]={code:F[fn],issues:ni};
+        let t=0,s=0,b=0;
+        Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
+        renderRes(t,s,b);
+        toast('✅ تم تطبيق إصلاح AI');
+      }
+    }
   }catch(e){alert('❌ '+e.message)}
   finally{btn.innerHTML='🤖 AI';btn.disabled=false}
 }
