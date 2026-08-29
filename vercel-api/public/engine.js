@@ -307,9 +307,9 @@ function analyzeJava(code, fileName) {
   // 6. == بدل .equals() للـ String
   lines.forEach((line, i) => {
     const t = line.trim();
-    if (!t.startsWith('//') && /String.*==|==.*String/.test(line))
+    if (!t.startsWith('//') && /"[^"]*"\s*==|==\s*"[^"]*"/.test(line))
       issues.push({type:'bug', sev:'h', title:'قارن String بـ .equals() بدل ==', line:i+1, ev:t,
-        fix:t.replace(/(\w+)\s*==\s*(\w+)/, '$1.equals($2)')});
+        fix:t.replace(/([\w.]+)\s*==\s*("[^"]*")/, '$1.equals($2)').replace(/("[^"]*")\s*==\s*([\w.]+)/, '$2.equals($1)')});
   });
 
   // 7. catch فارغ
@@ -318,7 +318,7 @@ function analyzeJava(code, fileName) {
       const next = lines[i+1]?.trim() || '';
       if (next === '}' || next === '// ignore' || next === '')
         issues.push({type:'bug', sev:'m', title:'catch فارغ يخفي الأخطاء', line:i+1, ev:line.trim(),
-          fix:line.replace('catch', 'catch').trim() + '\n    e.printStackTrace();'});
+          fix:'    e.printStackTrace();'});
     }
   });
 
