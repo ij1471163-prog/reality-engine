@@ -94,7 +94,7 @@ function analyzeCode(code,fileName){
       }
       if(/for\s*\(/.test(line))inLoop=true;
       if(line.includes('.forEach(')&&!line.includes(' return '))inLoop=true;
-      if(inLoop&&/\b(total|sum|count|revenue)\s*=\s*[^=+\-]/.test(line)&&!/==/.test(line)){
+      if(inLoop&&/\b(total|sum|count|revenue)\s*=\s*[^=+\-]/.test(line)&&!/==/.test(line)&&!/^\s*(let|var|const)\s+/.test(line)){
         const fix=line.replace(/(\s*)(\w+)\s*=\s*(.+)/,'$1$2 += $3').trim();
         issues.push({type:'bug',sev:'c',title:'خطأ في التراكم: = بدل +=',line:i+1,ev:t,fix});
       }
