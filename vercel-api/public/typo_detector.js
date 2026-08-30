@@ -42,6 +42,8 @@ function extractTokens(code) {
 const KNOWN_TYPOS = {
   'urloepn': 'urlopen',
   'urllopen': 'urlopen',
+  'unlinkSyncc': 'unlinkSync',
+  'unlinksyncc': 'unlinkSync',
   'subprocss': 'subprocess',
   'subproces': 'subprocess',
 };
