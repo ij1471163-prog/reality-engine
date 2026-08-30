@@ -297,7 +297,9 @@ ${F[fn]}
     let t=0,s=0,b=0;
     Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
     renderRes(t,s,b);
-    toast('✅ تم إصلاح المشروع بـ AI');
+    document.getElementById('btn-dl').style.display='inline-block';
+    dlAll();
+    toast('✅ تم إصلاح المشروع بـ AI — جاري التنزيل');
   }catch(e){toast('❌ '+e.message,'e')}
   finally{btn.innerHTML='🤖 إصلاح الكل بـ AI';btn.disabled=false}
 }
@@ -336,7 +338,7 @@ function fixAllEngine(){
   document.getElementById('btn-fixall').style.display='inline-block';
 }
 
-function dlAll(){alert('dlAll called, files: '+Object.keys(F).length);
+function dlAll(){
   // على الجوال نعرض الكود في textarea للنسخ
   const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
   if(isMobile){
