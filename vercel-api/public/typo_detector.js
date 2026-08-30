@@ -3,7 +3,7 @@
 
 const DANGEROUS_APIS = [
   // Network
-  'urlopen','urllib','requests','fetch','axios','http.get','https.get',
+  'urlopen','urloepn','urllib','requests','fetch','axios','http.get','https.get',
   'XMLHttpRequest','WebSocket','socket.connect',
   // System execution
   'subprocess.run','subprocess.call','subprocess.Popen',
@@ -39,7 +39,30 @@ function extractTokens(code) {
   return code.match(/[a-zA-Z_][a-zA-Z0-9_.]*/g) || [];
 }
 
+const KNOWN_TYPOS = {
+  'urloepn': 'urlopen',
+  'urllopen': 'urlopen',
+  'subprocss': 'subprocess',
+  'subproces': 'subprocess',
+};
+
 function detectDangerousTypos(code) {
+  // اكتشف known typos أولاً
+  const knownFindings = [];
+  Object.entries(KNOWN_TYPOS).forEach(([typo, correct]) => {
+    const re = new RegExp('\\b' + typo + '\\s*\\(', 'g');
+    if (re.test(code)) {
+      knownFindings.push({
+        token: typo,
+        similar_to: correct,
+        distance: levenshtein(typo, correct),
+        severity: 'high',
+        message: typo + ' يشبه ' + correct,
+        impact: getApiImpact(correct)
+      });
+    }
+  });
+
   const findings = [];
   const tokens = extractTokens(code);
   const seen = new Set();
@@ -76,7 +99,7 @@ function detectDangerousTypos(code) {
     });
   });
 
-  return findings;
+  return [...knownFindings, ...findings];
 }
 
 function getApiImpact(api) {
