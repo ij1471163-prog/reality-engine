@@ -288,10 +288,18 @@ ${F[fn]}
         body:JSON.stringify({prompt})});
       if(!cr.ok) throw new Error('خطأ في AI');
       const{result}=await cr.json();
-      const fixed=result.match(/```(?:\w+)?\n([\s\S]*?)```/)?.[1]?.trim();
+      const fixed=result.match(/\`\`\`(?:\w+)?\n([\s\S]*?)\`\`\`/)?.[1]?.trim();
       if(fixed){
-        F[fn]=fixed;
-        R[fn]={code:fixed,issues:analyzeCode(fixed,fn)};
+        const original = F[fn];
+        showDiff(fn, original, fixed, () => {
+          F[fn]=fixed;
+          R[fn]={code:fixed,issues:analyzeCode(fixed,fn)};
+          let t=0,s=0,b=0;
+          Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
+          renderRes(t,s,b);
+          setTimeout(()=>dlAll(),500);
+          toast('✅ تم تطبيق إصلاح AI');
+        });
       }
     }
     let t=0,s=0,b=0;
@@ -336,6 +344,47 @@ function fixAllEngine(){
   toast('✅ تم إصلاح ' + fixed + ' مشكلة');
   document.getElementById('btn-dl').style.display='inline-block';
   document.getElementById('btn-fixall').style.display='inline-block';
+}
+
+function calcDiff(original, fixed) {
+  const oLines = original.split('\n');
+  const fLines = fixed.split('\n');
+  let changed = 0, added = 0, removed = 0;
+  const maxLen = Math.max(oLines.length, fLines.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (oLines[i] === undefined) added++;
+    else if (fLines[i] === undefined) removed++;
+    else if (oLines[i] !== fLines[i]) changed++;
+  }
+  return { changed, added, removed, total: changed + added + removed };
+}
+
+function showDiff(fn, original, fixed, onApprove) {
+  const diff = calcDiff(original, fixed);
+  const risk = diff.total <= 2 ? '🟢 آمن' : diff.total <= 8 ? '🟡 راجع' : '🔴 تجاوز نطاق';
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#000a;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  d.innerHTML = `<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;max-width:500px;width:100%">
+    <div style="color:#a371f7;font-weight:700;font-size:16px;margin-bottom:16px">📊 تحليل التغييرات</div>
+    <div style="background:#010409;border-radius:8px;padding:12px;margin-bottom:12px">
+      <div style="color:#e6edf3;margin-bottom:6px">📄 ${fn}</div>
+      <div style="color:#3fb950">✅ سطور معدلة: ${diff.changed}</div>
+      <div style="color:#58a6ff">➕ سطور مضافة: ${diff.added}</div>
+      <div style="color:#f85149">➖ سطور محذوفة: ${diff.removed}</div>
+      <div style="margin-top:8px;font-weight:700;font-size:15px">${risk}</div>
+    </div>
+    ${diff.total > 5 ? '<div style="color:#d29922;font-size:13px;margin-bottom:12px">⚠️ AI غيّر أكثر من المطلوب — راجع التغييرات</div>' : ''}
+    <div style="display:flex;gap:8px">
+      <button onclick="document.body.removeChild(this.closest('div[style*=fixed]'))" 
+        style="flex:1;padding:10px;background:#b91c1c;color:#fff;border:none;border-radius:8px;cursor:pointer">❌ رفض</button>
+      <button onclick="this.closest('div[style*=fixed]').remove();(arguments[0])();" 
+        style="flex:1;padding:10px;background:#238636;color:#fff;border:none;border-radius:8px;cursor:pointer" 
+        data-approve="true">✅ قبول</button>
+    </div>
+  </div>`;
+  // ربط زر القبول
+  d.querySelector('[data-approve]').onclick = () => { d.remove(); onApprove(); };
+  document.body.appendChild(d);
 }
 
 function dlAll(){
