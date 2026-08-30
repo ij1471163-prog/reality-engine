@@ -144,7 +144,7 @@ public class AIEngine {
             }
             // Debug: أظهر أول 6 أحرف من المفتاح
             final String keyHint = apiKey.length() > 6 ? apiKey.substring(0,6)+"..." : "SHORT";
-            mainHandler.post(() -> android.util.Log.d("AIEngine", "Key OK: " + keyHint));
+            // Key validated
             try {
                 String prompt = buildContextualPrompt(fullCode, fileName, candidates, relatedFiles);
                 String rawResponse = callAPIWithRetry(prompt);
