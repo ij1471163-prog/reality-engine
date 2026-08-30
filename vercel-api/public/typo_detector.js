@@ -67,10 +67,18 @@ function detectDangerousTypos(code) {
   const tokens = extractTokens(code);
   const seen = new Set();
 
+  const COMMON_VARS = ['request','response','result','reject','resolve','record','require',
+    'redirect','replace','render','remove','return','received','remaining','reached',
+    'scheduled','selected','started','stopped','status','success','source','server'];
+  
   tokens.forEach(token => {
-    if (token.length < 4) return; // تجاهل tokens قصيرة
+    if (token.length < 4) return;
     if (seen.has(token)) return;
     seen.add(token);
+    // تجاهل المتغيرات الشائعة
+    if (COMMON_VARS.includes(token.toLowerCase())) return;
+    // تجاهل tokens تنتهي بـ .on أو .get (event handlers)
+    if (/.(on|get|set|use|end|add|run)$/.test(token)) return;
 
     DANGEROUS_APIS.forEach(api => {
       // تحقق من التشابه
@@ -80,7 +88,7 @@ function detectDangerousTypos(code) {
       if (tokenClean === apiBase) return; // نفس الكلمة = مو typo
 
       const dist = levenshtein(tokenClean.toLowerCase(), apiBase.toLowerCase());
-      const threshold = apiBase.length <= 5 ? 1 : apiBase.length <= 8 ? 2 : 3;
+      const threshold = apiBase.length <= 5 ? 1 : 2; // أقل false positives
 
       if (dist > 0 && dist <= threshold && tokenClean.length >= apiBase.length - 2) {
         // تأكد إن الـ token موجود في الكود كـ function call
