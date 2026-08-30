@@ -57,7 +57,7 @@ function detectDangerousTypos(code) {
       if (tokenClean === apiBase) return; // نفس الكلمة = مو typo
 
       const dist = levenshtein(tokenClean.toLowerCase(), apiBase.toLowerCase());
-      const threshold = apiBase.length <= 5 ? 1 : 2;
+      const threshold = apiBase.length <= 5 ? 1 : apiBase.length <= 8 ? 2 : 3;
 
       if (dist > 0 && dist <= threshold && tokenClean.length >= apiBase.length - 2) {
         // تأكد إن الـ token موجود في الكود كـ function call
