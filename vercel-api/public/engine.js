@@ -71,6 +71,14 @@ function analyzeCode(code,fileName){
     lines.forEach((line,i)=>{
       const t=line.trim();
       if(line.includes('.forEach(')){
+        // فحص inline forEach { ... return ... }
+        if(line.includes(' return ')||/;\s*return\s+\w/.test(line)){
+          const hasSE2 = /^[a-zA-Z_]\w*\s*\(/.test(line.replace(/\.forEach\([^)]*\)/,'').trim());
+          issues.push({type:'bug',sev:'h',
+            title:hasSE2?'return داخل forEach مع side effects':'return داخل forEach',
+            line:i+1,ev:line.trim(),fix:hasSE2?null:line.replace('.forEach(','.find(').trim()});
+          inLoop=true;
+        } else {
         let hasR=false,hasSE=false;
         for(let j=i+1;j<Math.min(i+8,lines.length);j++){
           const jt=lines[j].trim();
@@ -82,6 +90,7 @@ function analyzeCode(code,fileName){
           title:hasSE?'return داخل forEach مع side effects':'return داخل forEach',
           line:i+2,ev:line.trim(),fix:hasSE?null:line.replace('.forEach(','.find(').trim()});
         inLoop=true;
+        }
       }
       if(/for\s*\(/.test(line))inLoop=true;
       if(inLoop&&/^\s*(total|sum|count)\s*=\s*[^=+\-]/.test(line)){
