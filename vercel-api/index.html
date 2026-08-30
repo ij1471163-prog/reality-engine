@@ -179,19 +179,23 @@ function renderRes(tot,st,bg){
   document.getElementById('ri').textContent=tot+' مشكلة في '+fc+' ملف';
   document.getElementById('btn-dl').style.display='inline-block';
   document.getElementById('btn-fixall').style.display='inline-block';
-  // فحص typos خطرة
+
+  const il=document.getElementById('il');
+  // فحص typos قبل الـ early return
+  let typoHtml = '';
   if (typeof detectDangerousTypos !== 'undefined') {
     Object.entries(F).forEach(([fn, code]) => {
       const typos = detectDangerousTypos(code);
-      if (typos.length > 0) {
-        const warn = document.createElement('div');
-        warn.innerHTML = renderTypoWarnings(typos);
-        document.getElementById('il').prepend(warn);
-      }
+      if (typos.length > 0) typoHtml += renderTypoWarnings(typos);
     });
   }
-  const il=document.getElementById('il');
-  if(!tot){il.innerHTML='<div class="empty">✅ لا مشاكل في هذا المشروع</div>';return}
+  if(!tot){
+    il.innerHTML = typoHtml 
+      ? typoHtml + '<div class="empty" style="margin-top:12px">✅ لا مشاكل منطقية — لكن راجع تحذيرات الأمان أعلاه</div>'
+      : '<div class="empty">✅ لا مشاكل في هذا المشروع</div>';
+    return;
+  }
+  if (typoHtml) il.innerHTML = typoHtml;
   let h='';let idx=0;
   Object.entries(R).forEach(([fn,{issues}])=>{
     issues.forEach(iss=>{
