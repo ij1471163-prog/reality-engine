@@ -282,6 +282,18 @@ async function askAI(fn,ev,title){
 }
 
 async function fixAllWithAI(){
+  // فحص typos خطرة أولاً
+  if (typeof detectDangerousTypos !== 'undefined') {
+    let hasRisk = false;
+    Object.entries(F).forEach(([fn, code]) => {
+      const typos = detectDangerousTypos(code);
+      if (typos.length > 0) hasRisk = true;
+    });
+    if (hasRisk) {
+      toast('🚫 تم رفض الإرسال — الكود يحتوي APIs خطرة', 'e');
+      return;
+    }
+  }
   const names = Object.keys(F);
   if(!names.length) return;
   const btn = event.target;
