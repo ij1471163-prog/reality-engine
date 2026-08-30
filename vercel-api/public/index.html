@@ -336,7 +336,7 @@ function fixAllEngine(){
   document.getElementById('btn-fixall').style.display='inline-block';
 }
 
-function dlAll(){
+function dlAll(){alert('dlAll called, files: '+Object.keys(F).length);
   // على الجوال نعرض الكود في textarea للنسخ
   const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
   if(isMobile){
