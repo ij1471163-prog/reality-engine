@@ -46,6 +46,15 @@ const KNOWN_TYPOS = {
   'subproces': 'subprocess',
 };
 
+const WHITELIST = [
+  'request','response','result','reject','resolve','record',
+  'require','redirect','replace','render','remove','received',
+  'scheduled','selected','started','stopped','status','success',
+  'https','mkdirSync','existsSync','statSync','readdirSync',
+  'appendFileSync','createWriteStream','readFileSync','writeFileSync',
+  'clearInterval','createHash'
+];
+
 function detectDangerousTypos(code) {
   // اكتشف known typos أولاً
   const knownFindings = [];
@@ -75,8 +84,9 @@ function detectDangerousTypos(code) {
     if (token.length < 4) return;
     if (seen.has(token)) return;
     seen.add(token);
-    // تجاهل المتغيرات الشائعة
+    // تجاهل المتغيرات الشائعة والـ whitelist
     if (COMMON_VARS.includes(token.toLowerCase())) return;
+    if (WHITELIST.some(w => token.toLowerCase().includes(w.toLowerCase()))) return;
     // تجاهل tokens تنتهي بـ .on أو .get (event handlers)
     if (/.(on|get|set|use|end|add|run)$/.test(token)) return;
 
