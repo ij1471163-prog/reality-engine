@@ -298,8 +298,8 @@ ${F[fn]}
     Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
     renderRes(t,s,b);
     document.getElementById('btn-dl').style.display='inline-block';
-    dlAll();
-    toast('✅ تم إصلاح المشروع بـ AI — جاري التنزيل');
+    toast('✅ تم إصلاح المشروع بـ AI');
+    setTimeout(()=>dlAll(), 500);
   }catch(e){toast('❌ '+e.message,'e')}
   finally{btn.innerHTML='🤖 إصلاح الكل بـ AI';btn.disabled=false}
 }
