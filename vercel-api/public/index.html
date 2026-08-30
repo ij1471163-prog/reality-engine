@@ -332,7 +332,8 @@ function fixAllEngine(){
     R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
   });
   toast('✅ تم إصلاح ' + fixed + ' مشكلة');
-  dlAll();
+  document.getElementById('btn-dl').style.display='inline-block';
+  document.getElementById('btn-fixall').style.display='inline-block';
 }
 
 function dlAll(){
