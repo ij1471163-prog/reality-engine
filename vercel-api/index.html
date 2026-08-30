@@ -56,6 +56,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/engine.js"></script>
 <script src="/engine_java.js"></script>
 <script src="/repair_impact.js"></script>
+<script src="/typo_detector.js"></script>
 </head>
 <body>
 <div class="header">
@@ -178,6 +179,17 @@ function renderRes(tot,st,bg){
   document.getElementById('ri').textContent=tot+' مشكلة في '+fc+' ملف';
   document.getElementById('btn-dl').style.display='inline-block';
   document.getElementById('btn-fixall').style.display='inline-block';
+  // فحص typos خطرة
+  if (typeof detectDangerousTypos !== 'undefined') {
+    Object.entries(F).forEach(([fn, code]) => {
+      const typos = detectDangerousTypos(code);
+      if (typos.length > 0) {
+        const warn = document.createElement('div');
+        warn.innerHTML = renderTypoWarnings(typos);
+        document.getElementById('il').prepend(warn);
+      }
+    });
+  }
   const il=document.getElementById('il');
   if(!tot){il.innerHTML='<div class="empty">✅ لا مشاكل في هذا المشروع</div>';return}
   let h='';let idx=0;
