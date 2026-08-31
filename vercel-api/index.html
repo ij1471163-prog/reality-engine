@@ -109,10 +109,13 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 // ═══════════════════════════════════════════════════════
 
 const F = {}; // filename → content
-// Debug
+// Debug - show on page
 setTimeout(() => {
-  console.log('analyzeJava:', typeof analyzeJava);
-  console.log('analyzeCode:', typeof analyzeCode);
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;bottom:60px;left:8px;right:8px;background:#161b22;color:#e6edf3;padding:8px;border-radius:8px;font-size:11px;z-index:9999;font-family:monospace';
+  d.textContent = 'analyzeJava: ' + typeof analyzeJava + ' | analyzeCode: ' + typeof analyzeCode;
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 5000);
 }, 1000);
 const R = {}; // filename → { code, issues }
 let _toastTimer = null;
