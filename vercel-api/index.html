@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Reality Engine</title>
 <style>
-*{
-box-sizing:border-box;margin:0;padding:0}
+*{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 .header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:center;gap:12px}
 .logo{font-size:22px;font-weight:700;color:#a371f7}
@@ -19,6 +18,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 .drop p{color:#8b949e;font-size:13px;margin-bottom:20px}
 .btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:.15s}
 .btn:hover{filter:brightness(1.1)}
+.btn:disabled{opacity:.5;cursor:not-allowed;filter:none}
 .btn-p{background:#6e40c9;color:#fff}
 .btn-s{background:#21262d;color:#58a6ff;border:1px solid #30363d}
 .btn-ok{background:#238636;color:#fff}
@@ -49,14 +49,18 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 .code-fix{border-color:#23863666;background:#0d1a0f}
 .ia{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .empty{text-align:center;padding:48px;color:#8b949e}
-.toast{position:fixed;bottom:24px;right:24px;background:#238636;color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;z-index:999;display:none}
+.toast{position:fixed;bottom:24px;right:24px;background:#238636;color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;z-index:999;display:none;pointer-events:none}
 #inp{display:none}
-@media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}.container{padding:12px}}</style>
+@media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}.container{padding:12px}}
+</style>
 <script src="/engine.js"></script>
 <script src="/engine_java.js"></script>
+<script src="/analyzer.js"></script>
+<script src="/ast-engine.js"></script>
+<script src="/sleep_manager.js"></script>
 <script src="/repair_impact.js"></script>
 <script src="/typo_detector.js"></script>
+<script src="/accumulation_detector.js"></script>
 <script src="/engine_ast.js"></script>
 </head>
 <body>
@@ -77,7 +81,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
       <div class="tb">
         <button class="btn btn-p" onclick="analyzeAll()">🔍 تحليل</button>
         <button class="btn btn-s" onclick="clearAll()">🗑 مسح</button>
-        <div class="tb-r" id="fc"></div>
+        <div class="tb-r" id="fc-count"></div>
       </div>
     </div>
   </div>
@@ -85,7 +89,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
     <div class="sum" id="sum"></div>
     <div class="tb">
       <button class="btn btn-s" onclick="goBack()">← رجوع</button>
-      <button class="btn btn-p" onclick="fixAllWithAI()">🤖 إصلاح الكل بـ AI</button>
+      <button class="btn btn-p" id="btn-aiall" onclick="fixAllWithAI()">🤖 إصلاح الكل بـ AI</button>
       <button class="btn btn-ok" id="btn-dl" onclick="dlAll()" style="display:none">⬇️ تنزيل</button>
       <button class="btn btn-p" id="btn-fixall" onclick="fixAllEngine()" style="display:none">⚡ إصلاح الكل بالمحرك</button>
       <div class="tb-r" id="ri"></div>
@@ -93,396 +97,524 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
     <div id="il"></div>
   </div>
 </div>
-<div class="toast" id="toast"></div>
+
+<!-- Toast — aria-live للـ screen readers -->
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
 <script>
-// حماية الوصول
+"use strict";
 
-let F={},R={};
-// حمّل AST engine
-if (typeof loadAcorn !== 'undefined') loadAcorn(() => console.log('✅ AST engine ready'));
-const dz=document.getElementById('dz');
-dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
-dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
-dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');load(e.dataTransfer.files)});
-document.getElementById('inp').addEventListener('change',e=>load(e.target.files));
+// ═══════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════
 
-function load(fl){
-  for(const f of fl){
-    if(Object.keys(F).length>=10){toast('الحد 10 ملفات','e');break}
-    if(f.size>512000){toast(f.name+': يتجاوز 500KB','e');continue}
-    const r=new FileReader();
-    r.onload=e=>{F[f.name]=e.target.result;renderF()};
-    r.readAsText(f);
-  }
+const F = {}; // filename → content
+const R = {}; // filename → { code, issues }
+let _toastTimer = null;
+
+// ═══════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════
+
+if (typeof loadAcorn !== 'undefined') {
+    loadAcorn(() => { /* AST engine ready */ });
 }
 
-function renderF(){
-  const ns=Object.keys(F);
-  document.getElementById('fs').style.display=ns.length?'block':'none';
-  document.getElementById('fc').textContent=ns.length+' ملف';
-  document.getElementById('fg').innerHTML=ns.map(n=>`
-    <div class="fc">
-      <button class="rm" onclick="del('${esc(n)}')">×</button>
-      <div class="ic">${icon(n)}</div>
-      <div class="nm">${esc(n)}</div>
-      <div class="mt">${sz(new Blob([F[n]]).size)}</div>
-    </div>`).join('');
-}
+// Drag & drop
+const dz = document.getElementById('dz');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag');
+    loadFiles(e.dataTransfer.files);
+});
+document.getElementById('inp').addEventListener('change', e => loadFiles(e.target.files));
 
-function del(n){delete F[n];renderF()}
-function clearAll(){F={};renderF()}
-function goBack(){document.getElementById('s-res').style.display='none';document.getElementById('s-upload').style.display='block'}
+// ═══════════════════════════════════════════════════════
+// File Loading
+// ═══════════════════════════════════════════════════════
 
-function lang(n){
-  if(n.endsWith('.py'))return'python';
-  if(/\.(js|ts|jsx)$/.test(n))return'js';
-  if(n.endsWith('.java'))return'java';
-  if(n.endsWith('.html'))return'html';
-  return'?';
-}
-
-function escRe(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}
-
-function calcConf(issue,code){
-  let score=0,ev=[];
-  score+=20;ev.push('النمط مكتشف +20');
-  if(issue.title.includes('التراكم')){
-    const v=issue.ev&&issue.ev.match(/^(\w+)\s*=/)?.[1];
-    if(v&&new RegExp('\\b'+escRe(v)+'\\s*=\\s*0\\b').test(code)){score+=20;ev.push('المتغير مهيأ بـ 0 +20')}
-  }else if(issue.type==='stub'){score+=20;ev.push('pass مؤكد +20')}
-  else if(issue.title.includes('forEach')&&/\.forEach\s*\(/.test(code)){score+=20;ev.push('forEach موجود +20')}
-  else if(issue.title.includes('None')&&/==\s*None/.test(code)){score+=20;ev.push('None مقارنة موجودة +20')}
-  else{score+=10;ev.push('سياق جزئي +10')}
-  if(issue.fix&&issue.fix.length<120&&!issue.fix.startsWith('#')){score+=10;ev.push('إصلاح مباشر +10')}
-  if(issue.fix){const o=(issue.fix.match(/[{[(]/g)||[]).length,c=(issue.fix.match(/[}\])]/g)||[]).length;if(o===c){score+=25;ev.push('أقواس متوازنة +25')}}
-  if(issue.verified){score+=5;ev.push('تم التحقق +5')}
-  score=Math.min(100,score);
-  const icon=score>=90?'🟢':score>=60?'🟡':'🔴';
-  const action=score>=90?'ثقة عالية':score>=60?'مشكلة محتملة':'اكتشاف غير مؤكد';
-  return{score,icon,action,ev};
-}
-
-
-
-function analyzeAll(){console.log('files:', Object.keys(F), 'analyzeJava available:', typeof analyzeJava);
-  R={};let tot=0,st=0,bg=0;
-  Object.entries(F).forEach(([n,c])=>{console.log('analyzing:', n, 'code length:', c.length);const iss=analyzeCode(c,n);console.log('issues found:', iss.length);R[n]={code:c,issues:iss};tot+=iss.length;st+=iss.filter(i=>i.type==='stub').length;bg+=iss.filter(i=>i.type==='bug').length});
-  renderRes(tot,st,bg);
-}
-
-function renderRes(tot,st,bg){
-  document.getElementById('s-upload').style.display='none';
-  document.getElementById('s-res').style.display='block';
-  const fc=Object.keys(F).length;
-  document.getElementById('sum').innerHTML=`
-    <div class="st"><div class="sn">${fc}</div><div class="sl">ملف</div></div>
-    <div class="st"><div class="sn" style="color:${tot?'#f85149':'#3fb950'}">${tot}</div><div class="sl">مشكلة</div></div>
-    <div class="st"><div class="sn">${st}</div><div class="sl">دوال ناقصة</div></div>
-    <div class="st"><div class="sn">${bg}</div><div class="sl">أخطاء</div></div>`;
-  document.getElementById('ri').textContent=tot+' مشكلة في '+fc+' ملف';
-  document.getElementById('btn-dl').style.display='inline-block';
-  document.getElementById('btn-fixall').style.display='inline-block';
-
-  const il=document.getElementById('il');
-  // فحص typos قبل الـ early return
-  let typoHtml = '';
-  if (typeof detectDangerousTypos !== 'undefined') {
-    Object.entries(F).forEach(([fn, code]) => {
-      const typos = detectDangerousTypos(code);
-      if (typos.length > 0) typoHtml += renderTypoWarnings(typos);
-    });
-  }
-  if(!tot){
-    il.innerHTML = typoHtml 
-      ? typoHtml + '<div class="empty" style="margin-top:12px">✅ لا مشاكل منطقية — لكن راجع تحذيرات الأمان أعلاه</div>'
-      : '<div class="empty">✅ لا مشاكل في هذا المشروع</div>';
-    return;
-  }
-  if (typoHtml) il.innerHTML = typoHtml;
-  let h='';let idx=0;
-  Object.entries(R).forEach(([fn,{issues}])=>{
-    issues.forEach(iss=>{
-      const sc={c:'bc',h:'bh',m:'bm',stub:'bs'}[iss.type==='stub'?'stub':iss.sev]||'bm';
-      const sl={c:'حرج',h:'عالي',m:'متوسط'}[iss.sev]||'';
-      const cc=iss.conf>=90?'#3fb950':iss.conf>=60?'#d29922':'#f85149';
-      const canA=iss.fix&&iss.conf>=90;
-      const needR=iss.fix&&iss.conf>=60&&iss.conf<90;
-      h+=`<div class="issue" id="i${idx}">
-        <div class="it">
-          <span class="badge ${sc}">${sl}</span>
-          <div class="itl">${esc(iss.title)}</div>
-          <div class="iloc">${esc(fn)} — س${iss.line}</div>
-          <span style="color:${cc};font-size:12px;font-weight:700;cursor:help" title="${(iss.cEv||[]).join('\n')}">${iss.cIcon} ${iss.conf}% — ${esc(iss.cAct)}</span>
-        </div>
-        <div class="code">${esc(iss.ev)}</div>
-        ${iss.fix?`<div class="code code-fix">✅ ${esc(iss.fix)}</div>`:''}
-        <div class="ia">
-          ${canA?`<button class="btn btn-ok btn-sm" onclick="applyFix('${esc(fn)}',${iss.line-1},'${escQ(iss.ev)}','${escQ(iss.fix)}',${idx})">🟢 تطبيق آمن</button>`:''}
-          ${needR?`<button class="btn btn-s btn-sm" onclick="applyFix('${esc(fn)}',${iss.line-1},'${escQ(iss.ev)}','${escQ(iss.fix)}',${idx})">🟡 تطبيق مع مراجعة</button>`:''}
-          <button class="btn btn-s btn-sm" onclick="askAI('${esc(fn)}','${escQ(iss.ev)}','${escQ(iss.title)}')">🤖 AI</button>
-        </div>
-      </div>`;
-      idx++;
-    });
-  });
-  il.innerHTML=h;
-}
-
-function applyFix(fn,li,oldL,newL,idx){
-  const lines=F[fn].split('\n');
-  if(li<0||li>=lines.length)return;
-  const ind=lines[li].match(/^(\s*)/)[1];
-  // ابحث عن def وحذف الجسم كاملاً (pass/comments)
-  let defLine=li;
-  for(let i=li;i>=Math.max(0,li-3);i--){if(/^def\s+/.test(lines[i].trim())){defLine=i;break;}}
-  let endLine=defLine+1;
-  while(endLine<lines.length&&(lines[endLine].trim()===''||lines[endLine].trim()==='pass'||lines[endLine].trim().startsWith('#')))endLine++;
-  // استبدل الدالة بالإصلاح
-  const fixLines=newL.split('\n').map(l=>ind+l.trimStart());
-  lines.splice(defLine,endLine-defLine,lines[defLine],...fixLines);
-  F[fn]=lines.join('\n');
-  const newIss=analyzeCode(F[fn],fn);
-  const gone=!newIss.some(ni=>ni.title===R[fn].issues.find(oi=>oi.line===li+1)?.title&&Math.abs(ni.line-(li+1))<=2);
-  R[fn]={code:F[fn],issues:newIss};
-  if(gone)toast('✅ تم التحقق — المشكلة اختفت');
-  else toast('⚠️ تم التطبيق — راجع النتيجة','w');
-  let t=0,s=0,b=0;
-  Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
-  renderRes(t,s,b);
-}
-
-async function askAI(fn,ev,title){
-  const btn=event.target;btn.innerHTML='⏳';btn.disabled=true;
-  try{
-    const sr=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    if(!sr.ok)throw new Error('تجاوزت الحد — انتظر ساعة');
-    const{token}=await sr.json();
-    const pr=`أكمل هذه الدالة الناقصة بكود صحيح فقط بدون شرح:\nالملف: ${fn}\nالبيانات المتاحة في الكود:\n${Object.values(F)[0]?.slice(0,500)||''}\nالدالة:\n${ev}\n\nأرجع فقط:\nAFTER:\n\`\`\`\nالكود المكتمل\n\`\`\``;
-    const cr=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({prompt:pr})});
-    if(!cr.ok)throw new Error('خطأ في AI');
-    const{result}=await cr.json();
-    const after = result.match(/```(?:python|js)?\n([\s\S]*?)```/)?.[1]?.trim() || result;
-    if(confirm('🤖 AI اقترح:\n\n'+after.slice(0,200)+'\n\n..هل تطبق الإصلاح؟')) {
-      const lines = F[fn].split('\n');
-      // ابحث عن الدالة واستبدلها
-      let start=-1,end=-1;
-      lines.forEach((l,i)=>{if(l.includes(ev.split('(')[0].trim()))start=i});
-      if(start>=0){
-        end=start+1;
-        while(end<lines.length&&(lines[end].startsWith(' ')||lines[end].startsWith('\t')||lines[end].trim()===''))end++;
-        lines.splice(start,end-start,...after.split('\n'));
-        F[fn]=lines.join('\n');
-        const ni=analyzeCode(F[fn],fn);
-        R[fn]={code:F[fn],issues:ni};
-        let t=0,s=0,b=0;
-        Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
-        renderRes(t,s,b);
-        toast('✅ تم تطبيق إصلاح AI');
-      }
+function loadFiles(fl) {
+    for (const f of fl) {
+        if (Object.keys(F).length >= 10) { toast('الحد 10 ملفات', 'e'); break; }
+        if (f.size > 512000)              { toast(f.name + ': يتجاوز 500KB', 'e'); continue; }
+        const r = new FileReader();
+        r.onload = e => { F[f.name] = e.target.result; renderFiles(); };
+        r.readAsText(f);
     }
-  }catch(e){alert('❌ '+e.message)}
-  finally{btn.innerHTML='🤖 AI';btn.disabled=false}
 }
 
-async function fixAllWithAI(){
-  // فحص typos خطرة أولاً
-  if (typeof detectDangerousTypos !== 'undefined') {
-    let hasRisk = false;
-    Object.entries(F).forEach(([fn, code]) => {
-      const typos = detectDangerousTypos(code);
-      if (typos.length > 0) hasRisk = true;
+function renderFiles() {
+    const ns = Object.keys(F);
+    document.getElementById('fs').style.display = ns.length ? 'block' : 'none';
+    document.getElementById('fc-count').textContent = ns.length + ' ملف';
+    document.getElementById('fg').innerHTML = ns.map(n => `
+        <div class="fc">
+          <button class="rm" onclick="delFile(${JSON.stringify(n)})">×</button>
+          <div class="ic">${fileIcon(n)}</div>
+          <div class="nm">${esc(n)}</div>
+          <div class="mt">${fileSize(new Blob([F[n]]).size)}</div>
+        </div>`).join('');
+}
+
+function delFile(n) { delete F[n]; renderFiles(); }
+function clearAll() { Object.keys(F).forEach(k => delete F[k]); renderFiles(); }
+function goBack() {
+    document.getElementById('s-res').style.display    = 'none';
+    document.getElementById('s-upload').style.display = 'block';
+}
+
+// ═══════════════════════════════════════════════════════
+// Analyze
+// ═══════════════════════════════════════════════════════
+
+function analyzeAll() {
+    Object.keys(R).forEach(k => delete R[k]);
+    let tot = 0, st = 0, bg = 0;
+    Object.entries(F).forEach(([n, c]) => {
+        const iss = analyzeCode(c, n); // من engine.js — لا تكرار هنا
+        R[n] = { code: c, issues: iss };
+        tot += iss.length;
+        st  += iss.filter(i => i.type === 'stub').length;
+        bg  += iss.filter(i => i.type === 'bug').length;
     });
-    if (hasRisk) {
-      toast('🚫 تم رفض الإرسال — الكود يحتوي APIs خطرة', 'e');
-      return;
+    renderResults(tot, st, bg);
+}
+
+// ═══════════════════════════════════════════════════════
+// Render Results
+// ═══════════════════════════════════════════════════════
+
+function renderResults(tot, st, bg) {
+    document.getElementById('s-upload').style.display = 'none';
+    document.getElementById('s-res').style.display    = 'block';
+    const fc = Object.keys(F).length;
+
+    document.getElementById('sum').innerHTML = `
+        <div class="st"><div class="sn">${fc}</div><div class="sl">ملف</div></div>
+        <div class="st"><div class="sn" style="color:${tot ? '#f85149' : '#3fb950'}">${tot}</div><div class="sl">مشكلة</div></div>
+        <div class="st"><div class="sn">${st}</div><div class="sl">دوال ناقصة</div></div>
+        <div class="st"><div class="sn">${bg}</div><div class="sl">أخطاء</div></div>`;
+    document.getElementById('ri').textContent = tot + ' مشكلة في ' + fc + ' ملف';
+    document.getElementById('btn-dl').style.display      = 'inline-block';
+    document.getElementById('btn-fixall').style.display  = 'inline-block';
+
+    const il = document.getElementById('il');
+
+    // Typo warnings
+    let typoHtml = '';
+    if (typeof detectDangerousTypos !== 'undefined') {
+        Object.entries(F).forEach(([fn, code]) => {
+            const typos = detectDangerousTypos(code);
+            if (typos.length && typeof renderTypoWarnings !== 'undefined')
+                typoHtml += renderTypoWarnings(typos);
+        });
     }
-  }
-  const names = Object.keys(F);
-  if(!names.length) return;
-  const btn = event.target;
-  btn.innerHTML='⏳ جاري...'; btn.disabled=true;
-  try{
-    const sr=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    if(!sr.ok) throw new Error('تجاوزت الحد — انتظر ساعة');
-    const{token}=await sr.json();
-    for(const fn of names){
-      const issues=R[fn]?.issues||[];
-      if(!issues.length) continue;
-      const prompt=`أنت مبرمج خبير. أصلح هذا الكود — أكمل الدوال الناقصة وصلح الأخطاء المنطقية.
+
+    if (!tot) {
+        il.innerHTML = typoHtml
+            ? typoHtml + '<div class="empty" style="margin-top:12px">✅ لا مشاكل منطقية</div>'
+            : '<div class="empty">✅ لا مشاكل في هذا المشروع</div>';
+        return;
+    }
+
+    let h = '';
+    let idx = 0;
+    Object.entries(R).forEach(([fn, { issues }]) => {
+        issues.forEach(iss => {
+            const sc  = { c:'bc', h:'bh', m:'bm', stub:'bs' }[iss.type === 'stub' ? 'stub' : iss.sev] || 'bm';
+            const sl  = { c:'حرج', h:'عالي', m:'متوسط' }[iss.sev] || '';
+            const cc  = iss.conf >= 90 ? '#3fb950' : iss.conf >= 60 ? '#d29922' : '#f85149';
+            const canA   = iss.fix && iss.conf >= 90;
+            const needR  = iss.fix && iss.conf >= 60 && iss.conf < 90;
+            const fnJ    = JSON.stringify(fn);
+            const evJ    = JSON.stringify(iss.ev);
+            const fixJ   = JSON.stringify(iss.fix);
+            const titleJ = JSON.stringify(iss.title);
+            h += `<div class="issue" id="i${idx}">
+              <div class="it">
+                <span class="badge ${sc}">${sl}</span>
+                <div class="itl">${esc(iss.title)}</div>
+                <div class="iloc">${esc(fn)} — س${iss.line}</div>
+                <span style="color:${cc};font-size:12px;font-weight:700;cursor:help"
+                      title="${esc((iss.cEv || []).join('\n'))}">${iss.cIcon} ${iss.conf}% — ${esc(iss.cAct)}</span>
+              </div>
+              <div class="code">${esc(iss.ev)}</div>
+              ${iss.fix ? `<div class="code code-fix">✅ ${esc(iss.fix)}</div>` : ''}
+              <div class="ia">
+                ${canA  ? `<button class="btn btn-ok btn-sm" onclick="applyFix(${fnJ},${iss.line - 1},${evJ},${fixJ},${idx})">🟢 تطبيق آمن</button>` : ''}
+                ${needR ? `<button class="btn btn-s  btn-sm" onclick="applyFix(${fnJ},${iss.line - 1},${evJ},${fixJ},${idx})">🟡 تطبيق مع مراجعة</button>` : ''}
+                <button class="btn btn-s btn-sm" onclick="askAI(${fnJ},${evJ},${titleJ},this)">🤖 AI</button>
+              </div>
+            </div>`;
+            idx++;
+        });
+    });
+    il.innerHTML = (typoHtml || '') + h;
+}
+
+// ═══════════════════════════════════════════════════════
+// Apply Fix — من الأسفل للأعلى (no index drift)
+// ═══════════════════════════════════════════════════════
+
+function applyFix(fn, li, oldLine, newLine, idx) {
+    const lines = F[fn].split('\n');
+    if (li < 0 || li >= lines.length) return;
+    const ind = lines[li].match(/^(\s*)/)[1];
+
+    // ابحث عن def وحذف الجسم (من الأسفل)
+    let defLine = li;
+    for (let i = li; i >= Math.max(0, li - 3); i--) {
+        if (/^def\s+/.test(lines[i].trim())) { defLine = i; break; }
+    }
+    let endLine = defLine + 1;
+    while (endLine < lines.length
+        && (lines[endLine].trim() === ''
+            || lines[endLine].trim() === 'pass'
+            || lines[endLine].trim().startsWith('#'))) endLine++;
+
+    const fixLines = newLine.split('\n').map(l => ind + l.trimStart());
+    // ✅ splice يعمل صح لأننا نعالج issue واحدة في كل مرة
+    lines.splice(defLine, endLine - defLine, lines[defLine], ...fixLines);
+    F[fn] = lines.join('\n');
+
+    const newIss = analyzeCode(F[fn], fn);
+    const gone   = !newIss.some(ni =>
+        ni.title === R[fn].issues.find(oi => oi.line === li + 1)?.title
+        && Math.abs(ni.line - (li + 1)) <= 2
+    );
+    R[fn] = { code: F[fn], issues: newIss };
+    toast(gone ? '✅ تم التحقق — المشكلة اختفت' : '⚠️ تم التطبيق — راجع النتيجة', gone ? 's' : 'w');
+    refreshStats();
+}
+
+// ═══════════════════════════════════════════════════════
+// Ask AI — btn مُمرَّر كـ param (لا event.target في async)
+// ═══════════════════════════════════════════════════════
+
+async function askAI(fn, ev, title, btn) {
+    // ✅ حفظ المرجع قبل أي await
+    btn.innerHTML = '⏳'; btn.disabled = true;
+    try {
+        const token = await getToken();
+        const pr = `أكمل هذه الدالة الناقصة بكود صحيح فقط بدون شرح:
+الملف: ${fn}
+البيانات المتاحة:
+${Object.values(F)[0]?.slice(0, 500) || ''}
+الدالة:
+${ev}
+
+أرجع فقط:
+AFTER:
+\`\`\`
+الكود المكتمل
+\`\`\``;
+        const result = await chatAPI(token, pr);
+        const after  = result.match(/```(?:python|js)?\n([\s\S]*?)```/)?.[1]?.trim() || result;
+        if (confirm('🤖 AI اقترح:\n\n' + after.slice(0, 200) + (after.length > 200 ? '\n...' : '') + '\n\nهل تطبق الإصلاح؟')) {
+            applyAIResult(fn, ev, after);
+        }
+    } catch (e) {
+        alert('❌ ' + e.message);
+    } finally {
+        btn.innerHTML = '🤖 AI'; btn.disabled = false;
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// Fix All with AI
+// ═══════════════════════════════════════════════════════
+
+async function fixAllWithAI() {
+    // فحص typos أولاً
+    if (typeof detectDangerousTypos !== 'undefined') {
+        const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
+        if (hasRisk) { toast('🚫 تم الرفض — الكود يحتوي APIs خطرة', 'e'); return; }
+    }
+
+    const btn = document.getElementById('btn-aiall');
+    btn.innerHTML = '⏳ جاري...'; btn.disabled = true;
+
+    try {
+        const token = await getToken();
+        // ✅ انتظر كل ملف بشكل متسلسل — مو داخل forEach
+        for (const fn of Object.keys(F)) {
+            if (!R[fn]?.issues?.length) continue;
+            const prompt = `أنت مبرمج خبير. أصلح هذا الكود — أكمل الدوال الناقصة وصلح الأخطاء المنطقية.
 أرجع الكود الكامل المصلح فقط بدون شرح بين \`\`\` و \`\`\`.
 
 الكود:
 \`\`\`
 ${F[fn]}
 \`\`\``;
-      const cr=await fetch('/api/chat',{method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-        body:JSON.stringify({prompt})});
-      if(!cr.ok) throw new Error('خطأ في AI');
-      const{result}=await cr.json();
-      const fixed=result.match(/\`\`\`(?:\w+)?\n([\s\S]*?)\`\`\`/)?.[1]?.trim();
-      if(fixed){
-        const original = F[fn];
-        showDiff(fn, original, fixed, () => {
-          F[fn]=fixed;
-          R[fn]={code:fixed,issues:analyzeCode(fixed,fn)};
-          let t=0,s=0,b=0;
-          Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
-          renderRes(t,s,b);
-          setTimeout(()=>dlAll(),500);
-          toast('✅ تم تطبيق إصلاح AI');
-        });
-      }
+            const result = await chatAPI(token, prompt);
+            const fixed  = result.match(/```(?:\w+)?\n([\s\S]*?)```/)?.[1]?.trim();
+            if (!fixed) continue;
+
+            await new Promise(resolve => showDiff(fn, F[fn], fixed, () => {
+                F[fn] = fixed;
+                R[fn] = { code: fixed, issues: analyzeCode(fixed, fn) };
+                resolve();
+            }, resolve)); // ✅ resolve يُمرَّر للرفض أيضاً
+        }
+        refreshStats();
+        document.getElementById('btn-dl').style.display = 'inline-block';
+        toast('✅ تم إصلاح المشروع بـ AI');
+    } catch (e) {
+        toast('❌ ' + e.message, 'e');
+    } finally {
+        btn.innerHTML = '🤖 إصلاح الكل بـ AI'; btn.disabled = false;
     }
-    let t=0,s=0,b=0;
-    Object.values(R).forEach(r=>{t+=r.issues.length;s+=r.issues.filter(i=>i.type==='stub').length;b+=r.issues.filter(i=>i.type==='bug').length});
-    renderRes(t,s,b);
-    document.getElementById('btn-dl').style.display='inline-block';
-    toast('✅ تم إصلاح المشروع بـ AI');
-    setTimeout(()=>dlAll(), 500);
-  }catch(e){toast('❌ '+e.message,'e')}
-  finally{btn.innerHTML='🤖 إصلاح الكل بـ AI';btn.disabled=false}
 }
 
-function fixAllEngine(){
-  let fixed = 0;
-  Object.keys(R).forEach(fn => {
-    const issues = analyzeCode(F[fn], fn);
-    let lines = F[fn].split('\n');
-    // نصلح من الأسفل للأعلى لتجنب index drift
-    issues.slice().reverse().forEach(issue => {
-      if (!issue.fix) return;
-      const li = issue.line - 1;
-      if (li < 0 || li >= lines.length) return;
-      // forEach fix: ابحث عن سطر forEach قبل السطر الحالي
-      if (issue.title.includes('forEach')) {
-        for (let i = li; i >= Math.max(0, li-5); i--) {
-          if (lines[i].includes('.forEach(')) {
-            const ind = lines[i].match(/^(\s*)/)[1];
-            lines[i] = ind + issue.fix.trimStart();
-            fixed++;
-            break;
-          }
-        }
-      } else {
-        const ind = lines[li].match(/^(\s*)/)[1];
-        lines[li] = ind + issue.fix.trimStart();
-        fixed++;
-      }
+// ═══════════════════════════════════════════════════════
+// Fix All Engine — من الأسفل للأعلى لكل ملف
+// ═══════════════════════════════════════════════════════
+
+function fixAllEngine() {
+    let fixed = 0;
+    Object.keys(R).forEach(fn => {
+        const issues = analyzeCode(F[fn], fn);
+        const lines  = F[fn].split('\n');
+        // ✅ من الأسفل للأعلى — no index drift
+        issues.slice().reverse().forEach(issue => {
+            if (!issue.fix) return;
+            const li = issue.line - 1;
+            if (li < 0 || li >= lines.length) return;
+            if (issue.title.includes('forEach')) {
+                for (let i = li; i >= Math.max(0, li - 5); i--) {
+                    if (lines[i].includes('.forEach(')) {
+                        const ind = lines[i].match(/^(\s*)/)[1];
+                        lines[i] = ind + issue.fix.trimStart();
+                        fixed++; break;
+                    }
+                }
+            } else {
+                const ind = lines[li].match(/^(\s*)/)[1];
+                lines[li] = ind + issue.fix.trimStart();
+                fixed++;
+            }
+        });
+        F[fn] = lines.join('\n');
+        R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
     });
-    F[fn] = lines.join('\n');
-    R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
-  });
-  toast('✅ تم إصلاح ' + fixed + ' مشكلة');
-  document.getElementById('btn-dl').style.display='inline-block';
-  document.getElementById('btn-fixall').style.display='inline-block';
-  if(fixed > 0) setTimeout(()=>dlAll(), 300);
+    toast('✅ تم إصلاح ' + fixed + ' مشكلة');
+    refreshStats();
+    document.getElementById('btn-dl').style.display = 'inline-block';
+    if (fixed > 0) setTimeout(dlAll, 300);
+}
+
+// ═══════════════════════════════════════════════════════
+// Diff Dialog — زر واحد / onApprove واحد
+// ═══════════════════════════════════════════════════════
+
+function showDiff(fn, original, fixed, onApprove, onReject) {
+    const diff   = calcDiff(original, fixed);
+    const risk   = diff.total <= 2 ? '🟢 آمن' : diff.total <= 8 ? '🟡 راجع' : '🔴 تجاوز نطاق';
+    const d      = document.createElement('div');
+    d.style.cssText = 'position:fixed;inset:0;background:#000a;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+
+    // ✅ لا innerHTML لأزرار — ننشئ الأزرار كـ elements مباشرة
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;max-width:500px;width:100%';
+    box.innerHTML = `
+        <div style="color:#a371f7;font-weight:700;font-size:16px;margin-bottom:16px">📊 تحليل التغييرات</div>
+        <div style="background:#010409;border-radius:8px;padding:12px;margin-bottom:12px">
+          <div style="color:#e6edf3;margin-bottom:6px">📄 ${esc(fn)}</div>
+          <div style="color:#3fb950">✅ معدّل: ${diff.changed}</div>
+          <div style="color:#58a6ff">➕ مضاف: ${diff.added}</div>
+          <div style="color:#f85149">➖ محذوف: ${diff.removed}</div>
+          <div style="margin-top:8px;font-weight:700;font-size:15px">${risk}</div>
+        </div>
+        ${diff.total > 5 ? '<div style="color:#d29922;font-size:13px;margin-bottom:12px">⚠️ AI غيّر أكثر من المطلوب</div>' : ''}`;
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px';
+
+    const btnReject = document.createElement('button');
+    btnReject.style.cssText = 'flex:1;padding:10px;background:#b91c1c;color:#fff;border:none;border-radius:8px;cursor:pointer';
+    btnReject.textContent = '❌ رفض';
+    btnReject.onclick = () => { d.remove(); if (onReject) onReject(); };
+
+    const btnAccept = document.createElement('button');
+    btnAccept.style.cssText = 'flex:1;padding:10px;background:#238636;color:#fff;border:none;border-radius:8px;cursor:pointer';
+    btnAccept.textContent = '✅ قبول';
+    btnAccept.onclick = () => { d.remove(); onApprove(); };
+
+    btnRow.appendChild(btnReject);
+    btnRow.appendChild(btnAccept);
+    box.appendChild(btnRow);
+    d.appendChild(box);
+    document.body.appendChild(d);
 }
 
 function calcDiff(original, fixed) {
-  const oLines = original.split('\n');
-  const fLines = fixed.split('\n');
-  let changed = 0, added = 0, removed = 0;
-  const maxLen = Math.max(oLines.length, fLines.length);
-  for (let i = 0; i < maxLen; i++) {
-    if (oLines[i] === undefined) added++;
-    else if (fLines[i] === undefined) removed++;
-    else if (oLines[i] !== fLines[i]) changed++;
-  }
-  return { changed, added, removed, total: changed + added + removed };
+    const oL = original.split('\n'), fL = fixed.split('\n');
+    let changed = 0, added = 0, removed = 0;
+    const max = Math.max(oL.length, fL.length);
+    for (let i = 0; i < max; i++) {
+        if (oL[i] === undefined) added++;
+        else if (fL[i] === undefined) removed++;
+        else if (oL[i] !== fL[i]) changed++;
+    }
+    return { changed, added, removed, total: changed + added + removed };
 }
 
-function showDiff(fn, original, fixed, onApprove) {
-  const diff = calcDiff(original, fixed);
-  const risk = diff.total <= 2 ? '🟢 آمن' : diff.total <= 8 ? '🟡 راجع' : '🔴 تجاوز نطاق';
-  const d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#000a;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-  d.innerHTML = `<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;max-width:500px;width:100%">
-    <div style="color:#a371f7;font-weight:700;font-size:16px;margin-bottom:16px">📊 تحليل التغييرات</div>
-    <div style="background:#010409;border-radius:8px;padding:12px;margin-bottom:12px">
-      <div style="color:#e6edf3;margin-bottom:6px">📄 ${fn}</div>
-      <div style="color:#3fb950">✅ سطور معدلة: ${diff.changed}</div>
-      <div style="color:#58a6ff">➕ سطور مضافة: ${diff.added}</div>
-      <div style="color:#f85149">➖ سطور محذوفة: ${diff.removed}</div>
-      <div style="margin-top:8px;font-weight:700;font-size:15px">${risk}</div>
-    </div>
-    ${diff.total > 5 ? '<div style="color:#d29922;font-size:13px;margin-bottom:12px">⚠️ AI غيّر أكثر من المطلوب — راجع التغييرات</div>' : ''}
-    <div style="display:flex;gap:8px">
-      <button onclick="document.body.removeChild(this.closest('div[style*=fixed]'))" 
-        style="flex:1;padding:10px;background:#b91c1c;color:#fff;border:none;border-radius:8px;cursor:pointer">❌ رفض</button>
-      <button onclick="this.closest('div[style*=fixed]').remove();(arguments[0])();" 
-        style="flex:1;padding:10px;background:#238636;color:#fff;border:none;border-radius:8px;cursor:pointer" 
-        data-approve="true">✅ قبول</button>
-    </div>
-  </div>`;
-  // ربط زر القبول
-  d.querySelector('[data-approve]').onclick = () => { d.remove(); onApprove(); };
-  document.body.appendChild(d);
+// ═══════════════════════════════════════════════════════
+// Download — ملف واحد modal في كل مرة (لا loop)
+// ═══════════════════════════════════════════════════════
+
+function dlAll() {
+    const entries = Object.entries(F);
+    if (!entries.length) return;
+    let idx = 0;
+
+    function showNext() {
+        if (idx >= entries.length) return;
+        const [n, c] = entries[idx++];
+        const d = document.createElement('div');
+        d.style.cssText = 'position:fixed;inset:0;background:#000d;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+        const safe = c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        d.innerHTML = `
+            <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;max-width:560px;width:100%;max-height:90vh;display:flex;flex-direction:column">
+              <div style="color:#a371f7;font-weight:700;margin-bottom:12px;font-size:15px">📄 ${esc(n)}</div>
+              <textarea style="flex:1;min-height:200px;max-height:50vh;background:#010409;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;direction:ltr;resize:none;margin-bottom:12px" readonly>${safe}</textarea>
+              <div style="display:flex;gap:8px">
+                <button id="_dl" style="flex:1;padding:12px;background:#238636;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600">⬇️ تنزيل</button>
+                <button id="_cp" style="flex:1;padding:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600">📋 نسخ</button>
+                <button id="_nx" style="padding:12px 16px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:8px;cursor:pointer;font-size:14px">${idx < entries.length ? '→ التالي' : '✕ إغلاق'}</button>
+              </div>
+            </div>`;
+        document.body.appendChild(d);
+
+        d.querySelector('#_dl').onclick = () => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([c], { type: 'text/plain' }));
+            a.download = n; document.body.appendChild(a); a.click();
+            setTimeout(() => document.body.removeChild(a), 1000);
+            toast('✅ تم التنزيل');
+        };
+        d.querySelector('#_cp').onclick = function () {
+            navigator.clipboard.writeText(c).then(() => {
+                this.textContent = '✅ تم النسخ';
+                setTimeout(() => this.textContent = '📋 نسخ', 2000);
+            }).catch(() => {
+                d.querySelector('textarea').select();
+                document.execCommand('copy');
+                this.textContent = '✅ تم النسخ';
+                setTimeout(() => this.textContent = '📋 نسخ', 2000);
+            });
+        };
+        d.querySelector('#_nx').onclick = () => { d.remove(); showNext(); };
+    }
+    showNext();
 }
 
-function dlAll(){
-  Object.entries(F).forEach(([n,c])=>{
-    const d=document.createElement('div');
-    d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:#000d;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-    const safe=c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    d.innerHTML='<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;max-width:560px;width:100%;max-height:90vh;display:flex;flex-direction:column">'
-      +'<div style="color:#a371f7;font-weight:700;margin-bottom:12px;font-size:15px">📄 '+n+'</div>'
-      +'<textarea style="flex:1;min-height:200px;max-height:50vh;background:#010409;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;direction:ltr;resize:none;margin-bottom:12px" readonly>'+safe+'</textarea>'
-      +'<div style="display:flex;gap:8px">'
-      +'<button id="re-dl-'+n.replace(/[^a-z0-9]/gi,'')+'" style="flex:1;padding:12px;background:#238636;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600">⬇️ تنزيل</button>'
-      +'<button id="re-cp-'+n.replace(/[^a-z0-9]/gi,'')+'" style="flex:1;padding:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600">📋 نسخ</button>'
-      +'<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="padding:12px 16px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:8px;cursor:pointer;font-size:14px">✕</button>'
-      +'</div></div>';
-    document.body.appendChild(d);
-    const key=n.replace(/[^a-z0-9]/gi,'');
-    document.getElementById('re-dl-'+key).onclick=()=>{
-      const a=document.createElement('a');
-      a.href=URL.createObjectURL(new Blob([c],{type:'text/plain'}));
-      a.download=n;document.body.appendChild(a);a.click();
-      setTimeout(()=>document.body.removeChild(a),1000);
-      toast('✅ تم التنزيل');
-    };
-    document.getElementById('re-cp-'+key).onclick=function(){
-      navigator.clipboard.writeText(c).then(()=>{
-        this.textContent='✅ تم النسخ';
-        setTimeout(()=>{this.textContent='📋 نسخ';},2000);
-      }).catch(()=>{
-        const ta=d.querySelector('textarea');ta.select();document.execCommand('copy');
-        this.textContent='✅ تم النسخ';
-        setTimeout(()=>{this.textContent='📋 نسخ';},2000);
-      });
-    };
-  });
+// ═══════════════════════════════════════════════════════
+// API Helpers
+// ═══════════════════════════════════════════════════════
+
+async function getToken() {
+    const sr = await fetch('/api/session', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    if (!sr.ok) throw new Error('تجاوزت الحد — انتظر ساعة');
+    const { token } = await sr.json();
+    return token;
 }
 
-function icon(n){if(n.endsWith('.py'))return'🐍';if(/\.(js|ts|jsx)$/.test(n))return'📜';if(n.endsWith('.java'))return'☕';if(n.endsWith('.html'))return'🌐';return'📄'}
-function sz(b){return b<1024?b+'B':(b/1024).toFixed(1)+'KB'}
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function escQ(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n')}
-function toast(msg,t='s'){const el=document.getElementById('toast');el.textContent=msg;el.style.background=t==='e'?'#b91c1c':t==='w'?'#9a6700':'#238636';el.style.display='block';setTimeout(()=>el.style.display='none',3000)}
+async function chatAPI(token, prompt) {
+    const cr = await fetch('/api/chat', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
+        body: JSON.stringify({ prompt })
+    });
+    if (!cr.ok) throw new Error('خطأ في AI');
+    const { result } = await cr.json();
+    return result;
+}
 
-window.addEventListener('load', function() {
-  const ua = navigator.userAgent || '';
-  const isApp = ua.includes('RealityEngine') || ua.includes('reality-engine');
-  const isDev = location.hostname === 'localhost' || location.search.includes('dev=1');
-  
-  if (!isApp && !isDev) {
-    document.body.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif;padding:24px;text-align:center">
-        <div style="font-size:48px;margin-bottom:16px">⚡</div>
-        <div style="font-size:24px;font-weight:700;color:#a371f7;margin-bottom:8px">Reality Engine</div>
-        <div style="color:#8b949e;font-size:15px;margin-bottom:32px">محلل المشاريع البرمجية الذكي</div>
-        <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:360px;width:100%;margin-bottom:24px">
-          <div style="font-size:15px;margin-bottom:16px">🔒 هذا الموقع مخصص لمستخدمي التطبيق</div>
-          <div style="color:#8b949e;font-size:13px;margin-bottom:20px">حمّل التطبيق للوصول لجميع الميزات</div>
-          <a href="https://play.google.com/store/apps/details?id=com.naif.realityengine" 
-             style="display:block;background:#6e40c9;color:#fff;padding:14px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
-            📱 تحميل التطبيق
-          </a>
-        </div>
-        <div style="color:#30363d;font-size:12px">Reality Engine v1.0</div>
-      </div>`;
-  }
+function applyAIResult(fn, ev, after) {
+    const lines = F[fn].split('\n');
+    const funcBase = ev.split('(')[0].trim();
+    let start = -1;
+    lines.forEach((l, i) => { if (l.includes(funcBase)) start = i; });
+    if (start < 0) return;
+    let end = start + 1;
+    while (end < lines.length
+        && (lines[end].startsWith(' ') || lines[end].startsWith('\t') || lines[end].trim() === ''))
+        end++;
+    lines.splice(start, end - start, ...after.split('\n'));
+    F[fn] = lines.join('\n');
+    R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
+    refreshStats();
+    toast('✅ تم تطبيق إصلاح AI');
+}
+
+// ═══════════════════════════════════════════════════════
+// Stats refresh بدون إعادة render كاملة
+// ═══════════════════════════════════════════════════════
+
+function refreshStats() {
+    let tot = 0, st = 0, bg = 0;
+    Object.values(R).forEach(r => {
+        tot += r.issues.length;
+        st  += r.issues.filter(i => i.type === 'stub').length;
+        bg  += r.issues.filter(i => i.type === 'bug').length;
+    });
+    renderResults(tot, st, bg);
+}
+
+// ═══════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════
+
+function esc(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fileIcon(n) {
+    if (n.endsWith('.py'))              return '🐍';
+    if (/\.(js|ts|jsx)$/.test(n))      return '📜';
+    if (n.endsWith('.java'))            return '☕';
+    if (n.endsWith('.html'))            return '🌐';
+    return '📄';
+}
+function fileSize(b) { return b < 1024 ? b + 'B' : (b / 1024).toFixed(1) + 'KB'; }
+
+function toast(msg, t = 's') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.background = t === 'e' ? '#b91c1c' : t === 'w' ? '#9a6700' : '#238636';
+    el.style.display = 'block';
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3000);
+}
+
+// ═══════════════════════════════════════════════════════
+// Access Guard
+// ═══════════════════════════════════════════════════════
+
+window.addEventListener('load', () => {
+    const ua    = navigator.userAgent || '';
+    const isApp = ua.includes('RealityEngine') || ua.includes('reality-engine');
+    const isDev = location.hostname === 'localhost' || location.search.includes('dev=1');
+    if (!isApp && !isDev) {
+        document.body.innerHTML = `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif;padding:24px;text-align:center">
+              <div style="font-size:48px;margin-bottom:16px">⚡</div>
+              <div style="font-size:24px;font-weight:700;color:#a371f7;margin-bottom:8px">Reality Engine</div>
+              <div style="color:#8b949e;font-size:15px;margin-bottom:32px">محلل المشاريع البرمجية الذكي</div>
+              <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:360px;width:100%;margin-bottom:24px">
+                <div style="font-size:15px;margin-bottom:16px">🔒 هذا الموقع مخصص لمستخدمي التطبيق</div>
+                <div style="color:#8b949e;font-size:13px;margin-bottom:20px">حمّل التطبيق للوصول لجميع الميزات</div>
+                <a href="https://play.google.com/store/apps/details?id=com.naif.realityengine"
+                   style="display:block;background:#6e40c9;color:#fff;padding:14px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
+                  📱 تحميل التطبيق
+                </a>
+              </div>
+              <div style="color:#30363d;font-size:12px">Reality Engine v2.0</div>
+            </div>`;
+    }
 });
 </script>
 </body>
