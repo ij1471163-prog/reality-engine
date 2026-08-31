@@ -345,6 +345,7 @@ ${F[fn]}
 }
 
 function fixAllEngine(){
+  alert("Files: "+Object.keys(F).length+" | Results: "+Object.keys(R).length);
   let fixed = 0;
   Object.keys(R).forEach(fn => {
     const issues = analyzeCode(F[fn], fn);
