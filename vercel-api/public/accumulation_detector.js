@@ -1,7 +1,7 @@
 // ─── Accumulation Detector ───────────────────────
 // يكتشف = بدل += في حلقات forEach و for
 
-const ACCUM_VARS = ['total','sum','count','revenue','sales','discount',
+const ACCUM_DETECTOR_VARS = ['total','sum','count','revenue','sales','discount',
   'value','amount','price','cost','profit','balance','score','qty','quantity',
   'inventory','items','records'];
 
@@ -40,7 +40,7 @@ function detectAccumulation(code, fileName) {
 
     // اكتشف = بدل += داخل حلقة
     if (inLoop) {
-      ACCUM_VARS.forEach(varName => {
+      ACCUM_DETECTOR_VARS.forEach(varName => {
         const accumPattern = new RegExp(`\\b${varName}\\s*=(?!=|\\+|-|\\*|/)\\s*\\S`);
         if (accumPattern.test(t) && !t.match(/(?:let|var|const|int|double|float)\s+/)) {
           // تحقق إن المتغير معرّف قبلاً بـ 0
