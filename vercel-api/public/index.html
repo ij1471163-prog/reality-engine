@@ -374,7 +374,7 @@ ${F[fn]}
 function fixAllEngine() {
     let fixed = 0;
     Object.keys(R).forEach(fn => {
-        const issues = analyzeCode(F[fn], fn);
+        const issues = (typeof analyzeCodeEnhanced !== "undefined" ? analyzeCodeEnhanced : analyzeCode)(F[fn], fn);
         const lines  = F[fn].split('\n');
         // ✅ من الأسفل للأعلى — no index drift
         issues.slice().reverse().forEach(issue => {
