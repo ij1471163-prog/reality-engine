@@ -4,13 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Reality Engine</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}
+<style>
+*{
+box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 .header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:center;gap:12px}
 .logo{font-size:22px;font-weight:700;color:#a371f7}
 .logo span{color:#58a6ff}
 .sub{color:#8b949e;font-size:13px;margin-right:auto}
-.container{max-width:960px;width:100%;margin:0 auto;padding:16px}
+.container{max-width:960px;margin:0 auto;padding:24px}
 .drop{border:2px dashed #30363d;border-radius:12px;padding:48px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:24px}
 .drop:hover,.drop.drag{border-color:#6e40c9;background:#161b2244}
 .drop h2{font-size:18px;margin-bottom:8px}
@@ -49,31 +51,8 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 .empty{text-align:center;padding:48px;color:#8b949e}
 .toast{position:fixed;bottom:24px;right:24px;background:#238636;color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;z-index:999;display:none}
 #inp{display:none}
-@media(max-width:768px){
-.sum{grid-template-columns:repeat(2,1fr)}
-.container{padding:10px;width:100%}
-.btn{padding:12px 16px;font-size:15px;min-height:44px}
-.btn-sm{padding:10px 14px;font-size:13px;min-height:40px}
-.drop{padding:24px 12px}
-.header{padding:10px 12px}
-.logo{font-size:17px}
-.tb{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.tb-r{grid-column:1/-1;text-align:center;margin:0}
-.it{flex-direction:column;gap:6px}
-.ia{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.ia .btn-sm{width:100%}
-.issue{padding:12px}
-.files{grid-template-columns:repeat(2,1fr)}
-.sn{font-size:24px}
-#btn-dl,#btn-fixall{width:100%}
-}
-@media(max-width:400px){
-.sum{grid-template-columns:1fr 1fr}
-.tb{grid-template-columns:1fr}
-.ia{grid-template-columns:1fr}
-.files{grid-template-columns:1fr}
-}
-</style>
+@media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}.container{padding:12px}}</style>
 <script src="/engine.js"></script>
 <script src="/engine_java.js"></script>
 <script src="/repair_impact.js"></script>
