@@ -72,6 +72,32 @@ function analyzeJava(code, fileName) {
     }
   });
 
+  // Java String == detection
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (t.startsWith('//')) return;
+    // كشف String == بدل .equals()
+    if (/==\s*\w/.test(t) && !t.includes('.equals(') && !t.includes('null') && !t.includes('==\s*true') && !t.includes('== false')) {
+      const varMatch = t.match(/(\w+(?:\.\w+)?)\s*==\s*(\w+(?:\.\w+)?)/);
+      if (varMatch) {
+        const left = varMatch[1], right = varMatch[2];
+        // تحقق إن أحدهم String method مثل getStatus, getCategory
+        if (/get[A-Z]/.test(left) || /get[A-Z]/.test(right)) {
+          const dup = issues.some(x => Math.abs(x.line - (i+1)) <= 1);
+          if (!dup) issues.push({
+            type: 'bug', sev: 'h',
+            title: 'String == بدل .equals() في Java',
+            line: i+1, ev: t,
+            fix: t.replace(
+              new RegExp('(\w+(?:\.\w+)?)\s*==\s*(\w+(?:\.\w+)?)'),
+              '$1.equals($2)'
+            )
+          });
+        }
+      }
+    }
+  });
+
   // Java accumulation detection
   const _javaAccumVars = ['total','sum','count','revenue','value','amount','price','cost'];
   const _javaLines = code.split('\n');
