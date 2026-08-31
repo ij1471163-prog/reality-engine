@@ -86,7 +86,7 @@ function analyzeCode(code,fileName){
           const jt=lines[j].trim();
           if(/\breturn\s+\w/.test(jt)||/[;{(]\s*return\s+/.test(jt))hasR=true;
           if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return ')&&!jt.startsWith('//')&&!jt.startsWith('if')&&!jt.startsWith('console'))hasSE=true;
-          if(/^\}\)/.test(jt))break;
+          if(/^\}\)/.test(jt)||jt.includes('.forEach('))break;
         }
         if(hasR)issues.push({type:'bug',sev:'h',
           title:hasSE?'return داخل forEach مع side effects':'return داخل forEach',
