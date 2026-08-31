@@ -95,7 +95,7 @@ public class MainActivity extends AppCompatActivity {
                     String res = br.readLine();
                     org.json.JSONObject json = new org.json.JSONObject(res);
                     String token = json.optString("token", "");
-                    String webUrl = "https://reality-engine-api-livid.vercel.app?t=" + token;
+                    String webUrl = "https://reality-engine-api-livid.vercel.app?t=" + token + "&dev=1";
                     android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
                     h.post(() -> {
                         Intent webIntent = new Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(webUrl));
