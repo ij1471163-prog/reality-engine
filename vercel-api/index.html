@@ -376,6 +376,7 @@ function fixAllEngine(){
   toast('✅ تم إصلاح ' + fixed + ' مشكلة');
   document.getElementById('btn-dl').style.display='inline-block';
   document.getElementById('btn-fixall').style.display='inline-block';
+  if(fixed > 0) setTimeout(()=>dlAll(), 300);
 }
 
 function calcDiff(original, fixed) {
