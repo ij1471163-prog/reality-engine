@@ -73,29 +73,30 @@ function analyzeCode(code,fileName){
     lines.forEach((line,i)=>{
       const t=line.trim();
       if(line.includes('.forEach(')){
-        // فحص inline forEach { ... return ... }
-        if(line.includes(' return ')||/;\s*return\s+\w/.test(line)){
-          const hasSE2 = /^[a-zA-Z_]\w*\s*\(/.test(line.replace(/\.forEach\([^)]*\)/,'').trim());
-          issues.push({type:'bug',sev:'h',
-            title:hasSE2?'return داخل forEach مع side effects':'return داخل forEach',
-            line:i+1,ev:line.trim(),fix:hasSE2?null:line.replace('.forEach(','.find(').trim()});
-          inLoop=true;
+        const singleLine = line.trim().endsWith(');') && /{/.test(line);
+        if(singleLine){
+          if(/\breturn\s+\w/.test(line)){
+            issues.push({type:'bug',sev:'h',title:'return داخل forEach',line:i+1,ev:line.trim(),fix:line.replace('.forEach(','.find(').trim()});
+          } else {
+            inLoop=true;
+          }
         } else {
-        inLoop=true; // single-line forEach
-        let hasR=false,hasSE=false;
-        for(let j=i+1;j<Math.min(i+8,lines.length);j++){
-          const jt=lines[j].trim();
-          if(/\breturn\s+\w/.test(jt)||/[;{(]\s*return\s+/.test(jt))hasR=true;
-          if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return ')&&!jt.startsWith('//')&&!jt.startsWith('if')&&!jt.startsWith('console'))hasSE=true;
-          if(/^\}\)/.test(jt)||jt.includes('.forEach('))break;
-        }
-        if(hasR)issues.push({type:'bug',sev:'h',
-          title:hasSE?'return داخل forEach مع side effects':'return داخل forEach',
-          line:i+2,ev:line.trim(),fix:hasSE?null:line.replace('.forEach(','.find(').trim()});
-        inLoop=true;
+          let hasR=false,hasSE=false;
+          for(let j=i+1;j<Math.min(i+10,lines.length);j++){
+            const jt=lines[j].trim();
+            if(jt.includes('.forEach(')||jt.startsWith('function')) break;
+            if(/^\}\)/.test(jt)) break;
+            if(/\breturn\s+\w/.test(jt)) hasR=true;
+            if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return')&&!jt.startsWith('//')&&!jt.startsWith('if')&&!jt.startsWith('console')) hasSE=true;
+          }
+          if(hasR){
+            const fix=hasSE?null:line.replace('.forEach(','.find(').trim();
+            issues.push({type:'bug',sev:'h',title:hasSE?'return داخل forEach مع side effects':'return داخل forEach',line:i+2,ev:line.trim(),fix});
+          }
+          inLoop=true;
         }
       }
-      if(/for\s*\(/.test(line))inLoop=true;
+            if(/for\s*\(/.test(line))inLoop=true;
 
       // accumulation handled by inLoop below
       if(inLoop&&/\b(total|sum|count|revenue)\s*=\s*[^=+\-]/.test(line)&&!/==/.test(line)&&!/^\s*(let|var|const)\s+/.test(line)){
