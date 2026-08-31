@@ -65,6 +65,8 @@ function analyzeCode(code,fileName){
       const sc=[];const re=/<script[^>]*>([\s\S]*?)<\/script>/gi;let m;
       while((m=re.exec(code))!==null)sc.push(m[1]);
       work=sc.join('\n');
+      // لو ما فيه script tags حلل الـ HTML كـ JS
+      if(!work.trim()) work=code;
     }
     const lines=work.split('\n');
     let inLoop=false;
