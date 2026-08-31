@@ -82,7 +82,7 @@ function analyzeCode(code,fileName){
         let hasR=false,hasSE=false;
         for(let j=i+1;j<Math.min(i+8,lines.length);j++){
           const jt=lines[j].trim();
-          if(jt.startsWith('return ')||/;\s*return\s+\w/.test(jt)||jt.includes(' return '))hasR=true;
+          if(/\breturn\s+\w/.test(jt)||/[;{(]\s*return\s+/.test(jt))hasR=true;
           if(/^[a-zA-Z_]\w*\s*\(/.test(jt)&&!jt.startsWith('return ')&&!jt.startsWith('//')&&!jt.startsWith('if')&&!jt.startsWith('console'))hasSE=true;
           if(/^\}\)/.test(jt))break;
         }
