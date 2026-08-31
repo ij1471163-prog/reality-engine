@@ -122,83 +122,115 @@ public class PolicyEngine {
         }
     }
 
-    // ── Whitelist: مصطلحات مسموحة تُقلّل الـ confidence ──
-    private static final Set<String> WHITELIST_TERMS = new HashSet<>(Arrays.asList(
-        "test_keylog", "mock_encrypt", "example_shell", "demo_brute"
-    ));
+    // ── Whitelist: thread-safe ──────────────────────────
+    private static final Set<String> WHITELIST_TERMS = Collections.synchronizedSet(
+        new HashSet<>(Arrays.asList(
+            "test_keylog", "mock_encrypt", "example_shell", "demo_brute"
+        ))
+    );
 
-    /** أضف مصطلح للـ whitelist (مثلاً اسم test function) */
+    /** أضف مصطلح للـ whitelist */
     public static void addWhitelist(String term) {
-        WHITELIST_TERMS.add(term.toLowerCase());
+        if (term != null) WHITELIST_TERMS.add(term.toLowerCase());
     }
+
+    /** احذف مصطلح من الـ whitelist */
+    public static void removeWhitelist(String term) {
+        if (term != null) WHITELIST_TERMS.remove(term.toLowerCase());
+    }
+
+    /** امسح كل الـ whitelist */
+    public static void clearWhitelist() { WHITELIST_TERMS.clear(); }
 
     /** تحقق لو الـ evidence يحتوي whitelist term */
     public static boolean isWhitelisted(String evidence) {
+        if (evidence == null) return false;
         String ev = evidence.toLowerCase();
-        return WHITELIST_TERMS.stream().anyMatch(ev::contains);
+        synchronized (WHITELIST_TERMS) {
+            return WHITELIST_TERMS.stream().anyMatch(ev::contains);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
+    // Rules — compiled في static init + thread-safe wrapper
+    // ═══════════════════════════════════════════════════
+
+    private static final List<Rule> RULES;
+
+    static {
+        List<Rule> base = new ArrayList<>();
+
+        // ── Critical rules (BLOCKED) ──
+        base.add(new Rule("POL001", "حذف ملفات النظام",
+            "(shutil\\.rmtree|os\\.remove)\\s*\\(.*?(/etc|/sys|/bin|/usr)",
+            true, 0.95));
+
+        base.add(new Rule("POL002", "سرقة بيانات المستخدم",
+            "(keylog|keystroke|capture_password|hook_keyboard)",
+            true, 0.90));
+
+        base.add(new Rule("POL003", "ransomware",
+            "(encrypt|AES|Fernet)[\\s\\S]{0,200}(walk|glob)[\\s\\S]{0,100}\\.(doc|pdf|xls|jpg)",
+            true, 0.85));
+
+        base.add(new Rule("POL004", "أدوات اختراق",
+            "(brute[_\\-\\s]?force|reverse[_\\-\\s]?shell|bind[_\\-\\s]?shell|meterpreter)",
+            true, 0.95));
+
+        base.add(new Rule("POL005", "تنفيذ كود مشفر",
+            "(exec|eval)\\s*\\(\\s*(base64|b64decode|codecs\\.decode)",
+            true, 0.90));
+
+        base.add(new Rule("POL006", "تجاوز صلاحيات النظام",
+            "(setuid\\s*\\(0\\)|chmod\\s+[0-7]*7[0-7][0-7]|sudo\\s+.*--no-ask-passwd)",
+            true, 0.88));
+
+        // ── Warning rules (WARNING) ──
+        base.add(new Rule("POL007", "تحميل وتشغيل ملفات خارجية",
+            "(urlretrieve|requests\\.get)[\\s\\S]{0,100}\\.(exe|sh|bat|ps1)[\\s\\S]{0,100}(run|subprocess|exec)",
+            false, 0.75));
+
+        base.add(new Rule("POL008", "إرسال بيانات حساسة",
+            "requests\\.(post|put)\\s*\\([\\s\\S]{0,200}(password|api_key|secret|token)",
+            false, 0.70));
+
+        base.add(new Rule("POL009", "تعديل ملفات النظام",
+            "open\\s*\\(\\s*['\"]\\s*(/etc/hosts|/etc/crontab|/etc/sudoers|/etc/passwd)",
+            false, 0.85));
+
+        base.add(new Rule("POL010", "أوامر تدمير البيانات",
+            "(dd\\s+if=|mkfs\\s*\\.|:\\s*\\(\\s*\\)\\s*\\{|>\\s*/dev/sd[a-z])",
+            false, 0.92));
+
+        base.add(new Rule("POL011", "كود obfuscation مشبوه",
+            "([A-Za-z0-9+/]{80,}={0,2}|\\\\x[0-9a-fA-F]{2}(\\\\x[0-9a-fA-F]{2}){15,})",
+            false, 0.65));
+
+        // ✅ thread-safe wrapper
+        RULES = Collections.synchronizedList(base);
     }
 
     /** أضف rule مخصصة في runtime */
     public static void addRule(String id, String description,
                                 String regex, boolean critical,
                                 double baseConfidence) {
+        if (id == null || regex == null) return;
         RULES.add(new Rule(id, description, regex, critical, baseConfidence));
     }
 
-    // ═══════════════════════════════════════════════════
-    // Rules — compiled في static init (مرة واحدة)
-    // ═══════════════════════════════════════════════════
+    /** احذف rule بـ id */
+    public static void removeRule(String id) {
+        if (id == null) return;
+        synchronized (RULES) {
+            RULES.removeIf(r -> r.id.equals(id));
+        }
+    }
 
-    private static final List<Rule> RULES;
-
-    static {
-        RULES = new ArrayList<>();
-
-        // ── Critical rules (BLOCKED) ──
-        RULES.add(new Rule("POL001", "حذف ملفات النظام",
-            "(shutil\\.rmtree|os\\.remove)\\s*\\(.*?(/etc|/sys|/bin|/usr)",
-            true, 0.95));
-
-        RULES.add(new Rule("POL002", "سرقة بيانات المستخدم",
-            "(keylog|keystroke|capture_password|hook_keyboard)",
-            true, 0.90));
-
-        RULES.add(new Rule("POL003", "ransomware",
-            "(encrypt|AES|Fernet)[\\s\\S]{0,200}(walk|glob)[\\s\\S]{0,100}\\.(doc|pdf|xls|jpg)",
-            true, 0.85));
-
-        RULES.add(new Rule("POL004", "أدوات اختراق",
-            "(brute[_\\-\\s]?force|reverse[_\\-\\s]?shell|bind[_\\-\\s]?shell|meterpreter)",
-            true, 0.95));
-
-        RULES.add(new Rule("POL005", "تنفيذ كود مشفر",
-            "(exec|eval)\\s*\\(\\s*(base64|b64decode|codecs\\.decode)",
-            true, 0.90));
-
-        RULES.add(new Rule("POL006", "تجاوز صلاحيات النظام",
-            "(setuid\\s*\\(0\\)|chmod\\s+[0-7]*7[0-7][0-7]|sudo\\s+.*--no-ask-passwd)",
-            true, 0.88));
-
-        // ── Warning rules (WARNING) ──
-        RULES.add(new Rule("POL007", "تحميل وتشغيل ملفات خارجية",
-            "(urlretrieve|requests\\.get)[\\s\\S]{0,100}\\.(exe|sh|bat|ps1)[\\s\\S]{0,100}(run|subprocess|exec)",
-            false, 0.75));
-
-        RULES.add(new Rule("POL008", "إرسال بيانات حساسة",
-            "requests\\.(post|put)\\s*\\([\\s\\S]{0,200}(password|api_key|secret|token)",
-            false, 0.70));
-
-        RULES.add(new Rule("POL009", "تعديل ملفات النظام",
-            "open\\s*\\(\\s*['\"]\\s*(/etc/hosts|/etc/crontab|/etc/sudoers|/etc/passwd)",
-            false, 0.85));
-
-        RULES.add(new Rule("POL010", "أوامر تدمير البيانات",
-            "(dd\\s+if=|mkfs\\s*\\.|:\\s*\\(\\s*\\)\\s*\\{|>\\s*/dev/sd[a-z])",
-            false, 0.92));
-
-        RULES.add(new Rule("POL011", "كود obfuscation مشبوه",
-            "([A-Za-z0-9+/]{80,}={0,2}|\\\\x[0-9a-fA-F]{2}(\\\\x[0-9a-fA-F]{2}){15,})",
-            false, 0.65));
+    /** هل rule موجودة؟ */
+    public static boolean hasRule(String id) {
+        synchronized (RULES) {
+            return RULES.stream().anyMatch(r -> r.id.equals(id));
+        }
     }
 
     // ═══════════════════════════════════════════════════
@@ -212,20 +244,20 @@ public class PolicyEngine {
      * لتجنب false positives من `# keylog` أو `"password"` في الـ docs
      */
     static String stripCommentsAndStrings(String code) {
-        // ١. single-line comments: # ... أو // ...
-        code = code.replaceAll("(?m)(#|//).*$", "/* COMMENT */");
-
-        // ٢. multi-line comments: /* ... */
-        code = code.replaceAll("/\\*[\\s\\S]*?\\*/", "/* COMMENT */");
-
-        // ٣. triple-quoted strings (Python)
+        // ١. triple-quoted strings أولاً (Python) — قبل single-line comments
         code = code.replaceAll("\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?'''", "\"STRIPPED\"");
 
-        // ٤. double-quoted strings (بسيطة — بدون escape معقد)
+        // ٢. double-quoted strings
         code = code.replaceAll("\"(?:[^\"\\\\]|\\\\.)*\"", "\"STRIPPED\"");
 
-        // ٥. single-quoted strings
+        // ٣. single-quoted strings
         code = code.replaceAll("'(?:[^'\\\\]|\\\\.)*'", "'STRIPPED'");
+
+        // ٤. multi-line comments /* ... */ — بعد الـ strings لتجنب التعارض
+        code = code.replaceAll("/\\*[\\s\\S]*?\\*/", " ");
+
+        // ٥. single-line comments # أو // — أخيراً (لا تعيد معالجة placeholder)
+        code = code.replaceAll("(?m)(#|//).*$", " ");
 
         return code;
     }
@@ -234,18 +266,13 @@ public class PolicyEngine {
     // Evidence Extractor — يُعيد السطر كاملاً مع context
     // ═══════════════════════════════════════════════════
 
-    /**
-     * بدل قطع الـ match بـ 80 حرف ثابت،
-     * يُعيد السطر الكامل الذي يحتوي الـ match
-     * مع رقم السطر
-     */
-    private static int[] findLineAndEvidence(String original, int matchStart) {
-        // أوجد رقم السطر
+    /** يُعيد رقم السطر الذي يبدأ عند matchStart */
+    private static int findLine(String code, int matchStart) {
         int line = 1;
-        for (int i = 0; i < matchStart && i < original.length(); i++) {
-            if (original.charAt(i) == '\n') line++;
+        for (int i = 0; i < matchStart && i < code.length(); i++) {
+            if (code.charAt(i) == '\n') line++;
         }
-        return new int[]{ line };
+        return line;
     }
 
     private static String extractLine(String code, int matchStart) {
@@ -263,26 +290,22 @@ public class PolicyEngine {
     // ═══════════════════════════════════════════════════
 
     /**
-     * يحسب confidence لانتهاك واحد بناءً على:
-     * - baseConfidence من الـ Rule
-     * - عدد matches في الكود (+bonus)
-     * - وجود whitelist term (-penalty)
-     * - طول الـ evidence (قصير = أدق)
+     * يحسب confidence لانتهاك — public API بدون Rule parameter
+     * @param baseConfidence  الثقة الأساسية للـ rule (0.0–1.0)
+     * @param evidence        النص المكتشف
+     * @param matchCount      عدد المرات التي تكرر فيها النمط
      */
-    public static double confidence(Rule rule, String code,
-                                     String evidence, int matchCount) {
-        double conf = rule.baseConfidence;
-
-        // bonus: كلما تكرر النمط زاد اليقين
+    public static double confidence(double baseConfidence, String evidence, int matchCount) {
+        double conf = baseConfidence;
         if (matchCount > 1) conf = Math.min(1.0, conf + 0.05 * (matchCount - 1));
+        if (isWhitelisted(evidence))          conf *= 0.40;
+        if (evidence != null && evidence.trim().length() < 10) conf *= 0.70;
+        return Math.round(conf * 100.0) / 100.0;
+    }
 
-        // penalty: لو الـ evidence يحتوي whitelist term
-        if (isWhitelisted(evidence)) conf *= 0.40;
-
-        // penalty: لو الـ evidence قصير جداً (< 10 chars) — match غير دقيق
-        if (evidence.trim().length() < 10) conf *= 0.70;
-
-        return Math.round(conf * 100.0) / 100.0; // round to 2 decimals
+    /** Internal overload يستخدم Rule مباشرة */
+    private static double confidence(Rule rule, String evidence, int matchCount) {
+        return confidence(rule.baseConfidence, evidence, matchCount);
     }
 
     // ═══════════════════════════════════════════════════
@@ -297,23 +320,27 @@ public class PolicyEngine {
         String cleanCode = stripCommentsAndStrings(code);
         List<PolicyViolation> violations = new ArrayList<>();
 
-        for (Rule rule : RULES) {
-            Matcher m = rule.pattern.matcher(cleanCode);
-            if (!m.find()) continue;
+        synchronized (RULES) {
+            for (Rule rule : RULES) {
+                Matcher m = rule.pattern.matcher(cleanCode);
+                if (!m.find()) continue;
 
-            int matchStart = m.start();
+                int matchStart = m.start();
 
-            // عدّ كل الـ matches لحساب الـ confidence
-            int matchCount = 1;
-            while (m.find()) matchCount++;
+                // عدّ كل الـ matches
+                int matchCount = 1;
+                while (m.find()) matchCount++;
 
-            int    line     = findLineAndEvidence(cleanCode, matchStart)[0];
-            String evidence = extractLine(code, matchStart);
-            double conf     = confidence(rule, cleanCode, evidence, matchCount);
+                // ✅ findLine() مباشرة بدل int[]
+                int    line     = findLine(cleanCode, matchStart);
+                String evidence = extractLine(code, matchStart);
+                // ✅ private overload — Rule مو مكشوفة لـ caller
+                double conf     = confidence(rule, evidence, matchCount);
 
-            violations.add(new PolicyViolation(
-                rule.id, rule.description, evidence, line, rule.critical, conf
-            ));
+                violations.add(new PolicyViolation(
+                    rule.id, rule.description, evidence, line, rule.critical, conf
+                ));
+            }
         }
 
         int riskScore = 0;
@@ -335,16 +362,31 @@ public class PolicyEngine {
     // ═══════════════════════════════════════════════════
 
     /**
-     * يفحص map من fileName → code
-     * يُعيد map من fileName → PolicyResult
+     * يفحص map من fileName → code بشكل parallel
+     * يُعيد map من fileName → PolicyResult (بنفس الترتيب)
      */
     public static Map<String, PolicyResult> checkAll(Map<String, String> files) {
-        Map<String, PolicyResult> results = new LinkedHashMap<>();
-        if (files == null) return results;
+        if (files == null || files.isEmpty()) return Collections.emptyMap();
+
+        // ✅ parallel — كل ملف في thread مستقل
+        Map<String, PolicyResult> results = Collections.synchronizedMap(new LinkedHashMap<>());
+        List<Thread> threads = new ArrayList<>();
+
         for (Map.Entry<String, String> entry : files.entrySet()) {
-            results.put(entry.getKey(), check(entry.getValue()));
+            Thread t = new Thread(() ->
+                results.put(entry.getKey(), check(entry.getValue())));
+            threads.add(t);
+            t.start();
         }
-        return results;
+        for (Thread t : threads) {
+            try { t.join(); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+
+        // أعد الترتيب بحسب الأصل
+        Map<String, PolicyResult> ordered = new LinkedHashMap<>();
+        files.keySet().forEach(k -> { if (results.containsKey(k)) ordered.put(k, results.get(k)); });
+        return ordered;
     }
 
     /**
@@ -374,3 +416,4 @@ public class PolicyEngine {
         return sb.toString();
     }
 }
+
