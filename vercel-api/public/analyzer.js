@@ -196,14 +196,43 @@ function analyzeCode(code, fileName) {
 
     enhanceStubs(issues, code);
     finalizeIssues(issues, code);
-    // Accumulation detection
-    if (typeof detectAccumulation === 'function') {
-        const accumIssues = detectAccumulation(code, fileName);
-        accumIssues.forEach(ai => {
-            const dup = issues.some(i => Math.abs(i.line - ai.line) <= 1);
-            if (!dup) issues.push(ai);
-        });
-    }
+    // Accumulation detection - inline
+    const _accumVars = ['total','sum','count','revenue','sales','discount',
+      'value','amount','price','cost','profit','balance','score','qty',
+      'quantity','inventory','totalRevenue','totalItems','totalDiscount',
+      'totalValue','totalSales'];
+    const _lines2 = code.split('\n');
+    let _inLoop2 = false, _loopDepth2 = 0;
+    const _declaredVars2 = new Set();
+    _lines2.forEach((_ln, _i) => {
+        const _t = _ln.trim();
+        if (_t.startsWith('//') || _t.startsWith('#')) return;
+        const _dm = _t.match(/(?:let|var|const)\s+(\w+)\s*=\s*0/);
+        if (_dm) _declaredVars2.add(_dm[1]);
+        if (_t.includes('.forEach(') || /for\s*\(/.test(_t)) { _inLoop2=true; _loopDepth2++; }
+        if (_inLoop2 && (_t==='}' || _t==='});' || _t==='})'||_t.startsWith('});'))) {
+            _loopDepth2=Math.max(0,_loopDepth2-1);
+            if(_loopDepth2===0) _inLoop2=false;
+        }
+        if (_inLoop2) {
+            _accumVars.forEach(_v => {
+                const _p = new RegExp('\\b'+_v+'\\s*=(?!=|\\+|-)\\s*\\S');
+                if (_p.test(_t) && !/(?:let|var|const)\s+/.test(_t)) {
+                    const _known = _declaredVars2.has(_v) || 
+                        _lines2.slice(0,_i).some(_l=>new RegExp('\\b'+_v+'\\s*=\\s*0').test(_l));
+                    if (_known) {
+                        const _dup = issues.some(_x=>Math.abs(_x.line-(_i+1))<=1&&_x.title.includes(_v));
+                        if (!_dup) issues.push({type:'bug',sev:'c',
+                            title:'خطأ تراكم: '+_v+' = بدل +=',
+                            line:_i+1,ev:_t,
+                            fix:_t.replace(new RegExp('('+_v+')\\s*=(?!=)'),'$1 +='),
+                            conf:90,cIcon:'🟢',cAct:'خطأ تراكم مؤكد',
+                            cEv:[_v+' مُهيَّأ بـ 0 قبل الحلقة']});
+                    }
+                }
+            });
+        }
+    });
     return issues;
 }
 
