@@ -72,6 +72,35 @@ function analyzeJava(code, fileName) {
     }
   });
 
+  // Java accumulation detection
+  const _javaAccumVars = ['total','sum','count','revenue','value','amount','price','cost'];
+  const _javaLines = code.split('\n');
+  let _jInLoop = false, _jDeclared = new Set();
+  _javaLines.forEach((_l, _i) => {
+    const _t = _l.trim();
+    if (_t.startsWith('//')) return;
+    const _dm = _t.match(/(?:int|double|float|long)\s+(\w+)\s*=\s*0/);
+    if (_dm) _jDeclared.add(_dm[1]);
+    if (/for\s*\(|forEach\s*\(/.test(_t)) _jInLoop = true;
+    if (_jInLoop && (_t === '}' || _t === '});')) _jInLoop = false;
+    if (_jInLoop) {
+      _javaAccumVars.forEach(_v => {
+        const _p = new RegExp('\\b' + _v + '\\s*=(?!=|\\+|-)\\s*\\S');
+        if (_p.test(_t) && !_t.match(/(?:int|double|float|long)\s+/)) {
+          const _known = _jDeclared.has(_v) ||
+            _javaLines.slice(0, _i).some(_x => new RegExp('\\b' + _v + '\\s*=\\s*0').test(_x));
+          if (_known) {
+            const _dup = issues.some(_x => Math.abs(_x.line - (_i+1)) <= 1);
+            if (!_dup) issues.push({type:'bug', sev:'c',
+              title: 'خطأ تراكم Java: ' + _v + ' = بدل +=',
+              line: _i+1, ev: _t,
+              fix: _t.replace(new RegExp('(' + _v + ')\\s*=(?!=)'), '$1 +=')});
+          }
+        }
+      });
+    }
+  });
+
   issues.forEach(iss => {
     const c = calcConf(iss, code);
     iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
