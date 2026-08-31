@@ -481,7 +481,11 @@ public class StubDetector {
             if (bodyStartIdx < lines.length && bodyStartIdx < endLine) {
                 String firstBody = lines[bodyStartIdx].trim();
 
-                if (firstBody.equals("pass") || firstBody.equals("...") || firstBody.equals("Ellipsis")) {
+                // تحقق من السطر الأول والثاني (قد يكون قبله تعليق)
+                String secondBody = (bodyStartIdx + 1 < lines.length) ? lines[bodyStartIdx + 1].trim() : "";
+                boolean isPassLine = firstBody.equals("pass") || firstBody.equals("...") || firstBody.equals("Ellipsis")
+                    || secondBody.equals("pass") || secondBody.equals("...") || secondBody.equals("Ellipsis");
+                if (isPassLine) {
                     isStub = true;
                     risk = Risk.CONFIRMED;
                     reason = "pass / ... / NotImplementedError";
