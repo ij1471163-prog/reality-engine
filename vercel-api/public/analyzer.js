@@ -196,6 +196,14 @@ function analyzeCode(code, fileName) {
 
     enhanceStubs(issues, code);
     finalizeIssues(issues, code);
+    // Pattern detection
+    if (typeof detectPatterns === 'function') {
+        const patternIssues = detectPatterns(code, fileName);
+        patternIssues.forEach(pi => {
+            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
+            if (!dup) issues.push(pi);
+        });
+    }
     // Accumulation detection - inline
     const _accumVars = ['total','sum','count','revenue','sales','discount',
       'value','amount','price','cost','profit','balance','score','qty',
@@ -239,14 +247,6 @@ function analyzeCode(code, fileName) {
             });
         }
     });
-    // Pattern detection
-    if (typeof detectPatterns === 'function') {
-        const patternIssues = detectPatterns(code, fileName);
-        patternIssues.forEach(pi => {
-            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
-            if (!dup) issues.push(pi);
-        });
-    }
     return issues;
 }
 
@@ -572,14 +572,6 @@ function enhanceStubs(issues, code) {
             issue.cAct  = 'اقتراح محرك';
         }
     });
-    // Pattern detection
-    if (typeof detectPatterns === 'function') {
-        const patternIssues = detectPatterns(code, fileName);
-        patternIssues.forEach(pi => {
-            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
-            if (!dup) issues.push(pi);
-        });
-    }
     return issues;
 }
 
@@ -703,14 +695,6 @@ function analyzeJava(code, fileName) {
         iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
     });
 
-    // Pattern detection
-    if (typeof detectPatterns === 'function') {
-        const patternIssues = detectPatterns(code, fileName);
-        patternIssues.forEach(pi => {
-            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
-            if (!dup) issues.push(pi);
-        });
-    }
     return issues;
 }
 
