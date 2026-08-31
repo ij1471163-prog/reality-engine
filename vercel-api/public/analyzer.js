@@ -239,6 +239,14 @@ function analyzeCode(code, fileName) {
             });
         }
     });
+    // Pattern detection
+    if (typeof detectPatterns === 'function') {
+        const patternIssues = detectPatterns(code, fileName);
+        patternIssues.forEach(pi => {
+            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
+            if (!dup) issues.push(pi);
+        });
+    }
     return issues;
 }
 
@@ -564,6 +572,14 @@ function enhanceStubs(issues, code) {
             issue.cAct  = 'اقتراح محرك';
         }
     });
+    // Pattern detection
+    if (typeof detectPatterns === 'function') {
+        const patternIssues = detectPatterns(code, fileName);
+        patternIssues.forEach(pi => {
+            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
+            if (!dup) issues.push(pi);
+        });
+    }
     return issues;
 }
 
@@ -687,6 +703,14 @@ function analyzeJava(code, fileName) {
         iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
     });
 
+    // Pattern detection
+    if (typeof detectPatterns === 'function') {
+        const patternIssues = detectPatterns(code, fileName);
+        patternIssues.forEach(pi => {
+            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
+            if (!dup) issues.push(pi);
+        });
+    }
     return issues;
 }
 
