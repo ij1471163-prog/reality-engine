@@ -57,6 +57,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/engine_java.js"></script>
 <script src="/repair_impact.js"></script>
 <script src="/typo_detector.js"></script>
+<script src="/engine_ast.js"></script>
 </head>
 <body>
 <div class="header">
@@ -97,6 +98,8 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 // حماية الوصول
 
 let F={},R={};
+// حمّل AST engine
+if (typeof loadAcorn !== 'undefined') loadAcorn(() => console.log('✅ AST engine ready'));
 const dz=document.getElementById('dz');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag')});
 dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
