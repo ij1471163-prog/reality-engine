@@ -95,7 +95,7 @@ function analyzeCode(code,fileName){
         }
       }
       if(/for\s*\(/.test(line))inLoop=true;
-      if(line.includes('.forEach(')){if(!line.includes(' return '))inLoop=true;else inLoop=false;}
+
       // accumulation handled by inLoop below
       if(inLoop&&/\b(total|sum|count|revenue)\s*=\s*[^=+\-]/.test(line)&&!/==/.test(line)&&!/^\s*(let|var|const)\s+/.test(line)){
         const fix=line.replace(/(\s*)(\w+)\s*=\s*(.+)/,'$1$2 += $3').trim();
