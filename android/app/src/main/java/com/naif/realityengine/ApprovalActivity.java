@@ -116,7 +116,7 @@ public class ApprovalActivity extends AppCompatActivity {
         tvFuncName.setText(stub.name + "()  —  " + (currentIndex + 1) + "/" + stubs.size());
         tvSafetyScore.setText("Safety Score: " + item.safetyScore + "/100");
         tvBefore.setText(item.before != null ? item.before : stub.snippet);
-        tvAfter.setText(item.after  != null ? item.after  : "لا اقتراح");
+        tvAfter.setText(item.suggestion  != null ? item.suggestion  : "لا اقتراح");
         tvExplanation.setText(item.explanation != null ? item.explanation : "");
 
         if (item.stage == ApprovalWorkflow.Stage.BLOCKED) {

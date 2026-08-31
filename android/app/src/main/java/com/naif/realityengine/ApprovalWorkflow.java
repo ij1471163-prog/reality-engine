@@ -24,7 +24,7 @@ public class ApprovalWorkflow {
                                      String before, String after) {
         if (backup != null && after != null && !after.equals(before)) {
             try {
-                backup.recordVersion(sessionId, funcName, before, after);
+                backup.recordVersion(sessionId, funcName, "auto-fix", before, after, true, 80);
             } catch (Exception ignored) {}
         }
     }
