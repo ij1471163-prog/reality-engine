@@ -95,7 +95,7 @@ function analyzeCode(code,fileName){
         }
       }
       if(/for\s*\(/.test(line))inLoop=true;
-      if(line.includes('.forEach(')&&!line.includes(' return '))inLoop=true;
+      if(line.includes('.forEach(')){if(!line.includes(' return '))inLoop=true;else inLoop=false;}
       if(line.includes('.forEach(')&&/\b(total|sum|count|revenue|price|amount|value)\b/.test(line)&&/=(?!=)/.test(line)&&!/\+=|-=/.test(line)){const vMatch=line.match(/\b(total|sum|count|revenue|price|amount|value)\b/);if(vMatch)issues.push({type:'bug',sev:'c',title:'خطأ في التراكم: = بدل +=',line:i+1,ev:t,fix:t.replace(/([\w]+)\s*=\s*([\w.]+)/,'$1 += $2'),conf:80,cIcon:'🟡',cAct:'مشكلة محتملة',cEv:['تراكم في forEach']});}
       if(inLoop&&/\b(total|sum|count|revenue)\s*=\s*[^=+\-]/.test(line)&&!/==/.test(line)&&!/^\s*(let|var|const)\s+/.test(line)){
         const fix=line.replace(/(\s*)(\w+)\s*=\s*(.+)/,'$1$2 += $3').trim();
