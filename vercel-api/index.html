@@ -51,30 +51,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 .empty{text-align:center;padding:48px;color:#8b949e}
 .toast{position:fixed;bottom:24px;right:24px;background:#238636;color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;z-index:999;display:none}
 #inp{display:none}
-@media(max-width:768px){
-  .sum{grid-template-columns:repeat(2,1fr)}
-  .header{padding:12px 16px}
-  .logo{font-size:18px}
-  .container{padding:12px}
-  .drop{padding:24px 12px}
-  .btn{padding:12px 16px;font-size:15px;min-height:44px}
-  .btn-sm{padding:10px 14px;font-size:13px;min-height:40px}
-  .tb{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .tb .btn{width:100%}
-  .tb-r{grid-column:1/-1;text-align:center}
-  .issue{padding:12px}
-  .it{flex-direction:column;gap:6px}
-  .iloc{font-size:11px}
-  .files{grid-template-columns:repeat(2,1fr)}
-  .fc{padding:10px}
-  .code{font-size:11px;padding:8px}
-  #btn-dl,#btn-fixall{width:100%;margin:4px 0}
-}
-@media(max-width:400px){
-  .sum{grid-template-columns:1fr 1fr}
-  .tb{grid-template-columns:1fr}
-  .files{grid-template-columns:1fr}
-}
+@media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}}
 </style>
 <script src="/engine.js"></script>
 <script src="/engine_java.js"></script>
