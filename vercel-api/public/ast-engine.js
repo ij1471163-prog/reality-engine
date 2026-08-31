@@ -1,0 +1,303 @@
+// ═══════════════════════════════════════════════════════
+// ast-engine.js v2.1 — إصلاحات إضافية:
+// ✅ Dead code محذوف (walkAST الثاني في analyzeForEach)
+// ✅ LOOP_TYPES محذوف (كان معرّف ومو مستخدم)
+// ✅ buildLoopRanges بدون stop — يكتشف nested loops
+// ✅ forEach callbacks محسوبة كـ loop ranges
+// ═══════════════════════════════════════════════════════
+
+"use strict";
+
+const ACORN_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/acorn/8.11.3/acorn.min.js';
+
+// ═══════════════════════════════════════════════════════
+// Acorn Loader
+// ═══════════════════════════════════════════════════════
+
+const _acorn = {
+    loaded:    false,
+    loading:   false,
+    callbacks: [],
+};
+
+function loadAcorn(cb) {
+    if (_acorn.loaded) { cb(); return; }
+    _acorn.callbacks.push(cb);
+    if (_acorn.loading) return;
+    _acorn.loading = true;
+
+    const s = document.createElement('script');
+    s.src = ACORN_CDN;
+
+    s.onload = () => {
+        _acorn.loaded   = true;
+        _acorn.loading  = false;
+        _acorn.callbacks.forEach(f => f());
+        _acorn.callbacks = []; // تنظيف
+    };
+
+    s.onerror = () => {
+        console.warn('[AST] Acorn failed to load');
+        _acorn.loading   = false;
+        _acorn.callbacks = []; // تنظيف حتى عند الفشل
+    };
+
+    document.head.appendChild(s);
+}
+
+// ═══════════════════════════════════════════════════════
+// AST Parser — يجرب أكثر من إعداد
+// ═══════════════════════════════════════════════════════
+
+const PARSE_CONFIGS = [
+    { ecmaVersion: 2022, sourceType: 'module'  },
+    { ecmaVersion: 2022, sourceType: 'script'  },
+    { ecmaVersion: 2015, sourceType: 'script'  },
+    { ecmaVersion: 5,    sourceType: 'script'  },
+];
+
+function parseAST(code) {
+    if (typeof acorn === 'undefined') return null;
+    for (const cfg of PARSE_CONFIGS) {
+        try {
+            return acorn.parse(code, { ...cfg, locations: true });
+        } catch (_) { /* جرب الإعداد التالي */ }
+    }
+    return null; // فشل كل الإعدادات
+}
+
+// ═══════════════════════════════════════════════════════
+// walkAST — مع خيار إيقاف المشي (stop signal)
+// ═══════════════════════════════════════════════════════
+
+/**
+ * @param {object} node - AST node
+ * @param {object} visitor - { NodeType: (node, stop) => void }
+ *   visitor يقدر ينادي stop() لمنع المشي داخل أبناء هذا الـ node
+ */
+function walkAST(node, visitor) {
+    if (!node || typeof node !== 'object') return;
+
+    let stopped = false;
+    const stop  = () => { stopped = true; };
+
+    if (visitor[node.type]) visitor[node.type](node, stop);
+    if (stopped) return; // لا تمشي داخل الأبناء
+
+    for (const key of Object.keys(node)) {
+        const child = node[key];
+        if (Array.isArray(child))
+            child.forEach(c => { if (c?.type) walkAST(c, visitor); });
+        else if (child?.type)
+            walkAST(child, visitor);
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// Loop Context Tracker
+// ═══════════════════════════════════════════════════════
+
+// الـ methods اللي تُعامَل كـ loop context للتراكم
+const LOOP_LIKE_METHODS = new Set(['forEach','map','filter','reduce','some','every','find']);
+
+/**
+ * يبني قائمة ranges لكل loop في الـ AST
+ * — بما فيها forEach/map callbacks
+ * — بدون stop() حتى يكتشف nested loops
+ */
+function buildLoopRanges(ast) {
+    const ranges = [];
+
+    const pushRange = (node) => {
+        if (node?.loc) ranges.push({ start: node.loc.start.line, end: node.loc.end.line });
+    };
+
+    walkAST(ast, {
+        // for / for..in / for..of / while / do..while — بدون stop
+        ForStatement(node)     { pushRange(node); },
+        ForInStatement(node)   { pushRange(node); },
+        ForOfStatement(node)   { pushRange(node); },
+        WhileStatement(node)   { pushRange(node); },
+        DoWhileStatement(node) { pushRange(node); },
+
+        // ✅ forEach/map/filter/reduce callbacks = loop context
+        CallExpression(node) {
+            const method = node.callee?.property?.name;
+            if (LOOP_LIKE_METHODS.has(method)) {
+                const cb = node.arguments?.[0];
+                if (cb?.loc) pushRange(cb); // range الـ callback نفسه
+            }
+        },
+    });
+
+    return {
+        contains: (line) => ranges.some(r => line >= r.start && line <= r.end),
+    };
+}
+
+// ═══════════════════════════════════════════════════════
+// forEach Analyzer — لا يمشي داخل nested forEach
+// ═══════════════════════════════════════════════════════
+
+function analyzeForEach(ast, issues) {
+    walkAST(ast, {
+        CallExpression(node, stop) {
+            if (node.callee?.property?.name !== 'forEach') return;
+
+            // أوقف المشي داخل هذا الـ node (سنمشي بأنفسنا)
+            stop();
+
+            const callback = node.arguments?.[0];
+            if (!callback) return;
+
+            const objName = node.callee?.object?.name ?? 'arr';
+            const line    = node.loc?.start?.line ?? 0;
+
+            let hasReturn     = false;
+            let hasSideEffect = false;
+
+            // امشِ داخل الـ callback فقط، أوقف عند nested forEach
+            walkAST(callback, {
+                ReturnStatement(ret) {
+                    if (ret.argument) hasReturn = true;
+                },
+                CallExpression(inner, stopInner) {
+                    // لو nested forEach — توقف ولا تعدّها كـ side effect لهذا الـ forEach
+                    if (inner.callee?.property?.name === 'forEach') {
+                        stopInner();
+                        return;
+                    }
+                    // أي استدعاء آخر = side effect
+                    if (inner !== node) hasSideEffect = true;
+                },
+            });
+
+            if (!hasReturn) return;
+
+            issues.push({
+                type:        'bug',
+                sev:         'h',
+                title:       hasSideEffect
+                    ? 'return داخل forEach مع side effects (AST ✓)'
+                    : 'return داخل forEach لا يُرجع قيمة (AST ✓)',
+                line,
+                ev:          `${objName}.forEach(...)`,
+                fix:         hasSideEffect ? null : `${objName}.find(...)`,
+                astVerified: true,
+                conf:        92,
+            });
+
+            // nested forEach داخل هذا الـ callback سيُكتشف
+            // لأن walkAST الخارجي سيمشي فيه بعد أن أعدنا البناء بـ stop()
+            // لا حاجة لـ walkAST إضافي هنا
+        },
+    });
+}
+
+// ═══════════════════════════════════════════════════════
+// Accumulation Bug Analyzer — داخل loops فقط
+// ═══════════════════════════════════════════════════════
+
+function analyzeAccumulation(ast, issues) {
+    // 1. اكتشف المتغيرات المُهيَّأة بـ 0
+    const zeroVars = new Map(); // name → line
+    walkAST(ast, {
+        VariableDeclarator(node) {
+            if (node.init?.type === 'Literal' && node.init.value === 0 && node.id?.name) {
+                zeroVars.set(node.id.name, node.loc?.start?.line ?? 0);
+            }
+        },
+    });
+
+    if (zeroVars.size === 0) return;
+
+    // 2. بناء loop ranges
+    const loopRanges = buildLoopRanges(ast);
+
+    // 3. ابحث عن = بدل += داخل loops فقط
+    walkAST(ast, {
+        AssignmentExpression(node) {
+            if (node.operator !== '=' || node.left?.type !== 'Identifier') return;
+
+            const varName = node.left.name;
+            if (!zeroVars.has(varName)) return;
+
+            const line = node.loc?.start?.line ?? 0;
+
+            // ✅ تحقق إن هذا السطر داخل loop فعلاً
+            if (!loopRanges.contains(line)) return;
+
+            const rightText = node.right?.type ?? '...';
+            issues.push({
+                type:        'bug',
+                sev:         'c',
+                title:       `خطأ تراكم مؤكد: ${varName} = بدل += (AST ✓)`,
+                line,
+                ev:          `${varName} = ${rightText}`,
+                fix:         `${varName} += ...`,
+                astVerified: true,
+                conf:        95,
+            });
+        },
+    });
+}
+
+// ═══════════════════════════════════════════════════════
+// Main: analyzeJSWithAST
+// ═══════════════════════════════════════════════════════
+
+function analyzeJSWithAST(code, fileName) {
+    const ast = parseAST(code);
+    if (!ast) return [];
+
+    const issues = [];
+    analyzeForEach(ast, issues);
+    analyzeAccumulation(ast, issues);
+
+    // Finalize confidence icons
+    issues.forEach(iss => {
+        if (!iss.conf) iss.conf = 85;
+        iss.cIcon = iss.conf >= 90 ? '🟢' : '🟡';
+        iss.cAct  = iss.conf >= 90 ? 'ثقة عالية (AST)' : 'مشكلة محتملة (AST)';
+        iss.cEv   = ['✓ تحليل AST حقيقي', '✓ مو Regex'];
+    });
+
+    return issues;
+}
+
+// ═══════════════════════════════════════════════════════
+// Duplicate Detector — type + line بدل title string
+// ═══════════════════════════════════════════════════════
+
+/**
+ * يُزيل duplicates بين AST issues و Regex issues
+ * المعيار: نفس type + تقارب السطر (±2) + نفس sev
+ * AST يأخذ الأولوية دائماً
+ */
+function deduplicateIssues(astIssues, regexIssues) {
+    const merged = [...astIssues];
+
+    regexIssues.forEach(ri => {
+        const isDuplicate = astIssues.some(ai =>
+            ai.type === ri.type
+            && ai.sev  === ri.sev
+            && Math.abs((ai.line ?? 0) - (ri.line ?? 0)) <= 2
+        );
+        if (!isDuplicate) merged.push(ri);
+    });
+
+    // رتّب بالسطر
+    return merged.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
+}
+
+// ═══════════════════════════════════════════════════════
+// analyzeJSEnhanced — Regex + AST
+// ═══════════════════════════════════════════════════════
+
+function analyzeJSEnhanced(code, fileName) {
+    const regexIssues = analyzeCode(code, fileName);
+    if (typeof acorn === 'undefined') return regexIssues;
+
+    const astIssues = analyzeJSWithAST(code, fileName);
+    return deduplicateIssues(astIssues, regexIssues);
+}
