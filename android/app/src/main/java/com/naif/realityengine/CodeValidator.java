@@ -142,7 +142,7 @@ public class CodeValidator {
     // ═══════════════════════════════════════════════════
 
     static Language detectLanguage(String code, String fullCode) {
-        String combined = (code + " " + (fullCode == null ? "")).toLowerCase();
+        String combined = (code + " " + (fullCode == null ? "" : fullCode)).toLowerCase();
         int javaScore = 0, jsScore = 0, pyScore = 0;
 
         if (combined.contains("public ") || combined.contains("private ") || combined.contains("System.out"))  javaScore += 3;
