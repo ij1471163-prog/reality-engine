@@ -461,11 +461,13 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 function escQ(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n')}
 function toast(msg,t='s'){const el=document.getElementById('toast');el.textContent=msg;el.style.background=t==='e'?'#b91c1c':t==='w'?'#9a6700':'#238636';el.style.display='block';setTimeout(()=>el.style.display='none',3000)}
 
-// حماية مؤجلة - بعد تحميل الصفحة
 window.addEventListener('load', function() {
   const _wt = new URLSearchParams(window.location.search).get('t');
   if (!_wt) {
-    document.getElementById('s-upload').innerHTML = '<div style="text-align:center;padding:48px;color:#f85149;font-size:18px">⛔ افتح من التطبيق فقط</div>';
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background:#b91c1c;color:#fff;text-align:center;padding:10px;font-size:13px;position:sticky;top:0;z-index:100';
+    banner.textContent = '⚠️ افتح من تطبيق Reality Engine للوصول الكامل';
+    document.body.prepend(banner);
   }
 });
 </script>
