@@ -376,7 +376,6 @@ function fixAllEngine(){
   toast('✅ تم إصلاح ' + fixed + ' مشكلة');
   document.getElementById('btn-dl').style.display='inline-block';
   document.getElementById('btn-fixall').style.display='inline-block';
-  setTimeout(()=>dlAll(), 300);
 }
 
 function calcDiff(original, fixed) {
@@ -421,34 +420,32 @@ function showDiff(fn, original, fixed, onApprove) {
 }
 
 function dlAll(){
-  Object.entries(F).forEach(([n,c])=>{
-    const d=document.createElement('div');
-    d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:#000d;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-    const escaped=c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    d.innerHTML='<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;max-width:560px;width:100%">'
-      +'<div style="color:#a371f7;font-weight:700;font-size:15px;margin-bottom:12px">📄 '+n+'</div>'
-      +'<div style="display:flex;gap:8px;margin-bottom:12px">'
-      +'<button id="dl-btn-'+n.replace(/\./g,'')+'" style="flex:1;padding:10px;background:#238636;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600">⬇️ تنزيل الملف</button>'
-      +'<button id="cp-btn-'+n.replace(/\./g,'')+'" style="flex:1;padding:10px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:8px;cursor:pointer;font-weight:600">📋 نسخ الكود</button>'
-      +'<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="padding:10px 14px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:8px;cursor:pointer">✕</button>'
-      +'</div>'
-      +'<textarea style="width:100%;height:200px;background:#010409;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:10px;font-family:monospace;font-size:11px;direction:ltr;resize:none" readonly>'+escaped+'</textarea>'
-      +'</div>';
-    document.body.appendChild(d);
-    const key = n.replace(/\./g,'');
-    document.getElementById('dl-btn-'+key).onclick=()=>{
+  // على الجوال نعرض الكود في textarea للنسخ
+  const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+  if(isMobile){
+    Object.entries(F).forEach(([n,c])=>{
+      const d=document.createElement('div');
+      d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:#0d1117;z-index:9999;padding:16px;overflow:auto';
+      d.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="color:#a371f7;font-weight:700">${n}</span>
+        <button onclick="this.closest('div[style*=fixed]').remove()" style="background:#21262d;color:#58a6ff;border:1px solid #30363d;padding:6px 12px;border-radius:6px;cursor:pointer">✕ إغلاق</button>
+      </div>
+      <textarea style="width:100%;height:80vh;background:#010409;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;direction:ltr" onclick="this.select()">${c}</textarea>
+      <p style="color:#8b949e;font-size:12px;margin-top:8px;text-align:center">اضغط على النص واختر "نسخ الكل"</p>`;
+      document.body.appendChild(d);
+    });
+  } else {
+    Object.entries(F).forEach(([n,c])=>{
       const a=document.createElement('a');
       a.href=URL.createObjectURL(new Blob([c],{type:'text/plain'}));
-      a.download=n; a.click();
-      d.remove();
-    };
-    document.getElementById('cp-btn-'+key).onclick=function(){
-      navigator.clipboard.writeText(c).then(()=>{
-        this.textContent='✅ تم النسخ';
-        setTimeout(()=>{this.textContent='📋 نسخ الكود';},2000);
-      });
-    };
-  });
+      a.download=n;
+      a.style.display='none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=>document.body.removeChild(a),1000);
+    });
+    toast('✅ تم التنزيل');
+  }
 }
 
 function icon(n){if(n.endsWith('.py'))return'🐍';if(/\.(js|ts|jsx)$/.test(n))return'📜';if(n.endsWith('.java'))return'☕';if(n.endsWith('.html'))return'🌐';return'📄'}
