@@ -209,7 +209,13 @@ function analyzeCode(code, fileName) {
         if (_t.startsWith('//') || _t.startsWith('#')) return;
         const _dm = _t.match(/(?:let|var|const)\s+(\w+)\s*=\s*0/);
         if (_dm) _declaredVars2.add(_dm[1]);
-        if (_t.includes('.forEach(') || /for\s*\(/.test(_t)) { _inLoop2=true; _loopDepth2++; }
+        if (_t.includes('.forEach(') || /for\s*\(/.test(_t)) {
+            _inLoop2=true;
+            // عدد { في هذا السطر بس ما نحسب الأقواس التابعة
+            const _openInLine = (_t.match(/\{/g)||[]).length;
+            const _closeInLine = (_t.match(/\}/g)||[]).length;
+            _loopDepth2 += Math.max(1, _openInLine - _closeInLine);
+        }
         if (_inLoop2 && !_t.includes('.forEach(') && !(/for\s*\(/.test(_t)) && (_t==='}' || _t==='});' || _t==='})'||_t.startsWith('});'))) {
             _loopDepth2=Math.max(0,_loopDepth2-1);
             if(_loopDepth2===0) _inLoop2=false;
