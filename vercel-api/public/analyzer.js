@@ -196,6 +196,14 @@ function analyzeCode(code, fileName) {
 
     enhanceStubs(issues, code);
     finalizeIssues(issues, code);
+    // Accumulation detection
+    if (typeof detectAccumulation === 'function') {
+        const accumIssues = detectAccumulation(code, fileName);
+        accumIssues.forEach(ai => {
+            const dup = issues.some(i => Math.abs(i.line - ai.line) <= 1);
+            if (!dup) issues.push(ai);
+        });
+    }
     return issues;
 }
 
