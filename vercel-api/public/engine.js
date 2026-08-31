@@ -80,7 +80,8 @@ function analyzeCode(code,fileName){
             title:hasSE2?'return داخل forEach مع side effects':'return داخل forEach',
             line:i+1,ev:line.trim(),fix:hasSE2?null:line.replace('.forEach(','.find(').trim()});
           inLoop=true;
-        } else if(!line.trim().endsWith(');') && !/{.*}/.test(line)) {
+        } else {
+        inLoop=true; // single-line forEach
         let hasR=false,hasSE=false;
         for(let j=i+1;j<Math.min(i+8,lines.length);j++){
           const jt=lines[j].trim();
