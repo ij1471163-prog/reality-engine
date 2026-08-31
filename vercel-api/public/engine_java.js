@@ -78,11 +78,11 @@ function analyzeJava(code, fileName) {
     if (t.startsWith('//')) return;
     // كشف String == بدل .equals()
     if (/==\s*\w/.test(t) && !t.includes('.equals(') && !t.includes('null') && !t.includes('==\s*true') && !t.includes('== false')) {
-      const varMatch = t.match(/(\w+(?:\.\w+)?)\s*==\s*(\w+(?:\.\w+)?)/);
+      const varMatch = t.match(/(\w+(?:\.\w+)?(?:\(\))?)\s*==\s*(\w+(?:\.\w+)?(?:\(\))?)/);
       if (varMatch) {
         const left = varMatch[1], right = varMatch[2];
         // تحقق إن أحدهم String method مثل getStatus, getCategory
-        if (/get[A-Z]/.test(left) || /get[A-Z]/.test(right)) {
+        if (/get[A-Z]/.test(left) || /get[A-Z]/.test(right) || left.includes('()') || right.includes('()')) {
           const dup = issues.some(x => Math.abs(x.line - (i+1)) <= 1);
           if (!dup) issues.push({
             type: 'bug', sev: 'h',
