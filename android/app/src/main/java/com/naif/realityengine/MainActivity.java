@@ -2,6 +2,7 @@ package com.naif.realityengine;
 
 import android.app.AlertDialog;
 import android.content.Intent;
+import java.io.InputStream;
 import android.content.ClipData;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -229,6 +230,9 @@ public class MainActivity extends AppCompatActivity {
     private void openMultiFilePicker() {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("*/*");
+        String[] mimeTypes = {"text/plain","text/x-python","text/javascript",
+            "text/html","application/zip","application/x-zip-compressed"};
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(intent, PICK_MULTIPLE);
