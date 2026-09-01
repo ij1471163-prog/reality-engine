@@ -120,9 +120,11 @@ function detectPatterns(code, fileName) {
     }
 
     // 8. دوال ناقصة JS - جسم فارغ
-    if (isJS && /function\s+\w+\s*\([^)]*\)\s*\{/.test(t)) {
+    if (isJS && (/function\s+\w+\s*\([^)]*\)\s*\{/.test(t) || /function\s+\w+\s*\([^)]*\)\s*\{\s*\}/.test(t))) {
       const nextLines = lines.slice(i + 1, i + 4).map(l => l.trim());
-      const isEmpty = nextLines[0] === '}' ||
+      // كشف {} في نفس السطر
+      const sameLineEmpty = /function\s+\w+\s*\([^)]*\)\s*\{\s*\}/.test(t);
+      const isEmpty = sameLineEmpty || nextLines[0] === '}' ||
         (nextLines[0] === '' && nextLines[1] && nextLines[1] === '}') ||
         (nextLines[0] && nextLines[0].startsWith('//') && nextLines[1] && nextLines[1] === '}');
       if (isEmpty) {
