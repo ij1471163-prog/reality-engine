@@ -392,6 +392,11 @@ ${F[fn]}
 // ═══════════════════════════════════════════════════════
 
 function fixAllEngine() {
+    // فحص typos خطرة
+    if (typeof detectDangerousTypos !== 'undefined') {
+        const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
+        if (hasRisk) { toast('🚫 تم الرفض — الكود يحتوي APIs خطرة', 'e'); return; }
+    }
     let fixed = 0;
     Object.keys(R).forEach(fn => {
         const issues = (typeof analyzeCodeEnhanced !== "undefined" ? analyzeCodeEnhanced : analyzeCode)(F[fn], fn);
