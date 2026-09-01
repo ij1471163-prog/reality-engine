@@ -273,6 +273,18 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (mainUri != null) {
+                // فحص لو ZIP
+                String uriStr = mainUri.toString().toLowerCase();
+                String mimeType = getContentResolver().getType(mainUri);
+                boolean isZip = uriStr.endsWith(".zip") || 
+                    "application/zip".equals(mimeType) ||
+                    "application/x-zip-compressed".equals(mimeType);
+                
+                if (isZip) {
+                    handleZipFile(mainUri);
+                    return;
+                }
+                
                 Intent intent = new Intent(this, AIAnalysisActivity.class);
                 intent.setData(mainUri);
                 // أضف الملفات الإضافية كـ related files
