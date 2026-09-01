@@ -1,12 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Reality Engine</string>
-    <string name="btn_pick_file">Загрузить файл кода</string>
-    <string name="btn_history">История и резервные копии</string>
-    <string name="btn_approve">Одобрить и применить</string>
-    <string name="btn_reject">Отклонить</string>
-    <string name="btn_proceed">Начать исправление</string>
-    <string name="btn_cancel">Отмена</string>
-    <string name="privacy_hint">Ваш код остаётся на устройстве</string>
-    <string name="no_stubs">Неполных функций не найдено</string>
+    <string name="btn_pick_file">Upload Code File</string>
+    <string name="btn_history">History</string>
+    <string name="btn_approve">Approve</string>
+    <string name="btn_reject">Reject</string>
+    <string name="btn_proceed">Start Fix</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_ai_analyze">✨ ИИ Анализ</string>
+    <string name="btn_web_analyze">🌐 Большие проекты</string>
+    <string name="btn_upload_project">📁 Загрузить проект</string>
+    <string name="privacy_hint">Your code stays on your device</string>
+    <string name="no_stubs">No issues found</string>
+    <string name="analyzing">Analyzing...</string>
+    <string name="fixing">Fixing...</string>
+    <string name="fixed">Fixed successfully</string>
+    <string name="error_no_file">Select a file first</string>
+    <string name="error_file_size">File too large</string>
+    <string name="history_empty">No history yet</string>
+    <string name="export_success">Exported</string>
+    <string name="backup_saved">Backup saved</string>
+    <string name="session_expired">Session expired</string>
+    <string name="dangerous_code">Dangerous code detected</string>
 </resources>

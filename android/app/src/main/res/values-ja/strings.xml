@@ -7,9 +7,9 @@
     <string name="btn_reject">Reject</string>
     <string name="btn_proceed">Start Fix</string>
     <string name="btn_cancel">Cancel</string>
-    <string name="btn_ai_analyze">✨ Análisis IA</string>
-    <string name="btn_web_analyze">🌐 Proyectos grandes</string>
-    <string name="btn_upload_project">📁 Subir proyecto</string>
+    <string name="btn_ai_analyze">✨ AI解析</string>
+    <string name="btn_web_analyze">🌐 大規模プロジェクト</string>
+    <string name="btn_upload_project">📁 プロジェクトをアップロード</string>
     <string name="privacy_hint">Your code stays on your device</string>
     <string name="no_stubs">No issues found</string>
     <string name="analyzing">Analyzing...</string>

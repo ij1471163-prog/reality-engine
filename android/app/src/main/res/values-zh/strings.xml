@@ -1,12 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Reality Engine</string>
-    <string name="btn_pick_file">上传代码文件</string>
-    <string name="btn_history">历史记录与备份</string>
-    <string name="btn_approve">批准并应用</string>
-    <string name="btn_reject">拒绝</string>
-    <string name="btn_proceed">开始修复</string>
-    <string name="btn_cancel">取消</string>
-    <string name="privacy_hint">您的代码保留在设备上</string>
-    <string name="no_stubs">未发现不完整函数</string>
+    <string name="btn_pick_file">Upload Code File</string>
+    <string name="btn_history">History</string>
+    <string name="btn_approve">Approve</string>
+    <string name="btn_reject">Reject</string>
+    <string name="btn_proceed">Start Fix</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_ai_analyze">✨ AI分析</string>
+    <string name="btn_web_analyze">🌐 大型项目</string>
+    <string name="btn_upload_project">📁 上传项目</string>
+    <string name="privacy_hint">Your code stays on your device</string>
+    <string name="no_stubs">No issues found</string>
+    <string name="analyzing">Analyzing...</string>
+    <string name="fixing">Fixing...</string>
+    <string name="fixed">Fixed successfully</string>
+    <string name="error_no_file">Select a file first</string>
+    <string name="error_file_size">File too large</string>
+    <string name="history_empty">No history yet</string>
+    <string name="export_success">Exported</string>
+    <string name="backup_saved">Backup saved</string>
+    <string name="session_expired">Session expired</string>
+    <string name="dangerous_code">Dangerous code detected</string>
 </resources>
