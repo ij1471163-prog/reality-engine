@@ -293,8 +293,7 @@ public class BugDetector {
         boolean inLoop = false;
         java.util.regex.Pattern declPat = java.util.regex.Pattern.compile(
             "(?:let|var|const|int|double|float)\\s+(\\w+)\\s*=\\s*0");
-        String[] accumVars = {"total","sum","count","revenue","value","amount",
-            "price","cost","profit","balance","score","totalRevenue","totalItems"};
+        String[] accumVars = {"total","sum","count","revenue","value","amount","price","cost","profit","balance","score","totalRevenue","totalItems"};
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
             if (t.startsWith("//")) continue;
