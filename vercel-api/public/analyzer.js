@@ -208,14 +208,15 @@ function analyzeCode(code, fileName) {
     const _accumVars = ['total','sum','count','revenue','sales','discount',
       'value','amount','price','cost','profit','balance','score','qty',
       'quantity','inventory','totalRevenue','totalItems','totalDiscount',
-      'totalValue','totalSales'];
+      'totalValue','totalSales','total_value','total_cost','total_weight',
+      'category_revenue','weight_report','capacity_report'];
     const _lines2 = code.split('\n');
     let _inLoop2 = false, _loopDepth2 = 0;
     const _declaredVars2 = new Set();
     _lines2.forEach((_ln, _i) => {
         const _t = _ln.trim();
         if (_t.startsWith('//') || _t.startsWith('#')) return;
-        const _dm = _t.match(/(?:let|var|const)\s+(\w+)\s*=\s*0/);
+        const _dm = _t.match(/(?:let|var|const|int|double|float)\s+(\w+)\s*=\s*0/) || _t.match(/(\w+)\s*=\s*0$/);
         if (_dm) _declaredVars2.add(_dm[1]);
         if (_t.includes('.forEach(') || /for\s*\(/.test(_t)) {
             _inLoop2=true;
