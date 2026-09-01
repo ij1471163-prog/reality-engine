@@ -110,6 +110,8 @@ function analyzeJava(code, fileName) {
     if (_inMethod) {
       _braceDepth += (_t.match(/\{/g)||[]).length - (_t.match(/\}/g)||[]).length;
       if (_t === 'return null;' && _braceDepth <= 1) {
+        const _rdup = issues.some(_x => _x.line === (_i+1) && _x.title.includes('return null'));
+        if (_rdup) return;
         issues.push({type:'stub', sev:'m',
           title:'return null بدون منطق: ' + _methodName + '()',
           line:_i+1, ev:_t, fix:'// أكمل المنطق هنا',
