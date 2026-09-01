@@ -218,7 +218,7 @@ function analyzeCode(code, fileName) {
         if (_t.startsWith('//') || _t.startsWith('#')) return;
         const _dm = _t.match(/(?:let|var|const|int|double|float)\s+(\w+)\s*=\s*0/) || _t.match(/(\w+)\s*=\s*0$/);
         if (_dm) _declaredVars2.add(_dm[1]);
-        if (_t.includes('.forEach(') || /for\s*\(/.test(_t)) {
+        if (_t.includes('.forEach(') || /for\s*\(/.test(_t) || /^for\s+\w+\s+in\s+/.test(_t)) {
             _inLoop2=true;
             // عدد { في هذا السطر بس ما نحسب الأقواس التابعة
             const _openInLine = (_t.match(/\{/g)||[]).length;
