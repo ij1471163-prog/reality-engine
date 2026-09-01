@@ -53,6 +53,8 @@ function pyToJS(code) {
 
   // إضافة أقواس للـ blocks
   out = addJSBraces(out);
+  // احذف الأسطر الفارغة قبل } الأخيرة
+  out = out.replace(/\n\s*\n}/g, '\n}');
 
   return out;
 }
