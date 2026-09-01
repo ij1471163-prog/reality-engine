@@ -98,6 +98,24 @@ function analyzeJava(code, fileName) {
     }
   });
 
+  // Null chain detection — obj.method().method() بدون null check
+  lines.forEach((_l, _i) => {
+    const _t = _l.trim();
+    if (_t.startsWith('//') || _t.startsWith('*')) return;
+    // ابحث عن .method().method() أو .getName().trim() وما شابه
+    if (/\.\w+\(\)\.\w+/.test(_t) && !_t.includes('//')) {
+      const dup = issues.some(_x => Math.abs(_x.line - (_i+1)) <= 1 && _x.title.includes('null'));
+      if (!dup) issues.push({
+        type: 'bug', sev: 'h',
+        title: 'NPE محتمل: تسلسل methods بدون null check',
+        line: _i+1, ev: _t,
+        fix: '// أضف null check قبل هذا السطر',
+        conf: 70, cIcon: '🟡', cAct: 'ممكن NullPointerException',
+        cEv: ['تحقق من null قبل استدعاء الدالة']
+      });
+    }
+  });
+
   // Java accumulation detection
   const _javaAccumVars = ['total','sum','count','revenue','value','amount','price','cost'];
   const _javaLines = code.split('\n');
