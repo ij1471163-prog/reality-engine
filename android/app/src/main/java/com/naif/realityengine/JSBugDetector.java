@@ -239,3 +239,5 @@ public class JSBugDetector {
             if (s.charAt(i) == ch) n++;
         return n;
     }
+
+}
