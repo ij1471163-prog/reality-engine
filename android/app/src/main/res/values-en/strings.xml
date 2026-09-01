@@ -2,11 +2,23 @@
 <resources>
     <string name="app_name">Reality Engine</string>
     <string name="btn_pick_file">Upload Code File</string>
-    <string name="btn_history">History and Backups</string>
-    <string name="btn_approve">Approve and Apply</string>
+    <string name="btn_history">History &amp; Backups</string>
+    <string name="btn_approve">Approve &amp; Apply</string>
     <string name="btn_reject">Reject</string>
     <string name="btn_proceed">Start Fix</string>
     <string name="btn_cancel">Cancel</string>
+    <string name="btn_ai">AI Analysis</string>
+    <string name="btn_web">Analyze Large Projects</string>
     <string name="privacy_hint">Your code stays on your device</string>
-    <string name="no_stubs">No incomplete functions found</string>
+    <string name="no_stubs">No issues found</string>
+    <string name="analyzing">Analyzing...</string>
+    <string name="fixing">Fixing...</string>
+    <string name="fixed">Fixed successfully</string>
+    <string name="error_no_file">Please select a file first</string>
+    <string name="error_file_size">File too large (max 500KB)</string>
+    <string name="history_empty">No analysis history yet</string>
+    <string name="export_success">Exported successfully</string>
+    <string name="backup_saved">Backup saved</string>
+    <string name="session_expired">Session expired — reopen app</string>
+    <string name="dangerous_code">Dangerous code detected — fix rejected</string>
 </resources>
