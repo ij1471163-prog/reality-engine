@@ -69,3 +69,11 @@
 # Keep AIEngine
 -keep class com.naif.realityengine.AIEngine { *; }
 -keepclassmembers class com.naif.realityengine.AIEngine { *; }
+
+# Tink / security-crypto
+-dontwarn javax.annotation.**
+-dontwarn javax.annotation.concurrent.**
+-keep class com.google.crypto.tink.** { *; }
+-dontwarn com.google.crypto.tink.**
+-keep class com.google.errorprone.** { *; }
+-dontwarn com.google.errorprone.**
