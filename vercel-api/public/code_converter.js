@@ -142,10 +142,46 @@ function jsToJava(code) {
   return `public class Main {\n    public static void main(String[] args) {\n    }\n\n${out}\n}`;
 }
 
-// ─── Helper: أضف أقواس Java/JS ────────────────────────
+// ─── Helper: أضف أقواس JS ────────────────────────────
 function addJSBraces(code) {
-  // بسيط — نضيف } لكل block
-  return code;
+  const lines = code.split('\n');
+  const result = [];
+  const indentStack = [0];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const indent = line.match(/^\s*/)[0].length;
+    const t = line.trim();
+
+    if (!t) { result.push(''); continue; }
+
+    // لو indent رجع للخلف — أضف أقواس إغلاق
+    while (indentStack.length > 1 && indent <= indentStack[indentStack.length - 2]) {
+      const prevIndent = indentStack[indentStack.length - 2];
+      indentStack.pop();
+      result.push(' '.repeat(prevIndent) + '}');
+    }
+
+    result.push(line);
+
+    // لو السطر القادم عنده indent أكبر — ادفع للـ stack
+    const nextLine = lines[i + 1];
+    if (nextLine) {
+      const nextIndent = nextLine.match(/^\s*/)[0].length;
+      if (nextIndent > indent && line.trim().endsWith('{')) {
+        indentStack.push(indent);
+      }
+    }
+  }
+
+  // أغلق الأقواس المتبقية
+  while (indentStack.length > 1) {
+    const prevIndent = indentStack[indentStack.length - 2];
+    indentStack.pop();
+    result.push(' '.repeat(prevIndent) + '}');
+  }
+
+  return result.join('\n');
 }
 
 // ─── واجهة للموقع ─────────────────────────────────────
