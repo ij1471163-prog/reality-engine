@@ -12,6 +12,12 @@ export default async function handler(req, res) {
   if (ipReqs.length >= 10) {
     return res.status(429).json({ error: 'Too many requests' });
   }
+
+  // تحقق من User-Agent
+  const ua = req.headers['user-agent'] || '';
+  if (!ua.includes('RealityEngine')) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   
   requests.set(ip, [...ipReqs, now]);
 
