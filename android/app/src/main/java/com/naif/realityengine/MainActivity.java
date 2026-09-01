@@ -48,6 +48,20 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // زر Pro
+        android.widget.Button btnPro = new android.widget.Button(this);
+        btnPro.setText("⭐ Pro");
+        btnPro.setBackgroundColor(0xFF6E40C9);
+        btnPro.setTextColor(0xFFFFFFFF);
+        btnPro.setTextSize(13);
+        android.widget.LinearLayout.LayoutParams proLP = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        proLP.setMargins(16, 0, 0, 0);
+        btnPro.setLayoutParams(proLP);
+        ((android.widget.LinearLayout) btnHistory.getParent()).addView(btnPro);
+        btnPro.setOnClickListener(v -> startActivity(new android.content.Intent(this, SubscriptionActivity.class)));
+
         btnHistory.setOnClickListener(v -> {
             Intent hi = new Intent(this, HistoryActivity.class);
             startActivity(hi);
