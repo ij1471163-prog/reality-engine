@@ -238,6 +238,26 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(intent, PICK_MULTIPLE);
     }
 
+    private void handleZipFile(android.net.Uri uri) {
+        try {
+            InputStream is = getContentResolver().openInputStream(uri);
+            ZipHandler.ZipResult result = ZipHandler.extract(is);
+            if (result.error != null) {
+                Toast.makeText(this, result.error, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            for (ZipHandler.ZipFile zf : result.files) {
+                addFileToProject(zf.name, zf.content);
+            }
+            if (!result.skipped.isEmpty()) {
+                Toast.makeText(this, "تم تخطي " + result.skipped.size() + " ملف", Toast.LENGTH_SHORT).show();
+            }
+            Toast.makeText(this, "✅ تم فتح " + result.files.size() + " ملف", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "خطأ: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
