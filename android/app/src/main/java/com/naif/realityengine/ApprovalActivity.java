@@ -20,6 +20,7 @@ public class ApprovalActivity extends AppCompatActivity {
     private List<StubDetector.StubFunction> stubs;
     private int    currentIndex = 0;
     private int    approved     = 0;
+    private ApprovalWorkflow.WorkflowItem currentItem = null;
     private int    rejected     = 0;
     private BackupManager backupManager;
     private String sessionId;
@@ -113,6 +114,7 @@ public class ApprovalActivity extends AppCompatActivity {
         StubDetector.StubFunction stub = stubs.get(currentIndex);
         ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code, new java.util.LinkedHashMap<>());
 
+        currentItem = ApprovalWorkflow.process(stub, code, new java.util.LinkedHashMap<>());
         tvFuncName.setText(stub.name + "()  —  " + (currentIndex + 1) + "/" + stubs.size());
         tvSafetyScore.setText("Safety Score: " + item.safetyScore + "/100");
         tvBefore.setText(item.before != null ? item.before : stub.snippet);
@@ -132,7 +134,9 @@ public class ApprovalActivity extends AppCompatActivity {
     // ── Approve ───────────────────────────────────────────
     private void handleApprove() {
         StubDetector.StubFunction stub = stubs.get(currentIndex);
-        ApprovalWorkflow.WorkflowItem item = ApprovalWorkflow.process(stub, code, new java.util.LinkedHashMap<>());
+        // استخدم الـ item المعروض مو تولد جديد
+        ApprovalWorkflow.WorkflowItem item = currentItem;
+        if (item == null) return;
 
         if (item.suggestion != null) {
             String before = code;
@@ -204,3 +208,4 @@ public class ApprovalActivity extends AppCompatActivity {
         finish();
     }
 }
+
