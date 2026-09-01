@@ -83,7 +83,7 @@ function analyzeJava(code, fileName) {
         const left = varMatch[1], right = varMatch[2];
         // تحقق إن أحدهم String method مثل getStatus, getCategory
         if (/get[A-Z]/.test(left) || /get[A-Z]/.test(right) || left.includes('()') || right.includes('()')) {
-          const dup = issues.some(x => Math.abs(x.line - (i+1)) <= 1);
+          const dup = issues.some(x => x.line === (i+1) && x.title.includes('String =='));
           if (!dup) issues.push({
             type: 'bug', sev: 'h',
             title: 'String == بدل .equals() في Java',
