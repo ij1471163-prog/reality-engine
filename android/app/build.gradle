@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace 'com.naif.realityengine'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         applicationId "com.naif.realityengine"
         minSdk 24
-        targetSdk 34
+        targetSdk 35
         versionCode 1
         versionName "1.0"
         buildConfigField "String", "AI_KEY", "\"" + (project.hasProperty("AI_KEY") ? project.property("AI_KEY") : (System.getenv("AI_KEY") ?: "")) + "\""
