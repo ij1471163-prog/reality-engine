@@ -196,6 +196,14 @@ function analyzeCode(code, fileName) {
 
     enhanceStubs(issues, code);
     finalizeIssues(issues, code);
+    // Security scan
+    if (typeof scanSecurity === 'function') {
+        const secIssues = scanSecurity(code, fileName);
+        secIssues.forEach(si => {
+            const dup = issues.some(x => x.line === si.line && x.title === si.title);
+            if (!dup) issues.push(si);
+        });
+    }
     // Pattern detection
     if (typeof detectPatterns === 'function') {
         const patternIssues = detectPatterns(code, fileName);
