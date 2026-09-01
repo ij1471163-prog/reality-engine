@@ -70,12 +70,24 @@ public class AnalysisActivity extends AppCompatActivity {
         // Show results
         TextView tvFileName      = findViewById(R.id.tvFileName);
         TextView tvEngineMessage = findViewById(R.id.tvEngineMessage);
+        TextView tvIssueCount    = findViewById(R.id.tvIssueCount);
+        TextView tvSummaryBugs   = findViewById(R.id.tvSummaryBugs);
+        TextView tvSummaryStubs  = findViewById(R.id.tvSummaryStubs);
+        TextView tvSummaryTotal  = findViewById(R.id.tvSummaryTotal);
         LinearLayout llStubs     = findViewById(R.id.llStubs);
         Button btnProceed        = findViewById(R.id.btnProceed);
         Button btnCancel         = findViewById(R.id.btnCancel);
 
-        tvFileName.setText(fileName);
-        tvEngineMessage.setText(report.engineMessage + "\n\n" + report.recommendation);
+        int bugCount  = bugReport.bugs.size();
+        int stubCount = report.stubs != null ? report.stubs.size() : 0;
+        int total     = bugCount + stubCount;
+
+        tvFileName.setText("📄 " + fileName);
+        tvIssueCount.setText(total + " مشكلة");
+        tvSummaryBugs.setText("🐛 " + bugCount + " أخطاء");
+        tvSummaryStubs.setText("⚠️ " + stubCount + " ناقصة");
+        tvSummaryTotal.setText(total == 0 ? "✅ نظيف" : "🔍 يحتاج مراجعة");
+        tvEngineMessage.setText(report.recommendation);
 
         // Add stub cards
         for (EngineAnalyzer.FunctionAnalysis fn : report.stubs) {

@@ -5,30 +5,98 @@
     android:orientation="vertical"
     android:background="#0D1117">
 
-    <TextView
-        android:id="@+id/tvFileName"
-        android:textSize="16sp"
-        android:textColor="#E6EDF3"
-        android:textStyle="bold"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:padding="20dp"/>
-
-    <TextView
-        android:id="@+id/tvEngineMessage"
-        android:textSize="14sp"
-        android:textColor="#E6EDF3"
+    <!-- Header -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingLeft="20dp"
-        android:paddingRight="20dp"
-        android:lineSpacingExtra="4dp"/>
+        android:orientation="horizontal"
+        android:background="#161B22"
+        android:padding="16dp">
 
+        <TextView
+            android:id="@+id/tvFileName"
+            android:textSize="15sp"
+            android:textColor="#A371F7"
+            android:textStyle="bold"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+
+        <TextView
+            android:id="@+id/tvIssueCount"
+            android:textSize="13sp"
+            android:textColor="#8B949E"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Summary Bar -->
+    <LinearLayout
+        android:id="@+id/llSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:background="#0D1117">
+
+        <TextView
+            android:id="@+id/tvSummaryBugs"
+            android:textSize="12sp"
+            android:textColor="#F85149"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:padding="8dp"
+            android:background="#2D1515"
+            android:text="🐛 0 أخطاء"/>
+
+        <View android:layout_width="4dp" android:layout_height="1dp"/>
+
+        <TextView
+            android:id="@+id/tvSummaryStubs"
+            android:textSize="12sp"
+            android:textColor="#F0883E"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:padding="8dp"
+            android:background="#2D1A0A"
+            android:text="⚠️ 0 ناقصة"/>
+
+        <View android:layout_width="4dp" android:layout_height="1dp"/>
+
+        <TextView
+            android:id="@+id/tvSummaryTotal"
+            android:textSize="12sp"
+            android:textColor="#3FB950"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:padding="8dp"
+            android:background="#0D2A14"
+            android:text="✅ جاهز"/>
+    </LinearLayout>
+
+    <!-- Engine Message -->
+    <TextView
+        android:id="@+id/tvEngineMessage"
+        android:textSize="13sp"
+        android:textColor="#8B949E"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingBottom="8dp"/>
+
+    <!-- Issues List -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:padding="16dp">
+        android:padding="12dp">
 
         <LinearLayout
             android:id="@+id/llStubs"
@@ -38,29 +106,31 @@
 
     </ScrollView>
 
+    <!-- Buttons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="16dp"
-        >
+        android:padding="12dp"
+        android:background="#161B22">
 
         <Button
             android:id="@+id/btnCancel"
-            android:text="إلغاء"
+            android:text="↩ رجوع"
             android:layout_width="0dp"
-            android:layout_height="52dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:backgroundTint="#1C2128"
-            android:textColor="#8B949E"/>
+            android:backgroundTint="#21262D"
+            android:textColor="#8B949E"
+            android:layout_marginEnd="8dp"/>
 
         <Button
             android:id="@+id/btnProceed"
-            android:text="ابدأ الإصلاح"
+            android:text="⚡ ابدأ الإصلاح"
             android:layout_width="0dp"
-            android:layout_height="52dp"
+            android:layout_height="48dp"
             android:layout_weight="2"
-            android:backgroundTint="#3FB950"
+            android:backgroundTint="#238636"
             android:textColor="#FFFFFF"/>
 
     </LinearLayout>
