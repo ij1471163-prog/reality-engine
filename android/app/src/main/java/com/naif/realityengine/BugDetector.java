@@ -53,6 +53,11 @@ public class BugDetector {
         if (report.language.equals("python")) {
             detectAccumulation(lines, report);
             detectNoneComparison(lines, report);
+        }
+        if (report.language.equals("javascript") || report.language.equals("java")) {
+            detectJSAccumulation(lines, report);
+            detectJSEquality(lines, report);
+            detectEmptyCatch(lines, report);
             detectModifyIteration(lines, report);
             detectBareExcept(lines, report);
             detectMutableDefault(lines, report);
@@ -283,4 +288,65 @@ public class BugDetector {
             }
         }
     }
+    private static void detectJSAccumulation(String[] lines, BugReport report) {
+        java.util.Set<String> zeroVars = new java.util.HashSet<>();
+        boolean inLoop = false;
+        for (int i = 0; i < lines.length; i++) {
+            String t = lines[i].trim();
+            if (t.startsWith("//")) continue;
+            // اكتشف متغيرات = 0
+            java.util.regex.Matcher dm = java.util.regex.Pattern
+                .compile("(?:let|var|const|int|double|float)\s+(\w+)\s*=\s*0")
+                .matcher(t);
+            if (dm.find()) zeroVars.add(dm.group(1));
+            // دخول حلقة
+            if (t.contains(".forEach(") || t.matches("for\s*\(.*") || t.matches("for\s+\w+.*:.*")) inLoop = true;
+            if (inLoop && (t.equals("}") || t.equals("});") || t.equals("})"))) inLoop = false;
+            // كشف = بدل +=
+            if (inLoop) {
+                for (String v : zeroVars) {
+                    java.util.regex.Pattern p = java.util.regex.Pattern.compile("\b" + v + "\s*=(?!=|\+|-)\s*\S");
+                    if (p.matcher(t).find() && !t.matches(".*(?:let|var|const|int|double|float).*")) {
+                        String fix = t.replaceFirst("(" + v + ")\s*=(?!=)", "$1 +=");
+                        report.addBug(new Bug(BugType.ACCUMULATION,
+                            "خطأ تراكم: " + v + " = بدل +=",
+                            "المتغير " + v + " يُستبدل بدل يُجمع",
+                            fix, i + 1, Severity.CRITICAL));
+                    }
+                }
+            }
+        }
+    }
+
+    private static void detectJSEquality(String[] lines, BugReport report) {
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("(?:get[A-Z]\w*\(\)|\w+)\s*==(?!=)\s*(?:get[A-Z]\w*\(\)|\w+|"[^"]*")");
+        for (int i = 0; i < lines.length; i++) {
+            String t = lines[i].trim();
+            if (t.startsWith("//") || t.startsWith("*")) continue;
+            if (p.matcher(t).find() && !t.contains("===") && !t.contains("null")) {
+                String fix = t.replaceAll("(\w+(?:\.\w+)?(?:\(\))?\s*)==(?!=)", "$1===");
+                report.addBug(new Bug(BugType.NONE_COMPARISON,
+                    "مقارنة غير دقيقة: == بدل ===",
+                    "استخدم === للمقارنة الدقيقة",
+                    fix, i + 1, Severity.MEDIUM));
+            }
+        }
+    }
+
+    private static void detectEmptyCatch(String[] lines, BugReport report) {
+        for (int i = 0; i < lines.length; i++) {
+            String t = lines[i].trim();
+            if ((t.equals("catch(e){}") || t.equals("} catch (Exception e) {")) ) {
+                String next = i + 1 < lines.length ? lines[i + 1].trim() : "";
+                if (next.equals("}") || next.isEmpty()) {
+                    report.addBug(new Bug(BugType.BARE_EXCEPT,
+                        "catch فارغ يخفي الأخطاء",
+                        "أضف معالجة للخطأ",
+                        t.replace("{}", "{ Log.e(TAG, e.getMessage()); }"),
+                        i + 1, Severity.HIGH));
+                }
+            }
+        }
+    }
+
 }
