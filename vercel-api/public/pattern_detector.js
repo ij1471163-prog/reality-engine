@@ -123,8 +123,8 @@ function detectPatterns(code, fileName) {
     if (isJS && /function\s+\w+\s*\([^)]*\)\s*\{/.test(t)) {
       const nextLines = lines.slice(i + 1, i + 4).map(l => l.trim());
       const isEmpty = nextLines[0] === '}' ||
-        (nextLines[0] === '' && nextLines[1] === '}') ||
-        nextLines[0].startsWith('//') && nextLines[1] === '}';
+        (nextLines[0] === '' && nextLines[1] && nextLines[1] === '}') ||
+        (nextLines[0] && nextLines[0].startsWith('//') && nextLines[1] && nextLines[1] === '}');
       if (isEmpty) {
         const funcName = t.match(/function\s+(\w+)/)?.[1];
         issues.push({
