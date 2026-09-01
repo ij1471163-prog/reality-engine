@@ -157,9 +157,11 @@ function addJSBraces(code) {
     const indent = line.search(/\S/);
     
     // اقفل الأقواس المفتوحة لو indent رجع
-    while (stack.length && indent <= stack[stack.length - 1]) {
-      const si = stack.pop();
-      result.push(' '.repeat(si) + '}');
+    while (stack.length && indent < stack[stack.length - 1] + 4) {
+      if (indent <= stack[stack.length - 1]) {
+        const si = stack.pop();
+        result.push(' '.repeat(si) + '}');
+      } else break;
     }
 
     result.push(line);
