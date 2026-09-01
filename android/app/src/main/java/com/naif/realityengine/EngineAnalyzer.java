@@ -116,6 +116,21 @@ public class EngineAnalyzer {
         report.mediumFixable = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.MEDIUM).count();
         report.lowFixable    = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.LOW).count();
 
+        // Security Scan
+        java.util.List<SecurityScanner.SecurityIssue> secIssues = SecurityScanner.scan(code, fileName);
+        if (!secIssues.isEmpty()) {
+            StringBuilder secSummary = new StringBuilder("
+
+🔐 تحذيرات أمنية (").append(secIssues.size()).append("):
+");
+            for (SecurityScanner.SecurityIssue si : secIssues) {
+                secSummary.append(si.severity.equals("CRITICAL") ? "🔴" : "🟠")
+                    .append(" ").append(si.title).append(" — السطر ").append(si.line).append("
+");
+            }
+            report.engineMessage = report.engineMessage + secSummary.toString();
+        }
+
         // Bug Detection دائماً
         BugDetector.BugReport bugReport = BugDetector.detect(code);
         StringBuilder bugSummary = new StringBuilder();
