@@ -291,26 +291,31 @@ public class BugDetector {
     private static void detectJSAccumulation(String[] lines, BugReport report) {
         java.util.Set<String> zeroVars = new java.util.HashSet<>();
         boolean inLoop = false;
+        java.util.regex.Pattern declPat = java.util.regex.Pattern.compile(
+            "(?:let|var|const|int|double|float)\\s+(\\w+)\\s*=\\s*0");
+        String[] accumVars = {"total","sum","count","revenue","value","amount",
+            "price","cost","profit","balance","score","totalRevenue","totalItems"};
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
             if (t.startsWith("//")) continue;
-            // اكتشف متغيرات = 0
-            java.util.regex.Matcher dm = java.util.regex.Pattern
-                .compile("(?:let|var|const|int|double|float)\s+(\w+)\s*=\s*0")
-                .matcher(t);
+            java.util.regex.Matcher dm = declPat.matcher(t);
             if (dm.find()) zeroVars.add(dm.group(1));
-            // دخول حلقة
-            if (t.contains(".forEach(") || t.matches("for\s*\(.*") || t.matches("for\s+\w+.*:.*")) inLoop = true;
-            if (inLoop && (t.equals("}") || t.equals("});") || t.equals("})"))) inLoop = false;
-            // كشف = بدل +=
+            if (t.contains(".forEach(") || t.startsWith("for (") || t.startsWith("for(")) {
+                inLoop = true;
+            }
+            if (inLoop && (t.equals("}") || t.equals("});") || t.startsWith("})"))) {
+                inLoop = false;
+            }
             if (inLoop) {
-                for (String v : zeroVars) {
-                    java.util.regex.Pattern p = java.util.regex.Pattern.compile("\b" + v + "\s*=(?!=|\+|-)\s*\S");
+                for (String v : accumVars) {
+                    if (!zeroVars.contains(v)) continue;
+                    java.util.regex.Pattern p = java.util.regex.Pattern.compile(
+                        "\\b" + v + "\\s*=(?!=|\\+|-)\\s*\\S");
                     if (p.matcher(t).find() && !t.matches(".*(?:let|var|const|int|double|float).*")) {
-                        String fix = t.replaceFirst("(" + v + ")\s*=(?!=)", "$1 +=");
+                        String fix = t.replaceFirst(v + "\\s*=(?!=)", v + " +=");
                         report.addBug(new Bug(BugType.ACCUMULATION,
-                            "خطأ تراكم: " + v + " = بدل +=",
-                            "المتغير " + v + " يُستبدل بدل يُجمع",
+                            "تراكم: " + v + " = بدل +=",
+                            "المتغير يُستبدل بدل يُجمع",
                             fix, i + 1, Severity.CRITICAL));
                     }
                 }
