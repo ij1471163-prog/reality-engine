@@ -55,9 +55,6 @@ public class BugDetector {
             detectNoneComparison(lines, report);
         }
         if (report.language.equals("javascript") || report.language.equals("java")) {
-            detectJSAccumulation(lines, report);
-            detectJSEquality(lines, report);
-            detectEmptyCatch(lines, report);
             detectModifyIteration(lines, report);
             detectBareExcept(lines, report);
             detectMutableDefault(lines, report);
