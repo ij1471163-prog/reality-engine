@@ -261,7 +261,8 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
             for (ZipHandler.ZipFile zf : result.files) {
-                addFileToProject(zf.name, zf.content);
+                // TODO: عرض الملف في واجهة التحليل
+                Toast.makeText(this, "📄 " + zf.name, Toast.LENGTH_SHORT).show();
             }
             if (!result.skipped.isEmpty()) {
                 Toast.makeText(this, "تم تخطي " + result.skipped.size() + " ملف", Toast.LENGTH_SHORT).show();
