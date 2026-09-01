@@ -146,39 +146,33 @@ function jsToJava(code) {
 function addJSBraces(code) {
   const lines = code.split('\n');
   const result = [];
-  const indentStack = [0];
+  let prevIndent = 0;
+  const stack = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const indent = line.match(/^\s*/)[0].length;
     const t = line.trim();
-
     if (!t) { result.push(''); continue; }
 
-    // لو indent رجع للخلف — أضف أقواس إغلاق
-    while (indentStack.length > 1 && indent <= indentStack[indentStack.length - 2]) {
-      const prevIndent = indentStack[indentStack.length - 2];
-      indentStack.pop();
-      result.push(' '.repeat(prevIndent) + '}');
+    const indent = line.search(/\S/);
+    
+    // اقفل الأقواس المفتوحة لو indent رجع
+    while (stack.length && indent <= stack[stack.length - 1]) {
+      const si = stack.pop();
+      result.push(' '.repeat(si) + '}');
     }
 
     result.push(line);
 
-    // لو السطر القادم عنده indent أكبر — ادفع للـ stack
-    const nextLine = lines[i + 1];
-    if (nextLine) {
-      const nextIndent = nextLine.match(/^\s*/)[0].length;
-      if (nextIndent > indent && line.trim().endsWith('{')) {
-        indentStack.push(indent);
-      }
+    // لو السطر ينتهي بـ { → ادفع الـ indent للـ stack
+    if (t.endsWith('{')) {
+      stack.push(indent);
     }
   }
 
-  // أغلق الأقواس المتبقية
-  while (indentStack.length > 1) {
-    const prevIndent = indentStack[indentStack.length - 2];
-    indentStack.pop();
-    result.push(' '.repeat(prevIndent) + '}');
+  // اقفل الباقي
+  while (stack.length) {
+    result.push(' '.repeat(stack.pop()) + '}');
   }
 
   return result.join('\n');
