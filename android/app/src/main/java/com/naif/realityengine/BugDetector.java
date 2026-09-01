@@ -336,7 +336,7 @@ public class BugDetector {
     private static void detectEmptyCatch(String[] lines, BugReport report) {
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
-            if ((t.equals("catch(e){}") || t.equals("} catch (Exception e) {")) ) {
+            if (t.equals("catch(e){}") || t.equals("} catch (Exception e) {")) {
                 String next = i + 1 < lines.length ? lines[i + 1].trim() : "";
                 if (next.equals("}") || next.isEmpty()) {
                     report.addBug(new Bug(BugType.BARE_EXCEPT,
