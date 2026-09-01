@@ -128,6 +128,20 @@ public class AIAnalysisActivity extends AppCompatActivity {
             if (fileCode.isEmpty()) return;
             btnAnalyze.setEnabled(false);
             btnAnalyze.setText("⏳ جاري التحليل...");
+            // تحقق من حد AI المجاني
+            if (!PremiumManager.canUseAI(AIAnalysisActivity.this)) {
+                int remaining = PremiumManager.getRemainingAI(AIAnalysisActivity.this);
+                new android.app.AlertDialog.Builder(AIAnalysisActivity.this)
+                    .setTitle("انتهت تحليلات AI اليوم")
+                    .setMessage("استخدمت 3/3 تحليلات مجانية اليوم.\nاشترك في Pro للحصول على تحليلات غير محدودة.")
+                    .setPositiveButton("⭐ اشترك Pro", (d, w) -> {
+                        startActivity(new android.content.Intent(AIAnalysisActivity.this, SubscriptionActivity.class));
+                    })
+                    .setNegativeButton("لاحقاً", null)
+                    .show();
+                return;
+            }
+            PremiumManager.incrementAICount(AIAnalysisActivity.this);
             tvStatus.setText("جاري إرسال الكود لـ Mistral AI...");
             runAI(btnAnalyze);
         });
