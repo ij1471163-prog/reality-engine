@@ -98,6 +98,27 @@ function analyzeJava(code, fileName) {
     }
   });
 
+  // Return null detection
+  let _inMethod = false, _methodName = '', _braceDepth = 0;
+  lines.forEach((_l, _i) => {
+    const _t = _l.trim();
+    if (/(?:public|private|protected)\s+\w[\w<>\[\]]*\s+(\w+)\s*\(/.test(_t) && !_t.includes('abstract')) {
+      _inMethod = true; _braceDepth = 0;
+      const _m = _t.match(/(?:public|private|protected)\s+\w[\w<>\[\]]*\s+(\w+)\s*\(/);
+      _methodName = _m ? _m[1] : '';
+    }
+    if (_inMethod) {
+      _braceDepth += (_t.match(/\{/g)||[]).length - (_t.match(/\}/g)||[]).length;
+      if (_t === 'return null;' && _braceDepth <= 1) {
+        issues.push({type:'stub', sev:'m',
+          title:'return null بدون منطق: ' + _methodName + '()',
+          line:_i+1, ev:_t, fix:'// أكمل المنطق هنا',
+          conf:75, cIcon:'🟡', cAct:'دالة ناقصة', cEv:['الدالة ترجع null دائماً']});
+      }
+      if (_braceDepth <= 0) _inMethod = false;
+    }
+  });
+
   // Null chain detection — obj.method().method() بدون null check
   lines.forEach((_l, _i) => {
     const _t = _l.trim();
