@@ -109,6 +109,13 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 // ═══════════════════════════════════════════════════════
 
 const F = {}; // filename → content
+window._sessionToken = null;
+
+// جيب session عند تحميل الصفحة
+fetch('/api/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
+  .then(r => r.json())
+  .then(d => { if (d.token) window._sessionToken = d.token; })
+  .catch(() => {});
 // Debug - show on page
 setTimeout(() => {
   const d = document.createElement('div');
@@ -177,6 +184,11 @@ function goBack() {
 // ═══════════════════════════════════════════════════════
 
 function analyzeAll() {
+  // تحقق من session
+  if (!window._sessionToken) {
+    toast('⚠️ جلسة منتهية — أعد فتح التطبيق', 'e');
+    return;
+  }
     Object.keys(R).forEach(k => delete R[k]);
     let tot = 0, st = 0, bg = 0;
     Object.entries(F).forEach(([n, c]) => {
