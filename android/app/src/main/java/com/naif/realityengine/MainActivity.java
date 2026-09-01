@@ -69,7 +69,7 @@ public class MainActivity extends AppCompatActivity {
 
         // زر تحليل AI مستقل
         android.widget.Button btnAI = new android.widget.Button(this);
-        btnAI.setText("✨ تحليل بالذكاء الاصطناعي");
+        btnAI.setText(getString(R.string.btn_ai_analyze));
         btnAI.setBackgroundColor(0xFF6E40C9);
         btnAI.setTextColor(0xFFFFFFFF);
         btnAI.setTextSize(15);
@@ -87,7 +87,7 @@ public class MainActivity extends AppCompatActivity {
 
         // زر الموقع الويب
         android.widget.Button btnWeb = new android.widget.Button(this);
-        btnWeb.setText("🌐 تحليل مشاريع كبيرة");
+        btnWeb.setText(getString(R.string.btn_web_analyze));
         btnWeb.setBackgroundColor(0xFF0D1117);
         btnWeb.setTextColor(0xFF58A6FF);
         btnWeb.setTextSize(15);
@@ -125,7 +125,7 @@ public class MainActivity extends AppCompatActivity {
 
         // زر رفع مشروع (ملفات متعددة)
         android.widget.Button btnProject = new android.widget.Button(this);
-        btnProject.setText("📁 رفع مشروع");
+        btnProject.setText(getString(R.string.btn_upload_project));
         btnProject.setBackgroundColor(0xFF1C2128);
         btnProject.setTextColor(0xFF58A6FF);
         btnProject.setTextSize(15);
