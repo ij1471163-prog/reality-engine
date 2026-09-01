@@ -70,7 +70,7 @@ function detectPatterns(code, fileName) {
     }
 
     // 5. قسمة على صفر محتملة
-    if (/\/\s*\w+/.test(t) && !/\/\/|https?:/.test(t)) {
+    if (/\/\s*\w+/.test(t) && !/\/\/|https?:/.test(t) && !t.includes("'") && !t.includes('"') && !t.includes('`')) {
       const divisor = t.match(/\/\s*(\w+)/)?.[1];
       if (divisor && !['2','10','100','1000'].includes(divisor)) {
         const defined = lines.slice(0, i).some(l =>
