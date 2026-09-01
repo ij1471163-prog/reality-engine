@@ -2,6 +2,11 @@
 // يمنع مشاركة أو نسخ رابط الموقع
 
 (function() {
+  // شغّل فقط لو من التطبيق
+  const isApp = navigator.userAgent.includes('RealityEngine') || 
+                location.search.includes('dev=1');
+  if (!isApp) return;
+
   // 1. منع right-click
   document.addEventListener('contextmenu', e => e.preventDefault());
 
