@@ -64,7 +64,7 @@ public class JSBugDetector {
             if (t.startsWith("//") || t.startsWith("*")) { continue; }
             if (t.contains(" == ") && !t.contains("===") && !t.contains("null") && !t.contains("undefined")) {
                 bugs.add(new JSBug("== بدل ===", "استخدم === للمقارنة الدقيقة",
-                    t.replace(" == ", " === "), i + 1, "MEDIUM"));
+                    t.replaceAll(" == ", " === "), i + 1, "MEDIUM"));
             }
         }
     }
@@ -72,7 +72,8 @@ public class JSBugDetector {
     private static void detectEmptyCatch(String[] lines, List<JSBug> bugs) {
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
-            if (t.equals("} catch (e) {}") || t.equals("catch(e){}")) {
+            boolean isEmptyCatch = t.equals("} catch (e) {}") || t.equals("catch(e){}");
+            if (isEmptyCatch) {
                 bugs.add(new JSBug("catch فارغ", "أضف معالجة للخطأ",
                     "} catch (e) { console.error(e); }", i + 1, "HIGH"));
             }
