@@ -325,16 +325,19 @@ public class BugDetector {
     }
 
     private static void detectJSEquality(String[] lines, BugReport report) {
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile("(?:get[A-Z]\w*\(\)|\w+)\s*==(?!=)\s*(?:get[A-Z]\w*\(\)|\w+|"[^"]*")");
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim();
-            if (t.startsWith("//") || t.startsWith("*")) continue;
-            if (p.matcher(t).find() && !t.contains("===") && !t.contains("null")) {
-                String fix = t.replaceAll("(\w+(?:\.\w+)?(?:\(\))?\s*)==(?!=)", "$1===");
-                report.addBug(new Bug(BugType.NONE_COMPARISON,
-                    "مقارنة غير دقيقة: == بدل ===",
-                    "استخدم === للمقارنة الدقيقة",
-                    fix, i + 1, Severity.MEDIUM));
+            if (t.startsWith("//") || t.startsWith("*")) { continue; }
+            if (t.contains("==") && !t.contains("===") && !t.contains("null")) {
+                boolean hasGetMethod = t.matches(".*get[A-Z]\w*\(\).*==.*") ||
+                    t.matches(".*==.*get[A-Z]\w*\(\).*");
+                if (hasGetMethod) {
+                    String fix = t.replaceAll("(\w+(?:\.\w+)?(?:\(\))?\s*)==(?!=)", "$1===");
+                    report.addBug(new Bug(BugType.NONE_COMPARISON,
+                        "مقارنة غير دقيقة: == بدل ===",
+                        "استخدم === للمقارنة الدقيقة",
+                        fix, i + 1, Severity.MEDIUM));
+                }
             }
         }
     }
