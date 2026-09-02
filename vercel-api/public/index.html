@@ -384,7 +384,7 @@ async function fixAllWithAI() {
     // فحص typos أولاً
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
-        if (hasRisk) { toast('🚫 تم الرفض — الكود يحتوي APIs خطرة', 'e'); return; }
+        if (hasRisk && !confirm('⚠️ الكود يحتوي APIs خطرة. متابعة للاختبار؟')) { return; }
     }
 
     const btn = document.getElementById('btn-aiall');
@@ -430,7 +430,7 @@ function fixAllEngine() {
     // فحص typos خطرة
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
-        if (hasRisk) { toast('🚫 تم الرفض — الكود يحتوي APIs خطرة', 'e'); return; }
+        if (hasRisk && !confirm('⚠️ الكود يحتوي APIs خطرة. متابعة للاختبار؟')) { return; }
     }
     let fixed = 0;
     Object.keys(R).forEach(fn => {
