@@ -13,6 +13,10 @@ public class PremiumManager {
     private static final String KEY_AI_COUNT = "ai_count_today";
     private static final String KEY_AI_DATE = "ai_date";
     private static final int FREE_AI_LIMIT = 3;
+    private static final int WEB_MAX_QUOTA   = 10;
+    private static final String KEY_WEB_COUNT = "web_count";
+    private static final String KEY_WEB_DATE  = "web_date";
+    private static final String KEY_WEB_LAST  = "web_last_refill";
 
     public static void setPremium(Context ctx, boolean premium) {
         getPrefs(ctx).edit().putBoolean(KEY_PREMIUM, premium).apply();
@@ -20,6 +24,35 @@ public class PremiumManager {
 
     public static boolean isPremium(Context ctx) {
         return getPrefs(ctx).getBoolean(KEY_PREMIUM, false);
+    }
+
+    // ─── WebView Quota ─────────────────────────────────
+
+    public static int getWebQuota(Context ctx) {
+        android.content.SharedPreferences p = ctx.getSharedPreferences(PREFS, 0);
+        String today = new java.text.SimpleDateFormat("yyyy-MM-dd",
+            java.util.Locale.US).format(new java.util.Date());
+        String lastRefill = p.getString(KEY_WEB_LAST, "");
+        int quota = p.getInt(KEY_WEB_COUNT, WEB_MAX_QUOTA);
+
+        // أضف +1 كل يوم جديد (حد أقصى 10)
+        if (!today.equals(lastRefill)) {
+            quota = Math.min(WEB_MAX_QUOTA, quota + 1);
+            p.edit().putInt(KEY_WEB_COUNT, quota)
+                    .putString(KEY_WEB_LAST, today).apply();
+        }
+        return quota;
+    }
+
+    public static boolean canUseWeb(Context ctx) {
+        if (isPremium(ctx)) return true;
+        return getWebQuota(ctx) > 0;
+    }
+
+    public static void decrementWebQuota(Context ctx) {
+        android.content.SharedPreferences p = ctx.getSharedPreferences(PREFS, 0);
+        int quota = getWebQuota(ctx);
+        p.edit().putInt(KEY_WEB_COUNT, Math.max(0, quota - 1)).apply();
     }
 
     public static boolean canUseAI(Context ctx) {
