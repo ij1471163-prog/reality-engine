@@ -234,7 +234,9 @@ public class BillingManager implements PurchasesUpdatedListener {
             }
 
             String monthly = "---", yearly = "---";
-            for (ProductDetails details : list.getProductDetailsList() != null ? list.getProductDetailsList() : new java.util.ArrayList<>()) {
+            java.util.List<ProductDetails> pdList = list.getProductDetailsList();
+            if (pdList == null) pdList = new java.util.ArrayList<>();
+            for (ProductDetails details : pdList) {
                 List<ProductDetails.SubscriptionOfferDetails> offers =
                     details.getSubscriptionOfferDetails();
                 if (offers != null && !offers.isEmpty()) {
