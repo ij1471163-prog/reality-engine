@@ -382,3 +382,124 @@ function analyzeProject(code, fileName, taintIssues) {
     },
   };
 }
+
+// ═══════════════════════════════════════════════════════
+// Multi-File Analysis — Cross-file Intelligence
+// ═══════════════════════════════════════════════════════
+
+function analyzeMultipleFiles(files) {
+  if (!files || files.length === 0) return null;
+
+  const fileResults = [];
+  const globalImportMap = new Map();
+  const globalFunctionMap = new Map();
+  const crossFileIssues = [];
+
+  // ─── 1. حلل كل ملف منفرداً ───────────────────────────
+  files.forEach(file => {
+    const result = analyzeProject(file.code, file.name, []);
+    fileResults.push({ file: file.name, result });
+
+    // جمع imports وexports
+    result.fileInfo.imports.forEach(imp => {
+      if (!globalImportMap.has(file.name)) globalImportMap.set(file.name, []);
+      globalImportMap.get(file.name).push(imp.module);
+    });
+
+    result.fileInfo.functions.forEach(fn => {
+      globalFunctionMap.set(`${file.name}::${fn.name}`, {
+        file: file.name, fn, calls: result.callGraph[fn.name]?.calls || []
+      });
+    });
+  });
+
+  // ─── 2. ابنِ Project Graph ────────────────────────────
+  const projectGraph = buildProjectGraph(fileResults, globalImportMap);
+
+  // ─── 3. Cross-file Taint ─────────────────────────────
+  if (typeof analyzeWithIntelligence === 'function') {
+    files.forEach(file => {
+      const taint = analyzeWithIntelligence(file.code, file.name);
+      taint.taintIssues.forEach(issue => {
+        crossFileIssues.push({ ...issue, sourceFile: file.name });
+      });
+    });
+  }
+
+  // ─── 4. Framework من أكثر ملف ────────────────────────
+  const frameworks = fileResults.map(r => r.result.framework).filter(Boolean);
+  const dominantFramework = frameworks.reduce((acc, fw) => {
+    if (!fw) return acc;
+    acc[fw.name] = (acc[fw.name] || 0) + 1;
+    return acc;
+  }, {});
+  const topFramework = Object.entries(dominantFramework).sort((a,b) => b[1]-a[1])[0];
+
+  // ─── 5. API Endpoints من كل الملفات ──────────────────
+  const allEndpoints = [];
+  fileResults.forEach(r => {
+    r.result.endpoints.forEach(ep => {
+      allEndpoints.push({ ...ep, file: r.file });
+    });
+  });
+
+  // ─── 6. Context Pack للـ AI ───────────────────────────
+  const contextPack = {
+    framework:   topFramework ? topFramework[0] : 'Unknown',
+    files:       files.map(f => f.name),
+    endpoints:   allEndpoints,
+    crossFileIssues: crossFileIssues.slice(0, 10),
+    projectGraph,
+    aiPrompt: crossFileIssues.length > 0 ? {
+      issue:    crossFileIssues[0].title,
+      severity: 'CRITICAL',
+      dataFlow: crossFileIssues[0].cEv || [],
+      task:     'Fix cross-file vulnerability with minimal changes',
+    } : null,
+  };
+
+  return {
+    files:          fileResults.length,
+    framework:      topFramework ? topFramework[0] : 'Unknown',
+    totalEndpoints: allEndpoints.length,
+    endpoints:      allEndpoints,
+    crossFileIssues,
+    projectGraph,
+    contextPack,
+    summary: {
+      filesAnalyzed:  files.length,
+      totalIssues:    crossFileIssues.length,
+      critical:       crossFileIssues.filter(i => i.sev === 'c').length,
+      endpoints:      allEndpoints.length,
+      framework:      topFramework ? topFramework[0] : 'Unknown',
+    },
+  };
+}
+
+function buildProjectGraph(fileResults, importMap) {
+  const graph = {};
+
+  fileResults.forEach(({ file, result }) => {
+    graph[file] = {
+      imports:   importMap.get(file) || [],
+      exports:   result.fileInfo.exports.map(e => e.name),
+      functions: result.fileInfo.functions.map(f => f.name),
+      endpoints: result.endpoints,
+    };
+  });
+
+  // ابنِ edges بين الملفات
+  const edges = [];
+  Object.entries(graph).forEach(([file, info]) => {
+    info.imports.forEach(imp => {
+      const target = fileResults.find(r =>
+        r.file.includes(imp) || imp.includes(r.file.replace(/\.\w+$/, ''))
+      );
+      if (target) {
+        edges.push({ from: file, to: target.file, type: 'import' });
+      }
+    });
+  });
+
+  return { nodes: graph, edges };
+}
