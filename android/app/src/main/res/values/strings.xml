@@ -21,4 +21,7 @@
     <string name="backup_saved">Backup saved</string>
     <string name="session_expired">Session expired — reopen app</string>
     <string name="dangerous_code">Dangerous code detected — fix rejected</string>
+    <string name="btn_ai_analyze">✨ AI Analysis</string>
+    <string name="btn_web_analyze">🌐 Analyze Large Projects</string>
+    <string name="btn_upload_project">📁 Upload Project</string>
 </resources>
