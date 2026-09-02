@@ -128,6 +128,14 @@ function extractFunctions(lines, ext) {
     // Arrow function
     m = t.match(/(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/);
     if (m) { functions.push({ name: m[1], params: parseParams(m[2]), line: i + 1, async: t.includes('async') }); return; }
+    // Arrow in route handler
+    m = t.match(/(?:async\s*)?\(([^)]*)\)\s*=>\s*\{/);
+    if (m && !t.includes('function')) {
+      const routeMatch = t.match(/app\.\w+\s*\([^,]+,\s*(?:async\s*)?\(([^)]*)\)/);
+      if (routeMatch) {
+        functions.push({ name: 'handler', params: parseParams(routeMatch[1]), line: i + 1, async: t.includes('async') });
+      }
+    }
     // Python
     m = t.match(/^(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)/);
     if (m) { functions.push({ name: m[1], params: parseParams(m[2]), line: i + 1, async: t.startsWith('async') }); return; }
