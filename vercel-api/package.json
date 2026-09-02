@@ -1,4 +1,8 @@
 {
   "name": "reality-engine-api",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "formidable": "^3.5.1"
+  }
 }
