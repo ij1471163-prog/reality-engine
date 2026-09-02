@@ -130,6 +130,19 @@ public class EngineAnalyzer {
             secSummary = sb.toString();
         }
 
+        // MultiLang Analysis (TS/Kotlin/PHP)
+        java.util.List<MultiLangAnalyzer.Issue> mlIssues = MultiLangAnalyzer.analyze(code, fileName);
+        if (!mlIssues.isEmpty()) {
+            StringBuilder mlSummary = new StringBuilder("\n\n[MultiLang] ");
+            mlSummary.append(mlIssues.size()).append(" مشاكل:\n");
+            for (MultiLangAnalyzer.Issue mi : mlIssues) {
+                mlSummary.append("[").append(mi.severity).append("] ")
+                    .append(mi.title).append(" — السطر ").append(mi.line).append("\n");
+            }
+            if (report.engineMessage != null)
+                report.engineMessage = report.engineMessage + mlSummary.toString();
+        }
+
         // ✅ Bug Detection
         BugDetector.BugReport bugReport = BugDetector.detect(code);
         StringBuilder bugSummary = new StringBuilder();
