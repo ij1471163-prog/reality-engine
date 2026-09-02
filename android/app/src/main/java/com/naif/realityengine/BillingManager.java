@@ -111,14 +111,14 @@ public class BillingManager implements PurchasesUpdatedListener {
                 return;
             }
 
-            if (productDetailsList.isEmpty()) {
+            if (productDetailsList.getProductDetailsList() == null || productDetailsList.getProductDetailsList().isEmpty()) {
                 if (listener != null) {
                     listener.onBillingError("المنتج غير موجود");
                 }
                 return;
             }
 
-            ProductDetails productDetails = productDetailsList.get(0);
+            ProductDetails productDetails = productDetailsList.getProductDetailsList().get(0);
             List<ProductDetails.SubscriptionOfferDetails> offers =
                 productDetails.getSubscriptionOfferDetails();
 
@@ -234,7 +234,7 @@ public class BillingManager implements PurchasesUpdatedListener {
             }
 
             String monthly = "---", yearly = "---";
-            for (ProductDetails details : list) {
+            for (ProductDetails details : list.getProductDetailsList() != null ? list.getProductDetailsList() : new java.util.ArrayList<>()) {
                 List<ProductDetails.SubscriptionOfferDetails> offers =
                     details.getSubscriptionOfferDetails();
                 if (offers != null && !offers.isEmpty()) {
