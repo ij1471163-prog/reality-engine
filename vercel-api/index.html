@@ -89,6 +89,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
       <h2>📁 ارفع ملفات مشروعك</h2>
       <p>Python · JavaScript · Java · HTML — حتى 10 ملفات · 500KB لكل ملف</p>
       <button class="btn btn-p" onclick="event.stopPropagation();document.getElementById('inp').click()">اختر الملفات</button>
+      <button class="btn btn-s" onclick="event.stopPropagation();document.getElementById('inp-zip').click()" style="margin-top:8px">📦 رفع مشروع ZIP</button>
     </div>
     <input type="file" id="inp" multiple accept=".py,.js,.ts,.java,.kt,.php,.html,.jsx,.tsx,text/x-java-source,text/plain">
     <div id="fs" style="display:none">
@@ -159,6 +160,24 @@ dz.addEventListener('drop', e => {
     loadFiles(e.dataTransfer.files);
 });
 document.getElementById('inp').addEventListener('change', e => loadFiles(e.target.files));
+document.getElementById('inp-zip').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    toast('⏳ جاري فك الضغط...');
+    const form = new FormData();
+    form.append('zip', file);
+    try {
+        const res = await fetch('/api/unzip', { method: 'POST', body: form });
+        const data = await res.json();
+        if (data.error) { toast('❌ ' + data.error, 'e'); return; }
+        data.files.forEach(f => { F[f.name] = f.content; });
+        renderFiles();
+        toast('✅ ' + data.total + ' ملف من ZIP');
+    } catch(err) {
+        toast('❌ خطأ في رفع ZIP', 'e');
+    }
+    e.target.value = '';
+});
 
 // ═══════════════════════════════════════════════════════
 // File Loading
