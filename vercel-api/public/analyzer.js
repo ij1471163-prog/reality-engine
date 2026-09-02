@@ -204,6 +204,35 @@ function analyzeCode(code, fileName) {
             if (!dup) issues.push(ci);
         });
     }
+    // TypeScript/Kotlin/PHP analysis
+    const ext = fileName.split('.').pop().toLowerCase();
+    if (ext === 'ts' || ext === 'tsx') {
+        if (typeof analyzeTypeScript === 'function') {
+            const tsResult = analyzeTypeScript(code, fileName);
+            tsResult.issues.forEach(i => {
+                const dup = issues.some(x => x.line === i.line && x.title === i.title);
+                if (!dup) issues.push(i);
+            });
+        }
+    }
+    if (ext === 'kt') {
+        if (typeof analyzeKotlin === 'function') {
+            const ktResult = analyzeKotlin(code, fileName);
+            ktResult.issues.forEach(i => {
+                const dup = issues.some(x => x.line === i.line && x.title === i.title);
+                if (!dup) issues.push(i);
+            });
+        }
+    }
+    if (ext === 'php') {
+        if (typeof analyzePHP === 'function') {
+            const phpResult = analyzePHP(code, fileName);
+            phpResult.issues.forEach(i => {
+                const dup = issues.some(x => x.line === i.line && x.title === i.title);
+                if (!dup) issues.push(i);
+            });
+        }
+    }
     // Security scan
     if (typeof scanSecurity === 'function') {
         const secIssues = scanSecurity(code, fileName);
