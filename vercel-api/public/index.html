@@ -53,6 +53,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 #inp{display:none}
 @media(max-width:600px){.sum{grid-template-columns:repeat(2,1fr)}.container{padding:12px}}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="/engine_java.js"></script>
 <script src="/analyzer.js"></script>
 <script src="/ast-engine.js"></script>
@@ -172,6 +173,7 @@ document.getElementById('inp-zip').addEventListener('change', async e => {
         const data = await res.json();
         if (data.error) { toast('❌ ' + data.error, 'e'); return; }
         data.files.forEach(f => { F[f.name] = f.content; });
+        _fromZip = true;
         renderFiles();
         toast('✅ ' + data.total + ' ملف من ZIP');
     } catch(err) {
@@ -185,6 +187,7 @@ document.getElementById('inp-zip').addEventListener('change', async e => {
 // ═══════════════════════════════════════════════════════
 
 function loadFiles(fl) {
+    _fromZip = false;
     for (const f of fl) {
         if (Object.keys(F).length >= 10) { toast('الحد 10 ملفات', 'e'); break; }
         if (f.size > 512000)              { toast(f.name + ': يتجاوز 500KB', 'e'); continue; }
@@ -524,7 +527,11 @@ function calcDiff(original, fixed) {
 // Download — ملف واحد modal في كل مرة (لا loop)
 // ═══════════════════════════════════════════════════════
 
+// هل المشروع جاء من ZIP؟
+let _fromZip = false;
+
 function dlAll() {
+    if (_fromZip) { dlAsZip(); return; }
     const entries = Object.entries(F);
     if (!entries.length) return;
     let idx = 0;
@@ -626,6 +633,21 @@ function refreshStats() {
 // ═══════════════════════════════════════════════════════
 // Utilities
 // ═══════════════════════════════════════════════════════
+
+async function dlAsZip() {
+    const zip = new JSZip();
+    Object.entries(F).forEach(([name, content]) => {
+        zip.file(name, content);
+    });
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'reality-engine-fixed.zip';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 1000);
+    toast('✅ تم تنزيل ZIP');
+}
 
 function esc(s) {
     return String(s)
