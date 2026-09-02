@@ -113,18 +113,19 @@ public class MainActivity extends AppCompatActivity {
                     String webUrl = "https://reality-engine-api-livid.vercel.app?t=" + token + "&dev=1";
                     android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
                     h.post(() -> {
-                        // تحقق من Premium
-                        if (!PremiumManager.isPremium(MainActivity.this)) {
+                        // تحقق من WebView quota
+                        if (!PremiumManager.canUseWeb(MainActivity.this)) {
                             new android.app.AlertDialog.Builder(MainActivity.this)
-                                .setTitle("ميزة Pro")
-                                .setMessage("تحليل المشاريع الكبيرة متاح لمشتركي Pro فقط.")
+                                .setTitle("انتهت تحليلاتك اليوم")
+                                .setMessage("استخدمت كل ملفاتك المجانية اليوم.\nيتجدد +1 غداً (حد أقصى 10)\nأو اشترك Pro للوصول غير المحدود.")
                                 .setPositiveButton("⭐ اشترك Pro", (d, w) -> {
                                     startActivity(new Intent(MainActivity.this, SubscriptionActivity.class));
                                 })
-                                .setNegativeButton("لاحقاً", null)
+                                .setNegativeButton("حسناً", null)
                                 .show();
                             return;
                         }
+                        PremiumManager.decrementWebQuota(MainActivity.this);
                         Intent webIntent = new Intent(MainActivity.this, WebViewActivity.class);
                         webIntent.putExtra("url", webUrl);
                         startActivity(webIntent);
