@@ -123,7 +123,7 @@ public class EngineAnalyzer {
             StringBuilder sb = new StringBuilder("\n\n\uD83D\uDD10 \u062a\u062d\u0630\u064a\u0631\u0627\u062a \u0623\u0645\u0646\u064a\u0629 (")
                 .append(secIssues.size()).append("):\n");
             for (SecurityScanner.SecurityIssue si : secIssues) {
-                sb.append(si.severity.equals("CRITICAL") ? "\uD83D\uDD34" : "\uD83D\DFE0")
+                sb.append(si.severity.equals("CRITICAL") ? "\uD83D\uDD34" : "\uD83D\uDFE0")
                   .append(" ").append(si.title)
                   .append(" \u2014 \u0627\u0644\u0633\u0637\u0631 ").append(si.line).append("\n");
             }
@@ -138,7 +138,7 @@ public class EngineAnalyzer {
                 .append(bugReport.bugs.size()).append("):\n");
             for (BugDetector.Bug bug : bugReport.bugs) {
                 String icon = bug.severity == BugDetector.Severity.CRITICAL ? "\uD83D\uDD34"
-                    : bug.severity == BugDetector.Severity.HIGH ? "\uD83D\DFE0" : "\uD83D\DFE1";
+                    : bug.severity == BugDetector.Severity.HIGH ? "\uD83D\uDFE0" : "\uD83D\uDFE1";
                 bugSummary.append(icon).append(" ").append(bug.title)
                     .append(" \u2014 \u0627\u0644\u0633\u0637\u0631 ").append(bug.line).append("\n");
             }
@@ -152,7 +152,7 @@ public class EngineAnalyzer {
                     .append(jsResult.issues.size()).append("):\n");
                 for (JSAnalyzer.Issue issue : jsResult.issues) {
                     String icon = issue.severity == JSAnalyzer.Severity.CRITICAL ? "\uD83D\uDD34"
-                        : issue.severity == JSAnalyzer.Severity.HIGH ? "\uD83D\DFE0" : "\uD83D\DFE1";
+                        : issue.severity == JSAnalyzer.Severity.HIGH ? "\uD83D\uDFE0" : "\uD83D\uDFE1";
                     jsMsg.append(icon).append(" ").append(issue.title)
                         .append(" \u2014 \u0627\u0644\u0633\u0637\u0631 ").append(issue.line).append("\n");
                 }
