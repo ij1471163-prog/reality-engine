@@ -205,8 +205,8 @@ function analyzeCode(code, fileName) {
         });
     }
     // TypeScript/Kotlin/PHP analysis
-    const ext = fileName.split('.').pop().toLowerCase();
-    if (ext === 'ts' || ext === 'tsx') {
+    const ext2 = fileName.split('.').pop().toLowerCase();
+    if (ext2 === 'ts' || ext2 === 'tsx') {
         if (typeof analyzeTypeScript === 'function') {
             const tsResult = analyzeTypeScript(code, fileName);
             tsResult.issues.forEach(i => {
@@ -215,7 +215,7 @@ function analyzeCode(code, fileName) {
             });
         }
     }
-    if (ext === 'kt') {
+    if (ext2 === 'kt') {
         if (typeof analyzeKotlin === 'function') {
             const ktResult = analyzeKotlin(code, fileName);
             ktResult.issues.forEach(i => {
@@ -224,7 +224,7 @@ function analyzeCode(code, fileName) {
             });
         }
     }
-    if (ext === 'php') {
+    if (ext2 === 'php') {
         if (typeof analyzePHP === 'function') {
             const phpResult = analyzePHP(code, fileName);
             phpResult.issues.forEach(i => {
