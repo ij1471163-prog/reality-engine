@@ -45,25 +45,25 @@ public class EngineAnalyzer {
 
     private static String getIntent(String name) {
         String n = name.toLowerCase();
-        if (n.matches("^(is_|has_|can_|check_|verify_|validate_).*")) return "تحقق من صحة";
-        if (n.contains("calculate") || n.contains("sum") || n.contains("total")) return "حساب";
-        if (n.contains("read") || n.contains("load")) return "قراءة ملف";
-        if (n.contains("write") || n.contains("save")) return "كتابة ملف";
-        if (n.contains("send") || n.contains("email")) return "إرسال";
-        if (n.contains("get") || n.contains("fetch")) return "جلب بيانات";
-        if (n.contains("hash") || n.contains("encrypt")) return "تشفير";
-        if (n.contains("log") || n.contains("debug")) return "تسجيل";
-        if (n.contains("parse") || n.contains("format")) return "تحويل بيانات";
-        if (n.contains("delete") || n.contains("remove")) return "حذف";
-        if (n.contains("create") || n.contains("build")) return "إنشاء";
-        return "غير محدد";
+        if (n.matches("^(is_|has_|can_|check_|verify_|validate_).*")) return "\u062a\u062d\u0642\u0642 \u0645\u0646 \u0635\u062d\u0629";
+        if (n.contains("calculate") || n.contains("sum") || n.contains("total")) return "\u062d\u0633\u0627\u0628";
+        if (n.contains("read")  || n.contains("load"))   return "\u0642\u0631\u0627\u0621\u0629 \u0645\u0644\u0641";
+        if (n.contains("write") || n.contains("save"))   return "\u0643\u062a\u0627\u0628\u0629 \u0645\u0644\u0641";
+        if (n.contains("send")  || n.contains("email"))  return "\u0625\u0631\u0633\u0627\u0644";
+        if (n.contains("get")   || n.contains("fetch"))  return "\u062c\u0644\u0628 \u0628\u064a\u0627\u0646\u0627\u062a";
+        if (n.contains("hash")  || n.contains("encrypt"))return "\u062a\u0634\u0641\u064a\u0631";
+        if (n.contains("log")   || n.contains("debug"))  return "\u062a\u0633\u062c\u064a\u0644";
+        if (n.contains("parse") || n.contains("format")) return "\u062a\u062d\u0648\u064a\u0644 \u0628\u064a\u0627\u0646\u0627\u062a";
+        if (n.contains("delete")|| n.contains("remove")) return "\u062d\u0630\u0641";
+        if (n.contains("create")|| n.contains("build"))  return "\u0625\u0646\u0634\u0627\u0621";
+        return "\u063a\u064a\u0631 \u0645\u062d\u062f\u062f";
     }
 
     public static EngineReport analyze(String code, String fileName) {
         EngineReport report = new EngineReport();
-        report.fileName       = fileName;
-        report.totalLines     = code.split("\n").length;
-        report.language       = code.contains("def ") ? "Python" : "Unknown";
+        report.fileName   = fileName;
+        report.totalLines = code.split("\n").length;
+        report.language   = code.contains("def ") ? "Python" : "Unknown";
 
         // Count total functions
         Matcher fm = Pattern.compile("^\\s*def\\s+\\w+", Pattern.MULTILINE).matcher(code);
@@ -79,33 +79,33 @@ public class EngineAnalyzer {
         Matcher m = p.matcher(code);
 
         while (m.find()) {
-            String name = m.group(2);
+            String name   = m.group(2);
             String before = code.substring(0, m.start());
-            int lineNo = before.split("\n", -1).length;
+            int lineNo    = before.split("\n", -1).length;
 
             FunctionAnalysis fa = new FunctionAnalysis();
-            fa.name        = name;
-            fa.line        = lineNo;
-            fa.risk        = "confirmed";
-            fa.fixability  = getFixability(name);
-            fa.intent      = getIntent(name);
-            fa.canAutoFix  = fa.fixability == Fixability.HIGH;
+            fa.name       = name;
+            fa.line       = lineNo;
+            fa.risk       = "confirmed";
+            fa.fixability = getFixability(name);
+            fa.intent     = getIntent(name);
+            fa.canAutoFix = fa.fixability == Fixability.HIGH;
 
             switch (fa.fixability) {
                 case HIGH:
-                    fa.fixReason   = "الاسم واضح — المحرك واثق في الإصلاح";
+                    fa.fixReason   = "\u0627\u0644\u0627\u0633\u0645 \u0648\u0627\u0636\u062d \u2014 \u0627\u0644\u0645\u062d\u0631\u0643 \u0648\u0627\u062b\u0642 \u0641\u064a \u0627\u0644\u0625\u0635\u0644\u0627\u062d";
                     fa.warningNote = null;
-                    fa.signals.add("اسم الدالة يطابق نمط معروف");
+                    fa.signals.add("\u0627\u0633\u0645 \u0627\u0644\u062f\u0627\u0644\u0629 \u064a\u0637\u0627\u0628\u0642 \u0646\u0645\u0637 \u0645\u0639\u0631\u0648\u0641");
                     break;
                 case MEDIUM:
-                    fa.fixReason   = "يمكن توليد اقتراح — راجعه قبل الموافقة";
-                    fa.warningNote = "راجع الاقتراح بعناية";
-                    fa.signals.add("اسم الدالة يحتاج سياق إضافي");
+                    fa.fixReason   = "\u064a\u0645\u0643\u0646 \u062a\u0648\u0644\u064a\u062f \u0627\u0642\u062a\u0631\u0627\u062d \u2014 \u0631\u0627\u062c\u0639\u0647 \u0642\u0628\u0644 \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629";
+                    fa.warningNote = "\u0631\u0627\u062c\u0639 \u0627\u0644\u0627\u0642\u062a\u0631\u0627\u062d \u0628\u0639\u0646\u0627\u064a\u0629";
+                    fa.signals.add("\u0627\u0633\u0645 \u0627\u0644\u062f\u0627\u0644\u0629 \u064a\u062d\u062a\u0627\u062c \u0633\u064a\u0627\u0642 \u0625\u0636\u0627\u0641\u064a");
                     break;
                 case LOW:
-                    fa.fixReason   = "الاسم غير وصفي — الاقتراح سيكون عاماً";
-                    fa.warningNote = "ينصح بإعادة تسمية الدالة أولاً";
-                    fa.signals.add("اسم غير وصفي");
+                    fa.fixReason   = "\u0627\u0644\u0627\u0633\u0645 \u063a\u064a\u0631 \u0648\u0635\u0641\u064a \u2014 \u0627\u0644\u0627\u0642\u062a\u0631\u0627\u062d \u0633\u064a\u0643\u0648\u0646 \u0639\u0627\u0645\u0627\u064b";
+                    fa.warningNote = "\u064a\u0646\u0635\u062d \u0628\u0625\u0639\u0627\u062f\u0629 \u062a\u0633\u0645\u064a\u0629 \u0627\u0644\u062f\u0627\u0644\u0629 \u0623\u0648\u0644\u0627\u064b";
+                    fa.signals.add("\u0627\u0633\u0645 \u063a\u064a\u0631 \u0648\u0635\u0641\u064a");
                     break;
             }
 
@@ -116,62 +116,69 @@ public class EngineAnalyzer {
         report.mediumFixable = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.MEDIUM).count();
         report.lowFixable    = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.LOW).count();
 
-        // Security Scan
+        // ✅ Security Scan — string literals صحيحة
         java.util.List<SecurityScanner.SecurityIssue> secIssues = SecurityScanner.scan(code, fileName);
+        String secSummary = "";
         if (!secIssues.isEmpty()) {
-            StringBuilder secSummary = new StringBuilder("
-
-🔐 تحذيرات أمنية (").append(secIssues.size()).append("):
-");
+            StringBuilder sb = new StringBuilder("\n\n\uD83D\uDD10 \u062a\u062d\u0630\u064a\u0631\u0627\u062a \u0623\u0645\u0646\u064a\u0629 (")
+                .append(secIssues.size()).append("):\n");
             for (SecurityScanner.SecurityIssue si : secIssues) {
-                secSummary.append(si.severity.equals("CRITICAL") ? "🔴" : "🟠")
-                    .append(" ").append(si.title).append(" — السطر ").append(si.line).append("
-");
+                sb.append(si.severity.equals("CRITICAL") ? "\uD83D\uDD34" : "\uD83D\DFE0")
+                  .append(" ").append(si.title)
+                  .append(" \u2014 \u0627\u0644\u0633\u0637\u0631 ").append(si.line).append("\n");
             }
-            report.engineMessage = report.engineMessage + secSummary.toString();
+            secSummary = sb.toString();
         }
 
-        // Bug Detection دائماً
+        // ✅ Bug Detection
         BugDetector.BugReport bugReport = BugDetector.detect(code);
         StringBuilder bugSummary = new StringBuilder();
         if (!bugReport.bugs.isEmpty()) {
-            bugSummary.append("\n\n🐛 أخطاء مكتشفة (").append(bugReport.bugs.size()).append("):\n");
+            bugSummary.append("\n\n\uD83D\uDC1B \u0623\u062e\u0637\u0627\u0621 \u0645\u0643\u062a\u0634\u0641\u0629 (")
+                .append(bugReport.bugs.size()).append("):\n");
             for (BugDetector.Bug bug : bugReport.bugs) {
-                String icon = bug.severity == BugDetector.Severity.CRITICAL ? "🔴"
-                    : bug.severity == BugDetector.Severity.HIGH ? "🟠" : "🟡";
+                String icon = bug.severity == BugDetector.Severity.CRITICAL ? "\uD83D\uDD34"
+                    : bug.severity == BugDetector.Severity.HIGH ? "\uD83D\DFE0" : "\uD83D\DFE1";
                 bugSummary.append(icon).append(" ").append(bug.title)
-                    .append(" — السطر ").append(bug.line).append("\n");
+                    .append(" \u2014 \u0627\u0644\u0633\u0637\u0631 ").append(bug.line).append("\n");
             }
         }
 
-        // JSAnalyzer للملفات JS/HTML
+        // ✅ JSAnalyzer
         if (fileName.endsWith(".js") || fileName.endsWith(".html") || fileName.endsWith(".jsx")) {
             JSAnalyzer.AnalysisResult jsResult = JSAnalyzer.analyze(code);
             if (jsResult.hasIssues()) {
-                StringBuilder jsMsg = new StringBuilder("\n\n🐛 أخطاء JavaScript (").append(jsResult.issues.size()).append("):\n");
+                StringBuilder jsMsg = new StringBuilder("\n\n\uD83D\uDC1B \u0623\u062e\u0637\u0627\u0621 JavaScript (")
+                    .append(jsResult.issues.size()).append("):\n");
                 for (JSAnalyzer.Issue issue : jsResult.issues) {
-                    String icon = issue.severity == JSAnalyzer.Severity.CRITICAL ? "🔴"
-                        : issue.severity == JSAnalyzer.Severity.HIGH ? "🟠" : "🟡";
+                    String icon = issue.severity == JSAnalyzer.Severity.CRITICAL ? "\uD83D\uDD34"
+                        : issue.severity == JSAnalyzer.Severity.HIGH ? "\uD83D\DFE0" : "\uD83D\DFE1";
                     jsMsg.append(icon).append(" ").append(issue.title)
-                        .append(" — السطر ").append(issue.line).append("\n");
+                        .append(" \u2014 \u0627\u0644\u0633\u0637\u0631 ").append(issue.line).append("\n");
                 }
-                report.engineMessage = (report.stubs.isEmpty() ? "ما وجد المحرك دوال ناقصة." : report.engineMessage) + jsMsg;
-                report.recommendation = "يوجد أخطاء — استخدم AI للإصلاح.";
+                report.engineMessage  = (report.stubs.isEmpty()
+                    ? "\u0645\u0627 \u0648\u062c\u062f \u0627\u0644\u0645\u062d\u0631\u0643 \u062f\u0648\u0627\u0644 \u0646\u0627\u0642\u0635\u0629."
+                    : report.engineMessage) + jsMsg + secSummary + bugSummary;
+                report.recommendation = "\u064a\u0648\u062c\u062f \u0623\u062e\u0637\u0627\u0621 \u2014 \u0627\u0633\u062a\u062e\u062f\u0645 AI \u0644\u0644\u0625\u0635\u0644\u0627\u062d.";
+                return report;
             }
         }
 
         if (report.stubs.isEmpty()) {
-            report.engineMessage  = "ما وجد المحرك أي دوال ناقصة." + bugSummary;
-            report.recommendation = bugReport.bugs.isEmpty() ? "الملف يبدو مكتملاً." : "يوجد أخطاء — استخدم AI للإصلاح.";
+            report.engineMessage  = "\u0645\u0627 \u0648\u062c\u062f \u0627\u0644\u0645\u062d\u0631\u0643 \u0623\u064a \u062f\u0648\u0627\u0644 \u0646\u0627\u0642\u0635\u0629." + secSummary + bugSummary;
+            report.recommendation = bugReport.bugs.isEmpty()
+                ? "\u0627\u0644\u0645\u0644\u0641 \u064a\u0628\u062f\u0648 \u0645\u0643\u062a\u0645\u0644\u0627\u064b."
+                : "\u064a\u0648\u062c\u062f \u0623\u062e\u0637\u0627\u0621 \u2014 \u0627\u0633\u062a\u062e\u062f\u0645 AI \u0644\u0644\u0625\u0635\u0644\u0627\u062d.";
         } else {
-            report.engineMessage  = "وجد المحرك " + report.stubs.size() + " دالة ناقصة:\n"
-                + report.highFixable   + " واضحة ✓  •  "
-                + report.mediumFixable + " راجع ⚠️  •  "
-                + report.lowFixable    + " صعب ✗";
-            report.recommendation = "راجع كل اقتراح قبل الموافقة.";
-            report.engineMessage += bugSummary;
+            report.engineMessage = "\u0648\u062c\u062f \u0627\u0644\u0645\u062d\u0631\u0643 " + report.stubs.size() + " \u062f\u0627\u0644\u0629 \u0646\u0627\u0642\u0635\u0629:\n"
+                + report.highFixable   + " \u0648\u0627\u0636\u062d\u0629 \u2713  \u2022  "
+                + report.mediumFixable + " \u0631\u0627\u062c\u0639 \u26a0\ufe0f  \u2022  "
+                + report.lowFixable    + " \u0635\u0639\u0628 \u2717"
+                + secSummary + bugSummary;
+            report.recommendation = "\u0631\u0627\u062c\u0639 \u0643\u0644 \u0627\u0642\u062a\u0631\u0627\u062d \u0642\u0628\u0644 \u0627\u0644\u0645\u0648\u0627\u0641\u0642\u0629.";
         }
 
         return report;
     }
 }
+
