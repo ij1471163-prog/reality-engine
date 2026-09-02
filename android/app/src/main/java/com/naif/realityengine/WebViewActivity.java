@@ -23,6 +23,24 @@ public class WebViewActivity extends Activity {
         s.setAllowFileAccess(false);
         s.setUserAgentString(s.getUserAgentString() + " RealityEngine/1.0");
 
+        // دعم رفع الملفات
+        webView.setWebChromeClient(new android.webkit.WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(android.webkit.WebView webView,
+                android.webkit.ValueCallback<android.net.Uri[]> filePathCallback,
+                android.webkit.WebChromeClient.FileChooserParams fileChooserParams) {
+                fileCallback = filePathCallback;
+                android.content.Intent intent = fileChooserParams.createIntent();
+                try {
+                    startActivityForResult(intent, 1001);
+                } catch (Exception e) {
+                    fileCallback = null;
+                    return false;
+                }
+                return true;
+            }
+        });
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
@@ -37,6 +55,22 @@ public class WebViewActivity extends Activity {
 
         String url = getIntent().getStringExtra("url");
         if (url != null) webView.loadUrl(url);
+    }
+
+    private android.webkit.ValueCallback<android.net.Uri[]> fileCallback;
+
+    @Override
+    protected void onActivityResult(int req, int res, android.content.Intent data) {
+        if (req == 1001) {
+            android.net.Uri[] results = null;
+            if (res == RESULT_OK && data != null) {
+                results = new android.net.Uri[]{data.getData()};
+            }
+            if (fileCallback != null) {
+                fileCallback.onReceiveValue(results);
+                fileCallback = null;
+            }
+        }
     }
 
     @Override
