@@ -137,26 +137,7 @@ public class MainActivity extends AppCompatActivity {
             }).start();
         });
 
-        // زر رفع مشروع (ملفات متعددة)
-        android.widget.Button btnProject = new android.widget.Button(this);
-        btnProject.setText(getString(R.string.btn_upload_project));
-        btnProject.setBackgroundColor(0xFF1C2128);
-        btnProject.setTextColor(0xFF58A6FF);
-        btnProject.setTextSize(15);
-        android.widget.LinearLayout.LayoutParams projParams = new android.widget.LinearLayout.LayoutParams(
-            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-        projParams.setMargins(0, 8, 0, 0);
-        btnProject.setLayoutParams(projParams);
-        ((android.widget.LinearLayout) btnPickFile.getParent()).addView(btnProject);
-
-        btnProject.setOnClickListener(v -> {
-            if (!prefs.getBoolean(AGREED, false)) {
-                showWelcomeDialog(prefs);
-            } else {
-                openMultiFilePicker();
-            }
-        });
+        // Upload Project button removed
 
         // طلب إذن الكتابة
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
