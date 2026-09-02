@@ -174,6 +174,9 @@ document.getElementById('inp-zip').addEventListener('change', async e => {
         if (data.error) { toast('❌ ' + data.error, 'e'); return; }
         data.files.forEach(f => { F[f.name] = f.content; });
         _fromZip = true;
+        // فعّل أزرار الإصلاح
+        document.getElementById('btn-fixall').style.display = 'inline-block';
+        document.getElementById('btn-aiall').style.display = 'inline-block';
         renderFiles();
         toast('✅ ' + data.total + ' ملف من ZIP');
     } catch(err) {
