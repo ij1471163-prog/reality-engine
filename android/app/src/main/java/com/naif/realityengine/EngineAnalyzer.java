@@ -143,6 +143,21 @@ public class EngineAnalyzer {
                 report.engineMessage = report.engineMessage + mlSummary.toString();
         }
 
+        // Java AST Analysis
+        if (fileName.endsWith(".java")) {
+            java.util.List<JavaASTEngine.ASTIssue> astIssues = JavaASTEngine.analyze(code);
+            if (!astIssues.isEmpty()) {
+                StringBuilder astSummary = new StringBuilder("\n\n[Java AST] ");
+                astSummary.append(astIssues.size()).append(" مشاكل:\n");
+                for (JavaASTEngine.ASTIssue ai : astIssues) {
+                    astSummary.append("[").append(ai.severity).append("] ")
+                        .append(ai.title).append(" — السطر ").append(ai.line).append("\n");
+                }
+                if (report.engineMessage != null)
+                    report.engineMessage = report.engineMessage + astSummary.toString();
+            }
+        }
+
         // ✅ Bug Detection
         BugDetector.BugReport bugReport = BugDetector.detect(code);
         StringBuilder bugSummary = new StringBuilder();
