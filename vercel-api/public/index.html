@@ -169,10 +169,6 @@ document.getElementById('inp-zip').addEventListener('change', async e => {
     const form = new FormData();
     const ALLOWED = ['.py','.js','.ts','.java','.html','.jsx','.tsx','.kt','.php'];
     try {
-        if (typeof JSZip === 'undefined') {
-            toast('❌ JSZip غير محمّل — أعد تحميل الصفحة', 'e');
-            return;
-        }
         const zip = await JSZip.loadAsync(file);
         const promises = [];
         let count = 0;
