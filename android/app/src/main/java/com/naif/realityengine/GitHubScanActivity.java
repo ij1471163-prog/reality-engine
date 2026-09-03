@@ -430,3 +430,4 @@ public class GitHubScanActivity extends AppCompatActivity {
             super.onBackPressed();
             finish();
 }
+}
