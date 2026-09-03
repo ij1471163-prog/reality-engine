@@ -56,6 +56,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: APK-${{ inputs.build_target }}
+          name: APK-debug
           path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AAB-release
+          path: android/app/build/outputs/bundle/release/*.aab
           retention-days: 7
