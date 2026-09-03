@@ -150,6 +150,24 @@ public class ApprovalActivity extends AppCompatActivity {
 
         approved++;
         currentIndex++;
+        // أظهر زر PDF لو خلصنا كل الموافقات
+        if (currentIndex >= stubs.size() && PremiumManager.isPremium(this)) {
+            android.widget.Button btnPDF = new android.widget.Button(this);
+            btnPDF.setText("📄 تصدير PDF");
+            btnPDF.setBackgroundColor(0xFF6E40C9);
+            btnPDF.setTextColor(0xFFFFFFFF);
+            btnPDF.setPadding(0, 20, 0, 20);
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-1, -2);
+            lp.setMargins(0, 16, 0, 0);
+            btnPDF.setLayoutParams(lp);
+            btnPDF.setOnClickListener(v -> {
+                android.content.Intent i = new android.content.Intent(this, PDFReportActivity.class);
+                i.putExtra("fileCode", code);
+                i.putExtra("fileName", fileName);
+                startActivity(i);
+            });
+            ((android.widget.LinearLayout) findViewById(android.R.id.content)).addView(btnPDF);
+        }
         showCurrent();
     }
 
