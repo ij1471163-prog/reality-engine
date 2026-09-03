@@ -429,5 +429,6 @@ public class GitHubScanActivity extends AppCompatActivity {
         } else {
             super.onBackPressed();
             finish();
-}
+        }
+    }
 }
