@@ -432,4 +432,5 @@ public class GitHubScanActivity extends AppCompatActivity {
         }
     }
 }
-
+}
+}
