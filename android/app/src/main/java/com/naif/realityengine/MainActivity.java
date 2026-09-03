@@ -62,6 +62,20 @@ public class MainActivity extends AppCompatActivity {
         ((android.widget.LinearLayout) btnHistory.getParent()).addView(btnPro);
         btnPro.setOnClickListener(v -> startActivity(new android.content.Intent(this, SubscriptionActivity.class)));
 
+        // زر GitHub Scan
+        android.widget.Button btnGitHub = new android.widget.Button(this);
+        btnGitHub.setText("🐙 GitHub Scan");
+        btnGitHub.setBackgroundColor(0xFF21262D);
+        btnGitHub.setTextColor(0xFF58A6FF);
+        btnGitHub.setTextSize(13);
+        android.widget.LinearLayout.LayoutParams ghLP = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        ghLP.setMargins(16, 0, 0, 0);
+        btnGitHub.setLayoutParams(ghLP);
+        ((android.widget.LinearLayout) btnHistory.getParent()).addView(btnGitHub);
+        btnGitHub.setOnClickListener(v -> startActivity(new android.content.Intent(this, GitHubScanActivity.class)));
+
         btnHistory.setOnClickListener(v -> {
             Intent hi = new Intent(this, HistoryActivity.class);
             startActivity(hi);

@@ -113,6 +113,24 @@ public class AnalysisActivity extends AppCompatActivity {
 
         // زر AI محذوف — يوصل من MainActivity
 
+        // زر PDF (Pro)
+        android.widget.Button btnPDF = new android.widget.Button(this);
+        btnPDF.setText("📄 تصدير PDF");
+        btnPDF.setBackgroundColor(0xFF6E40C9);
+        btnPDF.setTextColor(0xFFFFFFFF);
+        btnPDF.setTextSize(13);
+        android.widget.LinearLayout.LayoutParams pdfLP = new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        pdfLP.setMargins(0, 8, 0, 0);
+        btnPDF.setLayoutParams(pdfLP);
+        ((android.view.ViewGroup) btnProceed.getParent()).addView(btnPDF);
+        btnPDF.setOnClickListener(v -> {
+            android.content.Intent pdfIntent = new android.content.Intent(this, PDFReportActivity.class);
+            pdfIntent.putExtra("fileCode", fileCode);
+            pdfIntent.putExtra("fileName", fileName);
+            startActivity(pdfIntent);
+        });
+
         btnProceed.setOnClickListener(v -> {
             if (report.stubs.isEmpty()) {
                 Toast.makeText(this, "لا دوال ناقصة — استخدم زر AI", Toast.LENGTH_SHORT).show();
