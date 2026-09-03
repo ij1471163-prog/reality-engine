@@ -108,7 +108,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
     <div class="tb">
       <button class="btn btn-s" onclick="goBack()">← رجوع</button>
       <button class="btn btn-p" id="btn-aiall" onclick="fixAllWithAI()">🤖 إصلاح الكل بـ AI</button>
-      <button class="btn btn-ok" id="btn-dl" onclick="dlAll()" style="display:none">⬇️ تنزيل</button>
+      <button class="btn btn-ok" id="btn-dl" onclick="_fromZip ? dlAsZip() : dlAll()" style="display:none">⬇️ تنزيل</button>
       <button class="btn btn-p" id="btn-fixall" onclick="fixAllEngine()" style="display:none">⚡ إصلاح الكل بالمحرك</button>
       <div class="tb-r" id="ri"></div>
     </div>
