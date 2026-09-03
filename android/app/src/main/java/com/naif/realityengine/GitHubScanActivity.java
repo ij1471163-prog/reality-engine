@@ -347,3 +347,4 @@ public class GitHubScanActivity extends Activity {
         }
     }
 }
+}
