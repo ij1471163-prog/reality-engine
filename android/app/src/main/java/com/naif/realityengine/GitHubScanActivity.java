@@ -1,38 +1,49 @@
 package com.naif.realityengine;
 
-import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.*;
 import android.webkit.*;
 import android.widget.*;
+import androidx.appcompat.app.AppCompatActivity;
 import java.util.List;
 import org.json.*;
 
 /**
- * GitHubScanActivity — GitHub Scan (Pro)
- * يجيب الملفات من GitHub ويحللها في WebView بمحركات JS
- * الكود ما يروح لـ Vercel — JS يشتغل محلياً في المتصفح
+ * GitHubScanActivity v2.0 — مبسّط
+ * ✅ رابط واحد فقط بدل 4 حقول
+ * ✅ بدون Token للمستودعات العامة
+ * ✅ Token اختياري للمستودعات الخاصة
+ * ✅ AppCompatActivity
+ * ✅ لا نخزن أي بيانات — متوافق مع Google Play
  */
-public class GitHubScanActivity extends Activity {
+public class GitHubScanActivity extends AppCompatActivity {
 
-    private EditText  etToken, etOwner, etRepo, etBranch;
-    private Button    btnScan;
-    private TextView  tvStatus;
+    // ── UI ──────────────────────────────────────────────
+    private EditText    etUrl;
+    private EditText    etToken;       // مخفي افتراضياً
+    private TextView    tvTokenLabel;
+    private LinearLayout layoutToken;  // يظهر عند الضغط على "مستودع خاص"
+    private Button      btnScan;
+    private TextView    tvStatus;
     private ProgressBar progressBar;
-    private WebView   webView;
     private LinearLayout layoutForm, layoutWeb;
+    private WebView     webView;
 
     private static final String WEB_URL = "https://reality-engine-api-livid.vercel.app";
+    private String pendingFilesJson = null;
+
+    // ═══════════════════════════════════════════════════
+    // onCreate
+    // ═══════════════════════════════════════════════════
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
-        // تحقق Pro
         if (!PremiumManager.isPremium(this)) {
             new AlertDialog.Builder(this)
                 .setTitle("ميزة Pro")
@@ -48,65 +59,98 @@ public class GitHubScanActivity extends Activity {
         buildUI();
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    // ═══════════════════════════════════════════════════
+    // UI
+    // ═══════════════════════════════════════════════════
+
     private void buildUI() {
-        // Root layout
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(0xFF0D1117);
-        root.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
 
-        // ─── Form Section ─────────────────────────────────
+        // ── Form ────────────────────────────────────────
         ScrollView scroll = new ScrollView(this);
         layoutForm = new LinearLayout(this);
         layoutForm.setOrientation(LinearLayout.VERTICAL);
-        layoutForm.setPadding(48, 64, 48, 48);
+        layoutForm.setPadding(dp(24), dp(48), dp(24), dp(32));
         scroll.addView(layoutForm);
-        scroll.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
 
-        // Header
+        // Title
         TextView tvTitle = new TextView(this);
-        tvTitle.setText("🐙 GitHub Scan");
-        tvTitle.setTextSize(22);
+        tvTitle.setText("🐙 فحص مستودع GitHub");
+        tvTitle.setTextSize(20);
         tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         tvTitle.setTextColor(0xFFE6EDF3);
-        tvTitle.setPadding(0, 0, 0, 8);
+        tvTitle.setPadding(0, 0, 0, dp(6));
         layoutForm.addView(tvTitle);
 
-        TextView tvDesc = new TextView(this);
-        tvDesc.setText("أدخل Fine-grained PAT ورابط المستودع");
-        tvDesc.setTextSize(12);
-        tvDesc.setTextColor(0xFF8B949E);
-        tvDesc.setPadding(0, 0, 0, 24);
-        layoutForm.addView(tvDesc);
+        // Subtitle
+        TextView tvSub = new TextView(this);
+        tvSub.setText("الصق رابط المستودع وابدأ الفحص فوراً");
+        tvSub.setTextSize(13);
+        tvSub.setTextColor(0xFF8B949E);
+        tvSub.setPadding(0, 0, 0, dp(28));
+        layoutForm.addView(tvSub);
 
-        // Token
-        addLabel(layoutForm, "🔑 GitHub Token (Fine-grained PAT)");
-        etToken = addInput(layoutForm, "github_pat_...", true);
+        // URL field
+        addLabel(layoutForm, "🔗 رابط المستودع");
+        etUrl = addInput(layoutForm,
+            "https://github.com/owner/repo", false);
 
-        TextView tvInfo = new TextView(this);
-        tvInfo.setText("github.com/settings/tokens → Fine-grained → Contents: Read-only");
-        tvInfo.setTextSize(10);
-        tvInfo.setTextColor(0xFF58A6FF);
-        tvInfo.setPadding(0, 2, 0, 20);
-        layoutForm.addView(tvInfo);
+        // Example hint
+        TextView tvHint = new TextView(this);
+        tvHint.setText("مثال: https://github.com/microsoft/vscode");
+        tvHint.setTextSize(11);
+        tvHint.setTextColor(0xFF58A6FF);
+        tvHint.setPadding(0, dp(2), 0, dp(20));
+        layoutForm.addView(tvHint);
 
-        // Owner
-        addLabel(layoutForm, "👤 Owner");
-        etOwner = addInput(layoutForm, "مثال: microsoft", false);
+        // Private repo toggle
+        Button btnPrivate = new Button(this);
+        btnPrivate.setText("🔒 مستودع خاص؟ أضف Token");
+        btnPrivate.setBackgroundColor(0xFF21262D);
+        btnPrivate.setTextColor(0xFF8B949E);
+        btnPrivate.setTextSize(12);
+        LinearLayout.LayoutParams privLP = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        privLP.setMargins(0, 0, 0, dp(12));
+        btnPrivate.setLayoutParams(privLP);
+        layoutForm.addView(btnPrivate);
 
-        // Repo
-        addLabel(layoutForm, "📁 Repository");
-        etRepo = addInput(layoutForm, "مثال: vscode", false);
+        // Token section (مخفي افتراضياً)
+        layoutToken = new LinearLayout(this);
+        layoutToken.setOrientation(LinearLayout.VERTICAL);
+        layoutToken.setVisibility(View.GONE);
 
-        // Branch
-        addLabel(layoutForm, "🌿 Branch");
-        etBranch = addInput(layoutForm, "main", false);
-        etBranch.setText("main");
+        addLabel(layoutToken, "🔑 GitHub Token (Fine-grained PAT)");
+        etToken = addInput(layoutToken, "github_pat_...", true);
 
-        // Scan Button
-        LinearLayout.LayoutParams btnLP = new LinearLayout.LayoutParams(-1, -2);
-        btnLP.setMargins(0, 24, 0, 0);
+        TextView tvTokenInfo = new TextView(this);
+        tvTokenInfo.setText("github.com/settings/tokens ← Fine-grained ← Contents: Read-only");
+        tvTokenInfo.setTextSize(10);
+        tvTokenInfo.setTextColor(0xFF58A6FF);
+        tvTokenInfo.setPadding(0, dp(2), 0, dp(16));
+        layoutToken.addView(tvTokenInfo);
+        layoutForm.addView(layoutToken);
+
+        // toggle token visibility
+        btnPrivate.setOnClickListener(v -> {
+            if (layoutToken.getVisibility() == View.GONE) {
+                layoutToken.setVisibility(View.VISIBLE);
+                btnPrivate.setText("🔓 إخفاء Token");
+            } else {
+                layoutToken.setVisibility(View.GONE);
+                etToken.setText("");
+                btnPrivate.setText("🔒 مستودع خاص؟ أضف Token");
+            }
+        });
+
+        // Scan button
+        LinearLayout.LayoutParams btnLP = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        btnLP.setMargins(0, dp(8), 0, 0);
         btnScan = new Button(this);
         btnScan.setText("🔍 بدء الفحص");
         btnScan.setLayoutParams(btnLP);
@@ -114,15 +158,18 @@ public class GitHubScanActivity extends Activity {
         btnScan.setTextColor(0xFFFFFFFF);
         btnScan.setTextSize(15);
         btnScan.setTypeface(null, android.graphics.Typeface.BOLD);
-        btnScan.setPadding(0, 24, 0, 24);
+        btnScan.setPadding(0, dp(18), 0, dp(18));
         btnScan.setOnClickListener(v -> startScan());
         layoutForm.addView(btnScan);
 
         // Progress
-        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar = new ProgressBar(this, null,
+            android.R.attr.progressBarStyleHorizontal);
         progressBar.setIndeterminate(true);
-        LinearLayout.LayoutParams pbLP = new LinearLayout.LayoutParams(-1, -2);
-        pbLP.setMargins(0, 16, 0, 0);
+        LinearLayout.LayoutParams pbLP = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        pbLP.setMargins(0, dp(12), 0, 0);
         progressBar.setLayoutParams(pbLP);
         progressBar.setVisibility(View.GONE);
         layoutForm.addView(progressBar);
@@ -131,66 +178,63 @@ public class GitHubScanActivity extends Activity {
         tvStatus = new TextView(this);
         tvStatus.setTextSize(12);
         tvStatus.setTextColor(0xFF8B949E);
-        tvStatus.setPadding(0, 8, 0, 0);
+        tvStatus.setPadding(0, dp(8), 0, 0);
         layoutForm.addView(tvStatus);
 
-        // Security note
-        TextView tvSec = new TextView(this);
-        tvSec.setText("🔒 التوكن لا يُخزن — التحليل يتم محلياً في المتصفح");
-        tvSec.setTextSize(10);
-        tvSec.setTextColor(0xFF3FB950);
-        tvSec.setPadding(0, 24, 0, 0);
-        tvSec.setGravity(android.view.Gravity.CENTER);
-        layoutForm.addView(tvSec);
+        // Privacy note
+        TextView tvPrivacy = new TextView(this);
+        tvPrivacy.setText("🔒 لا نخزن أي بيانات — التحليل يتم محلياً");
+        tvPrivacy.setTextSize(11);
+        tvPrivacy.setTextColor(0xFF3FB950);
+        tvPrivacy.setGravity(android.view.Gravity.CENTER);
+        LinearLayout.LayoutParams privacyLP = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        privacyLP.setMargins(0, dp(24), 0, 0);
+        tvPrivacy.setLayoutParams(privacyLP);
+        layoutForm.addView(tvPrivacy);
 
         // Back
-        LinearLayout.LayoutParams backLP = new LinearLayout.LayoutParams(-1, -2);
-        backLP.setMargins(0, 16, 0, 32);
+        LinearLayout.LayoutParams backLP = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        backLP.setMargins(0, dp(12), 0, dp(24));
         Button btnBack = new Button(this);
         btnBack.setText("↩ رجوع");
         btnBack.setLayoutParams(backLP);
         btnBack.setBackgroundColor(0xFF21262D);
         btnBack.setTextColor(0xFF8B949E);
-        btnBack.setPadding(0, 18, 0, 18);
+        btnBack.setPadding(0, dp(16), 0, dp(16));
         btnBack.setOnClickListener(v -> finish());
         layoutForm.addView(btnBack);
 
         root.addView(scroll);
 
-        // ─── WebView Section ──────────────────────────────
+        // ── WebView ─────────────────────────────────────
         layoutWeb = new LinearLayout(this);
         layoutWeb.setOrientation(LinearLayout.VERTICAL);
         layoutWeb.setVisibility(View.GONE);
-        layoutWeb.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
 
-        // Back bar
         LinearLayout webBar = new LinearLayout(this);
-        webBar.setOrientation(LinearLayout.HORIZONTAL);
         webBar.setBackgroundColor(0xFF161B22);
-        webBar.setPadding(16, 12, 16, 12);
+        webBar.setPadding(dp(16), dp(12), dp(16), dp(12));
 
         Button btnWebBack = new Button(this);
         btnWebBack.setText("← رجوع");
         btnWebBack.setBackgroundColor(0xFF21262D);
         btnWebBack.setTextColor(0xFF8B949E);
         btnWebBack.setTextSize(12);
-        btnWebBack.setPadding(16, 8, 16, 8);
-        btnWebBack.setOnClickListener(v -> {
-            layoutWeb.setVisibility(View.GONE);
-            layoutForm.setVisibility(View.VISIBLE);
-            scroll.setVisibility(View.VISIBLE);
-        });
+        btnWebBack.setPadding(dp(16), dp(8), dp(16), dp(8));
+        btnWebBack.setOnClickListener(v -> showForm());
         webBar.addView(btnWebBack);
 
         TextView tvWebTitle = new TextView(this);
-        tvWebTitle.setText("  🐙 GitHub Scan — Reality Engine");
+        tvWebTitle.setText("  🐙 GitHub Scan");
         tvWebTitle.setTextColor(0xFF8B949E);
         tvWebTitle.setTextSize(12);
         webBar.addView(tvWebTitle);
-
         layoutWeb.addView(webBar);
 
-        // WebView
         webView = new WebView(this);
         webView.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
         WebSettings ws = webView.getSettings();
@@ -200,7 +244,6 @@ public class GitHubScanActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
-                // الصفحة حمّلت — أرسل الملفات
                 if (pendingFilesJson != null) {
                     injectFiles(pendingFilesJson);
                     pendingFilesJson = null;
@@ -213,27 +256,67 @@ public class GitHubScanActivity extends Activity {
         setContentView(root);
     }
 
-    private String pendingFilesJson = null;
+    // ═══════════════════════════════════════════════════
+    // Scan Logic
+    // ═══════════════════════════════════════════════════
 
     private void startScan() {
-        String token  = etToken.getText().toString().trim();
-        String owner  = etOwner.getText().toString().trim();
-        String repo   = etRepo.getText().toString().trim();
-        String branch = etBranch.getText().toString().trim();
-        if (branch.isEmpty()) branch = "main";
+        String url   = etUrl.getText().toString().trim();
+        String token = etToken.getText().toString().trim();
 
-        if (token.isEmpty() || owner.isEmpty() || repo.isEmpty()) {
-            Toast.makeText(this, "يرجى تعبئة جميع الحقول", Toast.LENGTH_SHORT).show();
+        if (url.isEmpty()) {
+            Toast.makeText(this, "أدخل رابط المستودع", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        final String finalBranch = branch;
+        // ✅ parse owner/repo من الرابط
+        String[] parsed = parseGitHubUrl(url);
+        if (parsed == null) {
+            Toast.makeText(this, "رابط غير صحيح — مثال: https://github.com/owner/repo",
+                Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String owner  = parsed[0];
+        String repo   = parsed[1];
+        String branch = parsed.length > 2 ? parsed[2] : "main";
+
         new AlertDialog.Builder(this)
             .setTitle("تأكيد الفحص")
-            .setMessage("سيتم فحص " + owner + "/" + repo + "\n(أول 20 ملف كحد أقصى)")
-            .setPositiveButton("فحص", (d, w) -> doScan(token, owner, repo, finalBranch))
+            .setMessage("سيتم فحص " + owner + "/" + repo
+                + "\nالفرع: " + branch
+                + "\n(أول 20 ملف كحد أقصى)")
+            .setPositiveButton("فحص", (d, w) ->
+                doScan(token.isEmpty() ? null : token, owner, repo, branch))
             .setNegativeButton("إلغاء", null)
             .show();
+    }
+
+    /**
+     * يستخرج owner/repo/branch من رابط GitHub
+     * يقبل:
+     *   https://github.com/owner/repo
+     *   https://github.com/owner/repo/tree/branch
+     */
+    private String[] parseGitHubUrl(String url) {
+        try {
+            String cleaned = url
+                .replace("https://github.com/", "")
+                .replace("http://github.com/", "")
+                .replaceAll("/$", "");
+            String[] parts = cleaned.split("/");
+            if (parts.length < 2) return null;
+            String owner  = parts[0];
+            String repo   = parts[1];
+            // /tree/branch
+            String branch = "main";
+            if (parts.length >= 4 && parts[2].equals("tree")) {
+                branch = parts[3];
+            }
+            return new String[]{owner, repo, branch};
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void doScan(String token, String owner, String repo, String branch) {
@@ -242,32 +325,33 @@ public class GitHubScanActivity extends Activity {
         tvStatus.setTextColor(0xFF8B949E);
         tvStatus.setText("جاري الاتصال بـ GitHub...");
 
-        GitHubScanner.scanRepository(token, owner, repo, branch,
-            new GitHubScanner.ScanCallback() {
+        // token يمكن أن يكون null للمستودعات العامة
+        String effectiveToken = (token != null && !token.isEmpty()) ? token : null;
 
-                @Override
-                public void onProgress(String message) {
+        GitHubScanner.scanRepository(effectiveToken, owner, repo, branch,
+            new GitHubScanner.ScanCallback() {
+                @Override public void onProgress(String message) {
                     runOnUiThread(() -> tvStatus.setText(message));
                 }
-
-                @Override
-                public void onComplete(List<GitHubScanner.ScannedFile> files) {
+                @Override public void onComplete(List<GitHubScanner.ScannedFile> files) {
                     runOnUiThread(() -> {
                         progressBar.setVisibility(View.GONE);
                         btnScan.setEnabled(true);
                         tvStatus.setTextColor(0xFF3FB950);
-                        tvStatus.setText("✅ تم تحميل " + files.size() + " ملف — جاري التحليل...");
+                        tvStatus.setText("✅ " + files.size() + " ملف — جاري التحليل...");
                         openWebAnalysis(files);
                     });
                 }
-
-                @Override
-                public void onError(String error) {
+                @Override public void onError(String error) {
                     runOnUiThread(() -> {
                         progressBar.setVisibility(View.GONE);
                         btnScan.setEnabled(true);
                         tvStatus.setTextColor(0xFFE74C3C);
-                        tvStatus.setText("❌ " + error);
+                        // لو خطأ 401 — اقترح إضافة Token
+                        String msg = error.contains("401") || error.contains("403")
+                            ? "❌ المستودع خاص — أضف Token للوصول"
+                            : "❌ " + error;
+                        tvStatus.setText(msg);
                     });
                 }
             });
@@ -275,46 +359,43 @@ public class GitHubScanActivity extends Activity {
 
     private void openWebAnalysis(List<GitHubScanner.ScannedFile> files) {
         try {
-            // بناء JSON للملفات
             JSONObject filesObj = new JSONObject();
-            for (GitHubScanner.ScannedFile f : files) {
-                filesObj.put(f.name, f.content);
-            }
+            for (GitHubScanner.ScannedFile f : files) filesObj.put(f.name, f.content);
             pendingFilesJson = filesObj.toString();
-
-            // أظهر WebView وحمّل الموقع
             layoutForm.setVisibility(View.GONE);
             layoutWeb.setVisibility(View.VISIBLE);
             webView.loadUrl(WEB_URL);
-
         } catch (Exception e) {
             tvStatus.setText("❌ خطأ في تجهيز الملفات");
         }
     }
 
     private void injectFiles(String filesJson) {
-        // أرسل الملفات للـ JS محلياً في المتصفح
-        String js = "javascript:(function() {" +
-            "try {" +
-            "  var files = " + filesJson + ";" +
-            "  Object.keys(files).forEach(function(name) {" +
-            "    F[name] = files[name];" +
-            "  });" +
-            "  renderFiles();" +
-            "  if (typeof refreshStats === 'function') refreshStats();" +
-            "} catch(e) { console.error('inject error:', e); }" +
+        String js = "javascript:(function(){" +
+            "try{var f=" + filesJson + ";" +
+            "Object.keys(f).forEach(function(n){F[n]=f[n];});" +
+            "renderFiles();" +
+            "if(typeof refreshStats==='function')refreshStats();" +
+            "}catch(e){console.error(e);}" +
             "})();";
         webView.evaluateJavascript(js, null);
     }
 
-    // ─── UI Helpers ───────────────────────────────────────
+    private void showForm() {
+        layoutWeb.setVisibility(View.GONE);
+        layoutForm.setVisibility(View.VISIBLE);
+    }
+
+    // ═══════════════════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════════════════
 
     private void addLabel(LinearLayout parent, String text) {
         TextView tv = new TextView(this);
         tv.setText(text);
         tv.setTextSize(12);
         tv.setTextColor(0xFF8B949E);
-        tv.setPadding(0, 0, 0, 6);
+        tv.setPadding(0, 0, 0, dp(6));
         parent.addView(tv);
     }
 
@@ -325,25 +406,30 @@ public class GitHubScanActivity extends Activity {
         et.setTextColor(0xFFE6EDF3);
         et.setTextSize(13);
         et.setBackgroundColor(0xFF161B22);
-        et.setPadding(20, 18, 20, 18);
-        if (password) {
-            et.setInputType(android.text.InputType.TYPE_CLASS_TEXT
-                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        }
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, 0, 0, 14);
+        et.setPadding(dp(16), dp(14), dp(16), dp(14));
+        if (password) et.setInputType(
+            InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, dp(10));
         et.setLayoutParams(lp);
         parent.addView(et);
         return et;
     }
 
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
     @Override
     public void onBackPressed() {
-        if (layoutWeb.getVisibility() == View.VISIBLE) {
-            layoutWeb.setVisibility(View.GONE);
-            layoutForm.setVisibility(View.VISIBLE);
+        if (layoutWeb != null && layoutWeb.getVisibility() == View.VISIBLE) {
+            showForm();
         } else {
+            super.onBackPressed();
             finish();
         }
     }
 }
+
