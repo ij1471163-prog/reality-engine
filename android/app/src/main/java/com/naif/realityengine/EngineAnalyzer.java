@@ -158,6 +158,21 @@ public class EngineAnalyzer {
             }
         }
 
+        // Indent Analysis (Python)
+        if (fileName.endsWith(".py")) {
+            java.util.List<IndentAnalyzer.IndentIssue> indentIssues = IndentAnalyzer.analyze(code, fileName);
+            if (!indentIssues.isEmpty()) {
+                StringBuilder indentSummary = new StringBuilder("\n\n[Indent] ");
+                indentSummary.append(indentIssues.size()).append(" مشاكل:\n");
+                for (IndentAnalyzer.IndentIssue ii : indentIssues) {
+                    indentSummary.append("[").append(ii.severity).append("] ")
+                        .append(ii.title).append(" — السطر ").append(ii.line).append("\n");
+                }
+                if (report.engineMessage != null)
+                    report.engineMessage = report.engineMessage + indentSummary.toString();
+            }
+        }
+
         // ✅ Bug Detection
         BugDetector.BugReport bugReport = BugDetector.detect(code);
         StringBuilder bugSummary = new StringBuilder();
