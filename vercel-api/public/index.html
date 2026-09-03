@@ -167,20 +167,27 @@ document.getElementById('inp-zip').addEventListener('change', async e => {
     if (!file) return;
     toast('⏳ جاري فك الضغط...');
     const form = new FormData();
-    form.append('zip', file);
+    const ALLOWED = ['.py','.js','.ts','.java','.html','.jsx','.tsx','.kt','.php'];
     try {
-        const res = await fetch('/api/unzip', { method: 'POST', body: form });
-        const data = await res.json();
-        if (data.error) { toast('❌ ' + data.error, 'e'); return; }
-        data.files.forEach(f => { F[f.name] = f.content; });
+        const zip = await JSZip.loadAsync(file);
+        const promises = [];
+        let count = 0;
+        zip.forEach((path, entry) => {
+            if (entry.dir || count >= 20) return;
+            const ext = '.' + path.split('.').pop().toLowerCase();
+            if (!ALLOWED.includes(ext)) return;
+            count++;
+            const name = path.split('/').pop();
+            promises.push(entry.async('string').then(c => { F[name] = c; }));
+        });
+        await Promise.all(promises);
         _fromZip = true;
-        // فعّل أزرار الإصلاح
         document.getElementById('btn-fixall').style.display = 'inline-block';
         document.getElementById('btn-aiall').style.display = 'inline-block';
         renderFiles();
-        toast('✅ ' + data.total + ' ملف من ZIP');
+        toast('✅ ' + count + ' ملف من ZIP');
     } catch(err) {
-        toast('❌ خطأ في رفع ZIP', 'e');
+        toast('❌ ' + err.message, 'e');
     }
     e.target.value = '';
 });
