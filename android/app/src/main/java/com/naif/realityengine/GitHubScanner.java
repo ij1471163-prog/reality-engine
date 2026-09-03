@@ -164,7 +164,7 @@ public class GitHubScanner {
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(TIMEOUT_MS);
             conn.setReadTimeout(TIMEOUT_MS);
-            if (token != null && !token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
+            if (token != null && token.length() > 0) conn.setRequestProperty("Authorization", "Bearer " + token);
             conn.setRequestProperty("Accept", "application/vnd.github+json");
             conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
             conn.setRequestProperty("User-Agent", "RealityEngine");
