@@ -79,7 +79,14 @@ public class GitHubScanner {
                     + "/git/trees/" + safeBranch + "?recursive=1";
                 String treeJson = apiGet(token, treeUrl);
                 if (treeJson == null) {
-                    postError(callback, "فشل في جلب ملفات المستودع"); return;
+                    // تجرّب branch بديل
+                    String altBranch = safeBranch.equals("main") ? "master" : "main";
+                    String altUrl = API_BASE + "/repos/" + safeOwner + "/" + safeRepo
+                        + "/git/trees/" + altBranch + "?recursive=1";
+                    treeJson = apiGet(token, altUrl);
+                    if (treeJson == null) {
+                        postError(callback, "فشل في جلب ملفات المستودع"); return;
+                    }
                 }
 
                 JSONObject tree  = new JSONObject(treeJson);
