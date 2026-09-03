@@ -180,6 +180,10 @@ public class PDFReportActivity extends AppCompatActivity {
                 });
 
             } catch (Exception e) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
                 runOnUiThread(() -> {
                     if (isDestroyed()) return;
                     tvStatus.setTextColor(0xFFE74C3C);
