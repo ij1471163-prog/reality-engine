@@ -213,5 +213,3 @@ public class GitHubScanner {
         new Handler(Looper.getMainLooper()).post(() -> cb.onError(msg));
     }
 }
-}
-}
