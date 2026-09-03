@@ -123,6 +123,7 @@ public class AnalysisActivity extends AppCompatActivity {
             android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
         pdfLP.setMargins(0, 8, 0, 0);
         btnPDF.setLayoutParams(pdfLP);
+        btnPDF.setVisibility(android.view.View.GONE); // يظهر بعد الإصلاح
         ((android.view.ViewGroup) btnProceed.getParent()).addView(btnPDF);
         btnPDF.setOnClickListener(v -> {
             android.content.Intent pdfIntent = new android.content.Intent(this, PDFReportActivity.class);
