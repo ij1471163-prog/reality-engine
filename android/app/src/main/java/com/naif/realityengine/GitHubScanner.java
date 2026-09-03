@@ -51,9 +51,8 @@ public class GitHubScanner {
             String branch,
             ScanCallback callback) {
 
-        if (token == null || token.trim().isEmpty()) {
-            callback.onError("التوكن مطلوب"); return;
-        }
+        // Token اختياري للمستودعات العامة
+        final boolean hasToken = token != null && !token.trim().isEmpty();
         if (owner == null || owner.isEmpty() || repo == null || repo.isEmpty()) {
             callback.onError("اسم المستودع مطلوب"); return;
         }
@@ -158,7 +157,7 @@ public class GitHubScanner {
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(TIMEOUT_MS);
             conn.setReadTimeout(TIMEOUT_MS);
-            conn.setRequestProperty("Authorization", "Bearer " + token);
+            if (hasToken) conn.setRequestProperty("Authorization", "Bearer " + token);
             conn.setRequestProperty("Accept", "application/vnd.github+json");
             conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
             conn.setRequestProperty("User-Agent", "RealityEngine");
