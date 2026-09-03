@@ -30,8 +30,7 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build Debug
-        if: ${{ inputs.build_target == 'debug' }}
+      - name: Build Debug APK
         working-directory: android
         env:
           AI_KEY: ${{ secrets.AI_KEY }}
@@ -39,8 +38,7 @@ jobs:
           echo "AI_KEY=$AI_KEY" >> ../local.properties
           ./gradlew assembleDebug --no-daemon -PAI_KEY="$AI_KEY"
 
-      - name: Build Release
-        if: ${{ inputs.build_target == 'release' }}
+      - name: Build Release AAB
         working-directory: android
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
