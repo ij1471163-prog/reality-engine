@@ -54,11 +54,11 @@ public class PDFGenerator {
     }
 
     public static class Issue {
-        public String title;
-        public String severity;
-        public String fix;
-        public int    line;
-        public String cwe;
+        public final String title;
+        public final String severity;
+        public final String fix;
+        public final int    line;
+        public final String cwe;
 
         public Issue(String title, String severity, String fix, int line, String cwe) {
             this.title    = title;
@@ -81,25 +81,18 @@ public class PDFGenerator {
         PdfDocument.Page page = doc.startPage(pageInfo);
         Canvas canvas = page.getCanvas();
 
-        // Background
         drawBackground(canvas);
-
-        // Header
         y = drawHeader(canvas, data, y);
         y += 20;
-
-        // Score Card
         y = drawScoreCard(canvas, data, y);
         y += 20;
-
-        // Summary
         y = drawSummary(canvas, data, y);
         y += 20;
 
-        // Issues
         for (Issue issue : data.issues) {
-            // New page if needed
             if (y > PAGE_HEIGHT - 100) {
+                // ✅ Footer على كل صفحة
+                drawFooter(canvas, data, pageNum);
                 doc.finishPage(page);
                 pageNum++;
                 pageInfo = new PdfDocument.PageInfo.Builder(
@@ -113,17 +106,17 @@ public class PDFGenerator {
             y += 12;
         }
 
-        // Footer
+        // Footer آخر صفحة
         drawFooter(canvas, data, pageNum);
-
         doc.finishPage(page);
 
-        // Save
+        // ✅ try-with-resources — لا resource leak
         File file = getSaveFile(ctx, data.fileName);
-        FileOutputStream fos = new FileOutputStream(file);
-        doc.writeTo(fos);
-        fos.close();
-        doc.close();
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+            doc.writeTo(fos);
+        } finally {
+            doc.close();
+        }
 
         return file;
     }
@@ -328,13 +321,13 @@ public class PDFGenerator {
             String engineMessage,
             List<SecurityScanner.SecurityIssue> secIssues) {
 
-        ReportData data = new ReportData(fileName);
-        data.fileName   = fileName;
+        ReportData data = new ReportData(fileName); // ✅ fileName يُعيَّن في الـ constructor
 
         if (secIssues != null) {
             for (SecurityScanner.SecurityIssue si : secIssues) {
                 String sev = si.severity != null ? si.severity : "MEDIUM";
-                data.issues.add(new Issue(si.title, sev, si.fix, si.line, ""));
+                data.issues.add(new Issue(si.title, sev,
+                    si.fix != null ? si.fix : "", si.line, ""));
                 switch (sev) {
                     case "CRITICAL": data.critical++; break;
                     case "HIGH":     data.high++;     break;
