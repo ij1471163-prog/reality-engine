@@ -185,8 +185,3 @@ public class MultiLangAnalyzer {
                 issues.add(new Issue("Laravel Mass Assignment",
                     "استخدم $fillable",
                     "// $request->only(['field1', 'field2'])", ln, "HIGH"));
-            }
-        }
-    }
-}
-}
