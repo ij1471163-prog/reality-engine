@@ -179,7 +179,7 @@ public class PDFReportActivity extends AppCompatActivity {
                     btnExport.setBackgroundColor(0xFF238636);
                 });
 
-            } catch (InterruptedException e) {
+            } catch (Exception e) {
                 Thread.currentThread().interrupt(); // ✅ restore interrupt flag
             } catch (Exception e) {
                 runOnUiThread(() -> {
