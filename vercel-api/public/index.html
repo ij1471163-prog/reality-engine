@@ -467,7 +467,7 @@ function fixAllEngine() {
     toast('✅ تم إصلاح ' + fixed + ' مشكلة');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
-    if (fixed > 0) setTimeout(dlAll, 300);
+    if (fixed > 0) setTimeout(() => { if (_fromZip) dlAsZip(); else dlAll(); }, 300);
 }
 
 // ═══════════════════════════════════════════════════════
