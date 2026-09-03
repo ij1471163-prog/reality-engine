@@ -162,7 +162,10 @@ public class GitHubScanner {
             conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
             conn.setRequestProperty("User-Agent", "RealityEngine");
             int code = conn.getResponseCode();
-            if (code != 200) return null;
+            if (code != 200) {
+                android.util.Log.e("GitHubScanner", "HTTP " + code + " for: " + urlStr);
+                return null;
+            }
             BufferedReader br = new BufferedReader(
                 new InputStreamReader(conn.getInputStream(), "UTF-8"));
             StringBuilder sb = new StringBuilder();
