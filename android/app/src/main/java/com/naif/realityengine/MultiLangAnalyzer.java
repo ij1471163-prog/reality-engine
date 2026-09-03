@@ -189,6 +189,3 @@ public class MultiLangAnalyzer {
         }
     }
 }
-    }
-}
-}
