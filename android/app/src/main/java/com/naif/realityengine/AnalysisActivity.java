@@ -111,23 +111,7 @@ public class AnalysisActivity extends AppCompatActivity {
 
         btnCancel.setOnClickListener(v -> finish());
 
-        // زر AI دائماً
-        Button btnAI = new Button(this);
-        btnAI.setText("✨ تدقيق بالذكاء الاصطناعي");
-        btnAI.setBackgroundColor(0xFF6E40C9);
-        btnAI.setTextColor(0xFFFFFFFF);
-        android.widget.LinearLayout.LayoutParams aiParams = new android.widget.LinearLayout.LayoutParams(
-            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 130);
-        aiParams.setMargins(0, 8, 0, 0);
-        btnAI.setLayoutParams(aiParams);
-        ((android.view.ViewGroup) btnProceed.getParent()).addView(btnAI);
-
-        btnAI.setOnClickListener(v -> {
-            Intent aiIntent = new Intent(this, AIAnalysisActivity.class);
-            aiIntent.putExtra("fileCode", fileCode);
-            aiIntent.putExtra("fileName", fileName);
-            startActivity(aiIntent);
-        });
+        // زر AI محذوف — يوصل من MainActivity
 
         btnProceed.setOnClickListener(v -> {
             if (report.stubs.isEmpty()) {
