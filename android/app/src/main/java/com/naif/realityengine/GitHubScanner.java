@@ -15,7 +15,7 @@ public class GitHubScanner {
 
     private static final String API_BASE       = "https://api.github.com";
     private static final int    MAX_FILES      = 20;
-    private static final long   MAX_FILE_SIZE  = 500  * 1024L;  // 500KB
+    private static final long   MAX_FILE_SIZE  = 1024 * 1024L;  // 1MB
     private static final long   MAX_TOTAL_SIZE = 10   * 1024L * 1024L; // 10MB
     private static final int    TIMEOUT_MS     = 15000;
 
