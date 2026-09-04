@@ -173,6 +173,19 @@ public class EngineAnalyzer {
             }
         }
 
+        // Secret Detection
+        java.util.List<SecretDetector.Secret> secrets = SecretDetector.scan(code, fileName);
+        if (!secrets.isEmpty()) {
+            StringBuilder secretSummary = new StringBuilder("\n\n[Secrets] ");
+            secretSummary.append(secrets.size()).append(" مشاكل:\n");
+            for (SecretDetector.Secret s : secrets) {
+                secretSummary.append("[").append(s.severity).append("] ")
+                    .append(s.title).append(" — السطر ").append(s.line).append("\n");
+            }
+            if (report.engineMessage != null)
+                report.engineMessage = report.engineMessage + secretSummary.toString();
+        }
+
         // ✅ Bug Detection
         BugDetector.BugReport bugReport = BugDetector.detect(code);
         StringBuilder bugSummary = new StringBuilder();
