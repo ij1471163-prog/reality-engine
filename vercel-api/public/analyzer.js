@@ -233,6 +233,14 @@ function analyzeCode(code, fileName) {
             });
         }
     }
+    // Secret Detection
+    if (typeof detectSecrets === 'function') {
+        const secrets = detectSecrets(code, fileName);
+        secrets.forEach(s => {
+            if (!issues.some(x => x.line === s.line && x.title === s.title))
+                issues.push(s);
+        });
+    }
     // Security scan
     if (typeof scanSecurity === 'function') {
         const secIssues = scanSecurity(code, fileName);
