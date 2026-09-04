@@ -374,8 +374,17 @@ public class GitHubScanActivity extends AppCompatActivity {
         String js = "javascript:(function(){" +
             "try{var f=" + filesJson + ";" +
             "Object.keys(f).forEach(function(n){F[n]=f[n];});" +
+            "_fromZip=true;" +
             "renderFiles();" +
             "if(typeof refreshStats==='function')refreshStats();" +
+            "var dl=document.getElementById('btn-dl');" +
+            "var fix=document.getElementById('btn-fixall');" +
+            "var ai=document.getElementById('btn-aiall');" +
+            "var pdf=document.getElementById('btn-pdf');" +
+            "if(dl)dl.style.display='inline-block';" +
+            "if(fix)fix.style.display='inline-block';" +
+            "if(ai)ai.style.display='inline-block';" +
+            "if(pdf)pdf.style.display='inline-block';" +
             "}catch(e){console.error(e);}" +
             "})();";
         webView.evaluateJavascript(js, null);
