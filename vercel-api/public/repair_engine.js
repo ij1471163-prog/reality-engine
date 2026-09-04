@@ -12,11 +12,81 @@ const STRATEGIES = {
   LOG_SECRET:       { fn: fixLogSecret,       autoFix: true,  confidence: 0.90 },
   EMPTY_CATCH:      { fn: fixEmptyCatch,      autoFix: true,  confidence: 0.80 },
   EMPTY_FUNCTION:   { fn: fixEmptyFunction,   autoFix: false, confidence: 0.20 },
-  SQL_INJECTION:    { fn: null,               autoFix: false, confidence: 0.40 },
-  EVAL_USAGE:       { fn: null,               autoFix: false, confidence: 0.10 },
+  SQL_INJECTION:    { fn: fixSQLInjection,    autoFix: true,  confidence: 0.75 },
+  EVAL_USAGE:       { fn: fixEval,            autoFix: true,  confidence: 0.85 },
   RETURN_NULL:      { fn: null,               autoFix: false, confidence: 0.10 },
   NPE_CHAIN:        { fn: null,               autoFix: false, confidence: 0.15 },
 };
+
+
+// ─── SQL Injection Fix ────────────────────────────────
+function fixSQLInjection(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+
+  // JS: استبدل string concatenation بـ parameterized query
+  const fixed = line
+    .replace(/["']\s*\+\s*\w+\s*\+\s*["']/g, '?')
+    .replace(/`[^`]*\$\{[^}]+\}[^`]*`/, '?');
+
+  if (fixed === line) return null;
+  lines[ln] = fixed + ' // TODO: use parameterized query';
+  return lines.join('\n');
+}
+
+// ─── eval() Fix ───────────────────────────────────────
+function fixEval(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+  if (!/\beval\s*\(/.test(line)) return null;
+  lines[ln] = '// SECURITY: eval() removed — use safer alternative\n// ' + line.trim();
+  return lines.join('\n');
+}
+
+// ─── Hardcoded Password Fix ───────────────────────────
+function fixHardcodedPassword(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+  const fixed = line.replace(
+    /(["'])([^"']{8,})(["'])/,
+    'process.env.SECRET_VALUE // TODO: move to .env'
+  );
+  if (fixed === line) return null;
+  lines[ln] = fixed;
+  return lines.join('\n');
+}
+
+// ─── Command Injection Fix ────────────────────────────
+function fixCommandInjection(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+  lines[ln] = '// SECURITY: Command injection risk — validate input\n// ' + line.trim();
+  return lines.join('\n');
+}
+
+// ─── MD5/SHA1 Fix ─────────────────────────────────────
+function fixWeakCrypto(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+  const fixed = line
+    .replace(/["']md5["']/gi, '"sha256"')
+    .replace(/["']sha1["']/gi, '"sha256"')
+    .replace(/createHash\(["']md5["']\)/gi, 'createHash("sha256")')
+    .replace(/createHash\(["']sha1["']\)/gi, 'createHash("sha256")');
+  if (fixed === line) return null;
+  lines[ln] = fixed;
+  return lines.join('\n');
+}
 
 function repairCode(code, issues, fileName) {
   const ext = fileName.split('.').pop().toLowerCase();
