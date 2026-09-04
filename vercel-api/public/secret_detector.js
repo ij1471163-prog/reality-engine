@@ -13,7 +13,7 @@ function detectSecrets(code, fileName) {
     // ─── AWS ──────────────────────────────────────────
     {
       name:    'AWS Access Key ID',
-      regex:   /AKIA[0-9A-Z]{16}/,
+      regex:   /AKIA[0-9A-Z]{16,20}/,
       sev:     'c',
       cwe:     'CWE-798',
       fix:     '// استخدم AWS IAM Roles أو environment variables',
