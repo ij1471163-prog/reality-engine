@@ -43,8 +43,8 @@ function fixEval(code, issue) {
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
   if (!/\beval\s*\(/.test(line)) return null;
-  lines[ln] = '// SECURITY: eval() removed — use safer alternative\n// ' + line.trim();
-  return lines.join('\n');
+  lines[ln] = '// SECURITY: eval() removed — use JSON.parse() or Function() instead';
+  return { fixed: lines.join('\n'), patch: lines[ln], reason: 'eval() is dangerous — removed' };
 }
 
 // ─── Hardcoded Password Fix ───────────────────────────
@@ -78,14 +78,14 @@ function fixWeakCrypto(code, issue) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const fixed = line
+  const fixedLine = line
     .replace(/["']md5["']/gi, '"sha256"')
     .replace(/["']sha1["']/gi, '"sha256"')
     .replace(/createHash\(["']md5["']\)/gi, 'createHash("sha256")')
     .replace(/createHash\(["']sha1["']\)/gi, 'createHash("sha256")');
-  if (fixed === line) return null;
-  lines[ln] = fixed;
-  return lines.join('\n');
+  if (fixedLine === line) return null;
+  lines[ln] = fixedLine;
+  return { fixed: lines.join('\n'), patch: lines[ln], reason: 'Weak crypto MD5/SHA1 → SHA256' };
 }
 
 function repairCode(code, issues, fileName) {
