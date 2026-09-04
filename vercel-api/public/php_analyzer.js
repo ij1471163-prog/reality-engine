@@ -16,6 +16,16 @@ function analyzePHP(code, fileName) {
   const framework   = isLaravel ? 'Laravel' : isWordPress ? 'WordPress' : 'PHP';
 
   lines.forEach((line, i) => {
+        const t2 = line.trim();
+        if (/["\']\s*\.\s*\$_(GET|POST|REQUEST)/.test(t2) && /SELECT|INSERT|UPDATE|DELETE/i.test(t2)) {
+            issues.push({
+                type:'php', sev:'c', line:i+1, ev:t2,
+                title:'🔴 SQL Injection — PHP String Concatenation',
+                fix:'// استخدم PDO Prepared Statements',
+                conf:90, cIcon:'🔴', cAct:'CWE-89',
+                cEv:['استخدم $pdo->prepare() بدل string concatenation'],
+            });
+        }
     const t = line.trim();
     const ln = i + 1;
     if (t.startsWith('//') || t.startsWith('#') || t.startsWith('*')) return;
