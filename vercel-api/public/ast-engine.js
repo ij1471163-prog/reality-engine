@@ -8,7 +8,7 @@
 
 "use strict";
 
-const ACORN_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/acorn/8.11.3/acorn.min.js';
+// Acorn loaded locally
 
 // ═══════════════════════════════════════════════════════
 // Acorn Loader
@@ -21,6 +21,7 @@ const _acorn = {
 };
 
 function loadAcorn(cb) {
+    if (typeof acorn !== 'undefined') { _acorn.loaded = true; cb(); return; }
     if (_acorn.loaded) { cb(); return; }
     _acorn.callbacks.push(cb);
     if (_acorn.loading) return;
