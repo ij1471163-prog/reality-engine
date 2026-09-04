@@ -188,21 +188,62 @@ public class ApprovalActivity extends AppCompatActivity {
     private static final int SAVE_FILE = 99;
 
     private void saveFiles() {
-        // عرض dialog واضح
-        new androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("✅ تم الإصلاح")
-            .setMessage("موافق: " + approved + " | مرفوض: " + rejected + "\n\nهل تريد حفظ الملف؟")
-            .setPositiveButton("💾 حفظ", (d, w) -> {
-                android.content.Intent intent = new android.content.Intent(
-                    android.content.Intent.ACTION_CREATE_DOCUMENT);
-                intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
-                intent.setType("text/plain");
-                intent.putExtra(android.content.Intent.EXTRA_TITLE, "fixed_" + fileName);
-                startActivityForResult(intent, SAVE_FILE);
-            })
-            .setNegativeButton("إغلاق", (d, w) -> finish())
-            .setCancelable(false)
-            .show();
+        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
+        builder.setTitle("✅ تم الإصلاح");
+        builder.setMessage("موافق: " + approved + " | مرفوض: " + rejected);
+        builder.setCancelable(false);
+
+        android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
+        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        layout.setPadding(48, 16, 48, 16);
+
+        // زر تنزيل ملف
+        android.widget.Button btnSave = new android.widget.Button(this);
+        btnSave.setText("💾 تنزيل الملف المصلح");
+        btnSave.setBackgroundColor(0xFF238636);
+        btnSave.setTextColor(0xFFFFFFFF);
+        btnSave.setPadding(0, 20, 0, 20);
+        android.widget.LinearLayout.LayoutParams lp1 = new android.widget.LinearLayout.LayoutParams(-1, -2);
+        lp1.setMargins(0, 0, 0, 12);
+        btnSave.setLayoutParams(lp1);
+        layout.addView(btnSave);
+
+        // زر PDF
+        android.widget.Button btnPDF = new android.widget.Button(this);
+        btnPDF.setText("📄 تصدير PDF");
+        btnPDF.setBackgroundColor(0xFF6E40C9);
+        btnPDF.setTextColor(0xFFFFFFFF);
+        btnPDF.setPadding(0, 20, 0, 20);
+        layout.addView(btnPDF);
+
+        builder.setView(layout);
+        builder.setNegativeButton("إغلاق", (d, w) -> finish());
+
+        android.app.AlertDialog dialog = builder.create();
+
+        btnSave.setOnClickListener(v -> {
+            dialog.dismiss();
+            android.content.Intent intent = new android.content.Intent(
+                android.content.Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+            intent.setType("text/plain");
+            intent.putExtra(android.content.Intent.EXTRA_TITLE, "fixed_" + fileName);
+            startActivityForResult(intent, SAVE_FILE);
+        });
+
+        btnPDF.setOnClickListener(v -> {
+            dialog.dismiss();
+            if (PremiumManager.isPremium(this)) {
+                android.content.Intent i = new android.content.Intent(this, PDFReportActivity.class);
+                i.putExtra("fileCode", code);
+                i.putExtra("fileName", fileName);
+                startActivity(i);
+            } else {
+                startActivity(new android.content.Intent(this, SubscriptionActivity.class));
+            }
+        });
+
+        dialog.show();
     }
 
     @Override
