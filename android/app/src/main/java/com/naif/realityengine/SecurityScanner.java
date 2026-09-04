@@ -5,6 +5,18 @@ import java.util.regex.*;
 
 public class SecurityScanner {
 
+    // ─── OWASP Map ───────────────────────────────────────
+    public static final java.util.Map<String, String> OWASP_MAP = new java.util.HashMap<String, String>() {{
+        put("SQL",     "OWASP A03:2021 | CWE-89  | CVSS 9.8");
+        put("XSS",     "OWASP A03:2021 | CWE-79  | CVSS 7.2");
+        put("SECRET",  "OWASP A02:2021 | CWE-798 | CVSS 9.1");
+        put("CMD",     "OWASP A03:2021 | CWE-78  | CVSS 9.8");
+        put("CRYPTO",  "OWASP A02:2021 | CWE-327 | CVSS 7.4");
+        put("AUTH",    "OWASP A07:2021 | CWE-287 | CVSS 8.1");
+        put("LOG",     "OWASP A09:2021 | CWE-532 | CVSS 5.3");
+        put("HTTP",    "OWASP A02:2021 | CWE-319 | CVSS 7.5");
+    }};
+
     public static class SecurityIssue {
         public String title;
         public String description;
