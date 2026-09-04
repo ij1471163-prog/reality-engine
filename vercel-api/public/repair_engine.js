@@ -29,14 +29,16 @@ function fixSQLInjection(code, issue) {
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
 
-  // JS: استبدل string concatenation بـ parameterized query
-  const fixed = line
-    .replace(/["']\s*\+\s*\w+\s*\+\s*["']/g, '?')
-    .replace(/`[^`]*\$\{[^}]+\}[^`]*`/, '?');
+  let fixedLine = line;
+  if (/".*"\s*\+\s*\w+/.test(line) || /\w+\s*\+\s*".*"/.test(line)) {
+    fixedLine = '// SECURITY: SQL Injection — use prepared statements\n  // ' + line.trim();
+  } else if (/`[^`]*\${/.test(line)) {
+    fixedLine = '// SECURITY: SQL Injection — use prepared statements\n  // ' + line.trim();
+  }
 
-  if (fixed === line) return null;
-  lines[ln] = fixed + ' // TODO: use parameterized query';
-  return lines.join('\n');
+  if (fixedLine === line) return null;
+  lines[ln] = fixedLine;
+  return { fixed: lines.join('\n'), patch: fixedLine, reason: 'SQL Injection — use parameterized queries' };
 }
 
 // ─── eval() Fix ───────────────────────────────────────
