@@ -217,7 +217,8 @@ function detectSecrets(code, fileName) {
 
     // تجاهل comments وexample strings
     if (t.startsWith('//') || t.startsWith('#') || t.startsWith('*')) return;
-    if (/example|sample|test|dummy|placeholder|xxx|yyy|your[_\-]?key/i.test(t)) return;
+    // فلتر أقل صرامة
+    if (/your[_\-]?key|placeholder|xxx_/i.test(t)) return;
 
     patterns.forEach(pat => {
       if (pat.regex.test(line)) {
