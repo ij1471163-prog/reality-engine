@@ -14,6 +14,9 @@ const STRATEGIES = {
   EMPTY_FUNCTION:   { fn: fixEmptyFunction,   autoFix: false, confidence: 0.20 },
   SQL_INJECTION:    { fn: fixSQLInjection,    autoFix: true,  confidence: 0.75 },
   EVAL_USAGE:       { fn: fixEval,            autoFix: true,  confidence: 0.85 },
+  WEAK_CRYPTO:      { fn: fixWeakCrypto,      autoFix: true,  confidence: 0.90 },
+  MD5_USAGE:        { fn: fixWeakCrypto,      autoFix: true,  confidence: 0.90 },
+  WEAK_HASH:        { fn: fixWeakCrypto,      autoFix: true,  confidence: 0.90 },
   RETURN_NULL:      { fn: null,               autoFix: false, confidence: 0.10 },
   NPE_CHAIN:        { fn: null,               autoFix: false, confidence: 0.15 },
 };
