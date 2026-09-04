@@ -122,13 +122,7 @@ function repairCode(code, issues, fileName) {
   });
 
   let reAnalysis = null;
-  if (typeof analyzeCode === 'function') {
-    const newIssues = analyzeCode(repairedCode, fileName);
-    reAnalysis = {
-      issuesBefore: issues.length, issuesAfter: newIssues.length,
-      fixed: issues.length - newIssues.length, remaining: newIssues,
-    };
-  }
+  // reAnalysis disabled to avoid recursive call issues
 
   return {
     original: code, repaired: repairedCode,
