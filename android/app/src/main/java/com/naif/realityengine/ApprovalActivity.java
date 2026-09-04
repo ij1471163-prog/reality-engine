@@ -188,12 +188,21 @@ public class ApprovalActivity extends AppCompatActivity {
     private static final int SAVE_FILE = 99;
 
     private void saveFiles() {
-        android.content.Intent intent = new android.content.Intent(
-            android.content.Intent.ACTION_CREATE_DOCUMENT);
-        intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
-        intent.setType("text/plain");
-        intent.putExtra(android.content.Intent.EXTRA_TITLE, "fixed_" + fileName);
-        startActivityForResult(intent, SAVE_FILE);
+        // عرض dialog واضح
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("✅ تم الإصلاح")
+            .setMessage("موافق: " + approved + " | مرفوض: " + rejected + "\n\nهل تريد حفظ الملف؟")
+            .setPositiveButton("💾 حفظ", (d, w) -> {
+                android.content.Intent intent = new android.content.Intent(
+                    android.content.Intent.ACTION_CREATE_DOCUMENT);
+                intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+                intent.setType("text/plain");
+                intent.putExtra(android.content.Intent.EXTRA_TITLE, "fixed_" + fileName);
+                startActivityForResult(intent, SAVE_FILE);
+            })
+            .setNegativeButton("إغلاق", (d, w) -> finish())
+            .setCancelable(false)
+            .show();
     }
 
     @Override
