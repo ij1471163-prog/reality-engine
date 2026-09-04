@@ -311,6 +311,24 @@ function analyzeCode(code, fileName) {
             });
         }
     });
+
+    // ─── Secret Detection (all files) ───────────────
+    if (typeof detectSecrets === 'function') {
+        detectSecrets(code, fileName).forEach(s => {
+            if (!issues.some(x => x.line === s.line && x.title === s.title))
+                issues.push(s);
+        });
+    }
+
+    // ─── PHP Analysis ────────────────────────────────
+    const _ext = fileName.split('.').pop().toLowerCase();
+    if (_ext === 'php' && typeof analyzePHP === 'function') {
+        analyzePHP(code, fileName).issues.forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title))
+                issues.push(i);
+        });
+    }
+
     return issues;
 }
 
