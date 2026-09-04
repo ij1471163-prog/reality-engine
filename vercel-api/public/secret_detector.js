@@ -75,7 +75,7 @@ function detectSecrets(code, fileName) {
     // ─── Stripe ───────────────────────────────────────
     {
       name:    'Stripe Secret Key',
-      regex:   /sk_live_[A-Za-z0-9]{24,}/,
+      regex:   /sk_live_[A-Za-z0-9]{20,}/,
       sev:     'c',
       cwe:     'CWE-798',
       fix:     '// استخدم sk_test للتطوير وenv vars للإنتاج',
