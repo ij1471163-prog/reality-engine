@@ -75,15 +75,14 @@ public class GitHubScanner {
 
                 // جيب قائمة الملفات
                 callback.onProgress("جاري جلب قائمة الملفات (أول " + MAX_FILES + " ملف)...");
-                String treeUrl  = API_BASE + "/repos/" + safeOwner + "/" + safeRepo
-                    + "/git/trees/" + safeBranch + "?recursive=1";
-                String treeJson = apiGet(token, treeUrl);
+                // جرّب main ثم master تلقائياً
+                String activeBranch = safeBranch;
+                String treeJson = apiGet(token, API_BASE + "/repos/" + safeOwner + "/" + safeRepo
+                    + "/git/trees/" + activeBranch + "?recursive=1");
                 if (treeJson == null) {
-                    // تجرّب branch بديل
-                    String altBranch = safeBranch.equals("main") ? "master" : "main";
-                    String altUrl = API_BASE + "/repos/" + safeOwner + "/" + safeRepo
-                        + "/git/trees/" + altBranch + "?recursive=1";
-                    treeJson = apiGet(token, altUrl);
+                    activeBranch = safeBranch.equals("main") ? "master" : "main";
+                    treeJson = apiGet(token, API_BASE + "/repos/" + safeOwner + "/" + safeRepo
+                        + "/git/trees/" + activeBranch + "?recursive=1");
                     if (treeJson == null) {
                         postError(callback, "فشل في جلب ملفات المستودع"); return;
                     }
@@ -125,7 +124,7 @@ public class GitHubScanner {
                         + ": " + getFileName(path));
 
                     String url      = API_BASE + "/repos/" + safeOwner + "/" + safeRepo
-                        + "/contents/" + path + "?ref=" + safeBranch;
+                        + "/contents/" + path + "?ref=" + activeBranch;
                     String fileJson = apiGet(token, url);
                     if (fileJson == null) continue;
 
