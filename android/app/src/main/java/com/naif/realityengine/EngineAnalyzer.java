@@ -173,6 +173,19 @@ public class EngineAnalyzer {
             }
         }
 
+        // ML Pattern Detection
+        java.util.List<MLPatternFinder.MLIssue> mlPatterns = MLPatternFinder.analyze(code, fileName);
+        if (!mlPatterns.isEmpty()) {
+            StringBuilder mlSummary = new StringBuilder("\n\n[ML Patterns] ");
+            mlSummary.append(mlPatterns.size()).append(" مشاكل:\n");
+            for (MLPatternFinder.MLIssue ml : mlPatterns) {
+                mlSummary.append("[").append(ml.severity).append("] ")
+                    .append(ml.title).append(" — السطر ").append(ml.line).append("\n");
+            }
+            if (report.engineMessage != null)
+                report.engineMessage = report.engineMessage + mlSummary.toString();
+        }
+
         // Secret Detection
         java.util.List<SecretDetector.Secret> secrets = SecretDetector.scan(code, fileName);
         if (!secrets.isEmpty()) {
