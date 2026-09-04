@@ -133,8 +133,21 @@ public class AnalysisActivity extends AppCompatActivity {
         });
 
         btnProceed.setOnClickListener(v -> {
-            if (report.stubs.isEmpty()) {
-                Toast.makeText(this, "لا دوال ناقصة — استخدم زر AI", Toast.LENGTH_SHORT).show();
+            if (report.stubs.isEmpty() && bugReport.bugs.isEmpty()) {
+                Toast.makeText(this, "✅ الكود نظيف — لا يحتاج إصلاح", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (report.stubs.isEmpty() && !bugReport.bugs.isEmpty()) {
+                // إصلاح الأخطاء المنطقية فقط
+                android.content.Intent fixIntent = new android.content.Intent(this, ApprovalActivity.class);
+                fixIntent.putExtra("fileName", fileName);
+                fixIntent.putExtra("fixBugsOnly", true);
+                try {
+                    java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
+                    java.io.FileWriter fw = new java.io.FileWriter(tmp);
+                    fw.write(fileCode); fw.close();
+                } catch (Exception e) { e.printStackTrace(); }
+                startActivity(fixIntent);
                 return;
             }
             try {
