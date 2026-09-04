@@ -143,6 +143,7 @@ function detectStrategy(issue) {
   if (t.includes('===') || t.includes('=='))                             return 'LOOSE_EQUALITY';
   if (t.includes('var'))                                                  return 'VAR_USAGE';
   if (t.includes('eval'))                                                 return 'EVAL_USAGE';
+  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto')) return 'WEAK_CRYPTO';
   if (t.includes('catch'))                                                return 'EMPTY_CATCH';
   if (t.includes('http'))                                                 return 'HTTP_USAGE';
   if (t.includes('تسجيل') || t.includes('log'))                          return 'LOG_SECRET';
