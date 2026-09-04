@@ -233,6 +233,16 @@ function analyzeCode(code, fileName) {
             });
         }
     }
+    // C/C++ Analysis
+    if ((fileName.endsWith('.c') || fileName.endsWith('.cpp') ||
+         fileName.endsWith('.cc') || fileName.endsWith('.h') ||
+         fileName.endsWith('.hpp')) && typeof analyzeCCpp === 'function') {
+        const cResult = analyzeCCpp(code, fileName);
+        cResult.issues.forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title))
+                issues.push(i);
+        });
+    }
     // Secret Detection
     if (typeof detectSecrets === 'function') {
         const secrets = detectSecrets(code, fileName);
