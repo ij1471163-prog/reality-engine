@@ -663,6 +663,15 @@ function enhanceStubs(issues, code) {
         }
     });
     
+
+    // C# / Unity Analysis
+    if (fileName.endsWith('.cs') && typeof analyzeCSharp === 'function') {
+        analyzeCSharp(code, fileName).forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title))
+                issues.push(i);
+        });
+    }
+
 return issues;
 }
 
