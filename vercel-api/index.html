@@ -404,10 +404,7 @@ AFTER:
 
 async function fixAllWithAI() {
     // فحص typos أولاً
-    if (typeof detectDangerousTypos !== 'undefined') {
-        const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
-        if (hasRisk && !confirm('⚠️ الكود يحتوي APIs خطرة. متابعة للاختبار؟')) { return; }
-    }
+    // تجاهل تحذير APIs — نصلح دائماً
 
     const btn = document.getElementById('btn-aiall');
     btn.innerHTML = '⏳ جاري...'; btn.disabled = true;
@@ -449,10 +446,7 @@ ${F[fn]}
 // ═══════════════════════════════════════════════════════
 
 function fixAllEngine() {
-    if (typeof detectDangerousTypos !== 'undefined') {
-        const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
-        if (hasRisk && !confirm('⚠️ الكود يحتوي APIs خطرة. متابعة للاختبار؟')) { return; }
-    }
+    // تجاهل تحذير APIs — نصلح دائماً
     let totalFixed = 0;
     Object.keys(R).forEach(fn => {
         if (typeof repairCode !== 'function') return;
