@@ -469,7 +469,7 @@ function fixAllEngine() {
     toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
-    if (totalFixed > 0) setTimeout(() => { if (_fromZip) dlAsZip(); else dlAll(); }, 300);
+    // تنزيل يدوي فقط — لا تنزيل تلقائي
 }
 
 // ═══════════════════════════════════════════════════════
