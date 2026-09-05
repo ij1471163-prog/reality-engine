@@ -654,7 +654,16 @@ function enhanceStubs(issues, code) {
             issue.cAct  = 'اقتراح محرك';
         }
     });
-    return issues;
+    
+    // Dart/Flutter Analysis
+    if (fileName.endsWith('.dart') && typeof analyzeDart === 'function') {
+        analyzeDart(code, fileName).forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title))
+                issues.push(i);
+        });
+    }
+
+return issues;
 }
 
 // ═══════════════════════════════════════════════════════
