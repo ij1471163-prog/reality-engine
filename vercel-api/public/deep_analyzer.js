@@ -222,6 +222,7 @@ class DataFlowAnalyzer {
         // تجاهل env variables وconstants
         if (/process\.env\.|os\.environ|Environment\.GetEnvironmentVariable/i.test(line)) return;
         if (/await\s+\w+\(/.test(line)) return; // نتائج async/await
+        if (/^(?:const|let|var)\s+(hash|token|userId|result|data|response|query|cursor|conn|db)\b/.test(line.trim())) return;
         if (/^(?:const|let|var)\s+(?:API|SECRET|TOKEN|CONFIG|ENV|KEY|DB|AWS|STRIPE|GOOGLE)_/i.test(line.trim())) return;
         // تعيين متغير لا يُستخدم
         const assignMatch = line.match(/^(?:const|let|var)\s+(\w+)\s*=/);
