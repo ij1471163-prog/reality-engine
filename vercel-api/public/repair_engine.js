@@ -360,50 +360,52 @@ function fixEmptyFunction(code, issue, lines, ext) {
 // ─── Callback Hell → async/await ─────────────────────
 function fixCallbackHell(code, issue) {
   const lines = code.split('\n');
-  const ln = issue.line - 1;
-  if (ln < 0 || ln >= lines.length) return null;
 
-  // استخرج الدوال المتداخلة
-  const callbackPattern = /(\w+)\s*\(\s*(?:function\s*\([^)]*\)|[^)]*=>\s*\{)/;
-  const matches = [];
+  // ابحث عن أول callback متداخل
+  const callbackPattern = /\w+\s*\(\s*function\s*\(/;
+  let cbStart = -1;
+  let cbEnd = -1;
   let depth = 0;
-  let start = -1;
+  const funcNames = [];
 
-  lines.forEach((line, i) => {
-    if (callbackPattern.test(line)) {
-      if (depth === 0) start = i;
+  for (let i = 0; i < lines.length; i++) {
+    if (callbackPattern.test(lines[i])) {
+      if (cbStart === -1) cbStart = i;
+      const m = lines[i].match(/(\w+)\s*\(/);
+      if (m) funcNames.push(m[1]);
       depth++;
-      matches.push({ line: i, content: line.trim() });
     }
-    if (line.includes('});') || line.includes('})')) {
-      depth = Math.max(0, depth - 1);
+    if ((lines[i].includes('});') || lines[i].includes('})')) && depth > 0) {
+      depth--;
+      if (depth === 0) { cbEnd = i; break; }
     }
-  });
+  }
 
-  if (matches.length < 3) return null;
+  if (cbStart === -1 || funcNames.length < 2) return null;
 
-  // بناء async/await بديل
-  const indent = ' '.repeat(lines[start].search(/\S/));
-  const asyncLines = [`${indent}async function processAll() {`, `${indent}  try {`];
+  // بناء async/await
+  const indent = ' '.repeat((lines[cbStart].match(/^(\s*)/)||['',''])[1].length);
+  const asyncCode = [
+    `${indent}async function processAll() {`,
+    `${indent}  try {`,
+    ...funcNames.map(n => `${indent}    const ${n}Result = await ${n}();`),
+    `${indent}  } catch (error) {`,
+    `${indent}    console.error('Error:', error);`,
+    `${indent}  }`,
+    `${indent}}`,
+    `${indent}processAll();`
+  ];
 
-  matches.forEach(m => {
-    const funcMatch = m.content.match(/(\w+)\s*\(/);
-    if (funcMatch) {
-      asyncLines.push(`${indent}    const result_${funcMatch[1]} = await ${funcMatch[1]}();`);
-    }
-  });
+  // استبدل فقط كود الـ callbacks مو كل الملف
+  const newLines = [
+    ...lines.slice(0, cbStart),
+    ...asyncCode,
+    ...lines.slice(cbEnd + 1)
+  ];
 
-  asyncLines.push(`${indent}  } catch (error) {`);
-  asyncLines.push(`${indent}    console.error('Error:', error);`);
-  asyncLines.push(`${indent}  }`);
-  asyncLines.push(`${indent}}`);
-  asyncLines.push(`${indent}processAll();`);
-
-  // استبدل الكود القديم
-  const newLines = [...lines.slice(0, start), ...asyncLines];
   return {
     fixed: newLines.join('\n'),
-    patch: asyncLines.join('\n'),
+    patch: asyncCode.join('\n'),
     reason: 'Callback Hell → async/await'
   };
 }
