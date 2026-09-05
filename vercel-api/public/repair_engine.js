@@ -22,6 +22,7 @@ const STRATEGIES = {
   WEAK_HASH:        { fn: fixWeakCrypto,        autoFix: true,  confidence: 0.90 },
   HARDCODED_PASS:   { fn: fixHardcodedPassword, autoFix: true,  confidence: 0.82 },
   CMD_INJECTION:    { fn: fixCommandInjection,  autoFix: true,  confidence: 0.78 },
+  CMD_INJECTION_PY: { fn: fixCommandInjectionPy, autoFix: true,  confidence: 0.85 },
   NONE_COMPARE:     { fn: fixNoneCompare,       autoFix: true,  confidence: 0.95 },
   NAMEERROR:        { fn: fixNameError,         autoFix: true,  confidence: 0.90 },
   RETURN_NULL:      { fn: null,                 autoFix: false, confidence: 0.10 },
@@ -70,6 +71,10 @@ function fixSQLInjection(code, issue) {
     const pyComment = ext === 'py' ? '# ' : '// ';
     lines[ln] = pyComment + 'SECURITY: SQL Injection — use prepared statements\n' + pyComment + line.trim();
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection marked for fix' };
+  } else if (ext === 'php') {
+    fixedLine = line
+      .replace(/md5\s*\(/gi, 'hash("sha256", ')
+      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
   } else if (ext === 'cs') {
     // C#: استبدل بـ SqlParameter
     const m = line.match(/"([^"]+)"\s*\+\s*(\w+)/);
@@ -148,6 +153,10 @@ function fixHardcodedPassword(code, issue) {
       /(["\'])[^"\']+(["\'])/,
       `process.env.${varName}`
     );
+  } else if (ext === 'php') {
+    fixedLine = line
+      .replace(/md5\s*\(/gi, 'hash("sha256", ')
+      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
   } else if (ext === 'cs') {
     lines[ln] = line.replace(
       /(["\'])[^"\']+(["\'])/,
@@ -208,6 +217,10 @@ function fixWeakCrypto(code, issue) {
     fixedLine = line
       .replace(/createHash\s*\(\s*["']md5["']\s*\)/gi, 'createHash("sha256")')
       .replace(/createHash\s*\(\s*["']sha1["']\s*\)/gi, 'createHash("sha256")');
+  } else if (ext === 'php') {
+    fixedLine = line
+      .replace(/md5\s*\(/gi, 'hash("sha256", ')
+      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
   } else if (ext === 'cs') {
     fixedLine = line
       .replace(/MD5\.Create\s*\(\s*\)/g, 'SHA256.Create()')
@@ -338,6 +351,10 @@ function fixEmptyCatch(code, issue, lines, ext) {
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ android.util.Log.e("Error", "exception occurred"); }');
   } else if (ext === 'py') {
     fixed = line + '\n' + ' '.repeat(line.search(/\S/) + 4) + 'logging.error("Exception: %s", str(e))';
+  } else if (ext === 'php') {
+    fixedLine = line
+      .replace(/md5\s*\(/gi, 'hash("sha256", ')
+      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
   } else if (ext === 'cs') {
     fixed = line.replace(/catch\s*(\([^)]*\))?\s*\{\s*\}/, 'catch (Exception ex) { Debug.LogError("Error: " + ex.Message); }');
   } else {
@@ -465,6 +482,10 @@ function fixApiKeyAdvanced(code, issue) {
   } else if (ext === 'js' || ext === 'ts') {
     lines[ln] = line.replace(/["'][^"']+["']/, `process.env.${envName}`);
     lines.splice(ln + 1, 0, `// Add to .env file: ${envName}=your_value_here`);
+  } else if (ext === 'php') {
+    fixedLine = line
+      .replace(/md5\s*\(/gi, 'hash("sha256", ')
+      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
   } else if (ext === 'cs') {
     lines[ln] = line.replace(/["'][^"']+["']/, `Environment.GetEnvironmentVariable("${envName}")`);
   } else if (ext === 'java') {
@@ -499,6 +520,29 @@ function fixAccumulationAdvanced(code, issue) {
   };
 }
 
+
+// ─── Command Injection Fix ───────────────────────────────
+function fixCommandInjectionPy(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+  
+  const m = line.match(/os\.system\s*\((.+)\)/);
+  if (!m) return null;
+  
+  const indent = ' '.repeat(line.search(/\S/));
+  const arg = m[1].trim();
+  
+  // استبدل os.system بـ subprocess.run
+  lines[ln] = `${indent}subprocess.run(shlex.split(${arg}), check=True, capture_output=True)`;
+  
+  // أضف imports لو ما موجودة
+  let fixed = lines.join('\n');
+  if (!fixed.includes('import subprocess')) fixed = 'import subprocess\nimport shlex\n' + fixed;
+  
+  return { fixed, patch: lines[ln].trim(), reason: 'Command Injection → subprocess.run' };
+}
 
 // ─── Helpers ──────────────────────────────────────────
 
@@ -585,6 +629,7 @@ function detectStrategy(issue) {
   if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto') || t.includes('MD5') || t.includes('SHA1')) return 'WEAK_CRYPTO';
   if (t.includes('none') || t.includes('is none'))                       return 'NONE_COMPARE';
   if (t.includes('nameerror') || t.includes('غير معرّف'))                  return 'NAMEERROR';
+  if (t.includes('command injection') && t.includes('python'))             return 'CMD_INJECTION_PY';
   if (t.includes('command') || t.includes('os.system'))                  return 'CMD_INJECTION';
   if (t.includes('return null'))                                          return 'RETURN_NULL';
   if (t.includes('npe') || t.includes('null check'))                     return 'NPE_CHAIN';
