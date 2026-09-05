@@ -17,7 +17,7 @@ function analyzePHP(code, fileName) {
 
   lines.forEach((line, i) => {
         const t2 = line.trim();
-        if (/["\']\s*\.\s*\$_(GET|POST|REQUEST)/.test(t2) && /SELECT|INSERT|UPDATE|DELETE/i.test(t2)) {
+        if ((/["\']\s*\.\s*\$\w+/.test(t2) || /\.\s*\$_(GET|POST|REQUEST)/.test(t2)) && /SELECT|INSERT|UPDATE|DELETE/i.test(t2)) {
             issues.push({
                 type:'php', sev:'c', line:i+1, ev:t2,
                 title:'🔴 SQL Injection — PHP String Concatenation',
