@@ -284,9 +284,11 @@ function fixVar(code, issue, lines, ext) {
 function fixEquality(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const fixed = line.replace(/([^=!<>])==([^=])/g, '$1===$2').replace(/([^=!<>])!=([^=])/g, '$1!==$2');
+  let fixed = line.replace(/([^=!<>])==([^=])/g, '$1===$2').replace(/([^=!<>])!=([^=])/g, '$1!==$2');
+  // صلح رقم مقابل string: === "0" → === 0
+  fixed = fixed.replace(/===\s*"(\d+)"/g, '=== $1').replace(/!==\s*"(\d+)"/g, '!== $1');
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '== → ===' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '== → === و string→number' };
 }
 
 // ─── Accumulation ─────────────────────────────────────
