@@ -373,7 +373,19 @@ function analyzeCode(code, fileName) {
         } catch(e) { console.warn('deepAnalyze:', e.message); }
     }
 
-        // Callback Hell Detection
+        // var usage detection
+    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (/^\s*var\s+\w+/.test(line) && !line.trim().startsWith('//')) {
+                issues.push({ type:'js', sev:'l', line:i+1, ev:line.trim(),
+                    title:'🔵 استخدام var — استخدم let أو const',
+                    fix: line.replace(/\bvar\b/, 'let').trim(),
+                    conf:90, cIcon:'🔵', cAct:'VAR_USAGE' });
+            }
+        });
+    }
+
+    // Callback Hell Detection
         if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
             let cbDepth = 0, cbMax = 0, cbStart = 0;
             code.split('\n').forEach((line, i) => {
