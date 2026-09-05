@@ -47,12 +47,13 @@ function fixSQLInjection(code, issue) {
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection fixed with parameterized query' };
     }
   } else if (ext === 'js' || ext === 'ts') {
-    const fixedLine = line.replace(/"([^"]*)" \+ (\w+)/g, '"$1?"');
-    if (fixedLine !== line) {
-      lines[ln] = fixedLine + ' // use: db.query(sql, [param])';
-      return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — use parameterized queries' };
+    const params = [];
+    const fixedLine = line.replace(/"([^"]*)"\s*\+\s*(\w+)/g, (m, q, v) => { params.push(v); return '"' + q + '?"'; });
+    if (fixedLine !== line && params.length > 0) {
+      lines[ln] = fixedLine.replace(/\);\s*$/, ', [' + params.join(', ') + ']);');
+      return { fixed: lines.join('\n'), patch: lines[ln].trim(), reason: 'SQL Injection fixed with parameterized query' };
     }
-    lines[ln] = `// SECURITY: SQL Injection — use prepared statements\n  // ${line.trim()}`;
+    lines[ln] = '// SECURITY: SQL Injection — use prepared statements\n  // ' + line.trim();
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection marked for fix' };
   } else if (ext === 'cs') {
     // C#: استبدل بـ SqlParameter
