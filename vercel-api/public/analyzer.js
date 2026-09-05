@@ -373,7 +373,24 @@ function analyzeCode(code, fileName) {
         } catch(e) { console.warn('deepAnalyze:', e.message); }
     }
 
-        return issues;
+        // Callback Hell Detection
+        if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+            let cbDepth = 0, cbMax = 0, cbStart = 0;
+            code.split('\n').forEach((line, i) => {
+                if (/function\s*\(|=>\s*\{/.test(line)) {
+                    if (cbDepth === 0) cbStart = i + 1;
+                    cbDepth++; cbMax = Math.max(cbMax, cbDepth);
+                }
+                if (/\}\s*\)/.test(line)) cbDepth = Math.max(0, cbDepth - 1);
+            });
+            if (cbMax >= 3) {
+                issues.push({ type:'js', sev:'h', line:cbStart, ev:'Nested callbacks',
+                    title:'🟠 Callback Hell — تداخل ' + cbMax + ' مستويات',
+                    fix:'async/await', conf:85, cIcon:'🟠', cAct:'Callback Hell' });
+            }
+        }
+
+                return issues;
 }
 
 // ═══════════════════════════════════════════════════════
