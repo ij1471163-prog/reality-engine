@@ -469,7 +469,7 @@ function fixApiKeyAdvanced(code, issue) {
   if (!m) return null;
 
   const varName = m[1];
-  const envName = varName.toUpperCase().replace(/([A-Z])/g, '_$1').replace(/^_/, '');
+  const envName = varName.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
 
   if (ext === 'py') {
     lines[ln] = line.replace(/["'][^"']+["']/, `os.environ.get('${envName}', '')`);
