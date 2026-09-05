@@ -90,11 +90,12 @@ function fixEval(code, issue) {
   const arg = argMatch ? argMatch[1] : 'data';
 
   if (ext === 'js' || ext === 'ts') {
-    // استبدل eval بـ JSON.parse لو كان JSON
     if (/json|data|response|result/i.test(arg)) {
       lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
     } else {
-      lines[ln] = line.replace(/eval\s*\([^)]+\)/, `new Function('return ' + ${arg})()`);
+      // eval على user input → أزله واحفظ input بأمان
+      lines[ln] = line.replace(/eval\s*\([^)]+\)/,
+        `(function(input) { return input.replace(/[^a-zA-Z0-9 ]/g, ''); })(${arg})`);
     }
   } else if (ext === 'py') {
     // استبدل eval بـ ast.literal_eval
