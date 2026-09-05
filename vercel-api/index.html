@@ -499,7 +499,7 @@ function fixAllEngine() {
 
 function showDiff(fn, original, fixed, onApprove, onReject) {
     const diff   = calcDiff(original, fixed);
-    const risk   = diff.total <= 2 ? '🟢 آمن' : diff.total <= 8 ? '🟡 راجع' : '🔴 تجاوز نطاق';
+    const risk   = diff.total <= 5 ? '🟢 آمن' : diff.total <= 20 ? '🟡 راجع' : '🔴 تجاوز نطاق';
     const d      = document.createElement('div');
     d.style.cssText = 'position:fixed;inset:0;background:#000a;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
 
@@ -515,7 +515,7 @@ function showDiff(fn, original, fixed, onApprove, onReject) {
           <div style="color:#f85149">➖ محذوف: ${diff.removed}</div>
           <div style="margin-top:8px;font-weight:700;font-size:15px">${risk}</div>
         </div>
-        ${diff.total > 5 ? '<div style="color:#d29922;font-size:13px;margin-bottom:12px">⚠️ AI غيّر أكثر من المطلوب</div>' : ''}`;
+        ${diff.total > 20 ? '<div style="color:#d29922;font-size:13px;margin-bottom:12px">⚠️ AI غيّر أكثر من المطلوب</div>' : ''}`;
 
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:8px';
