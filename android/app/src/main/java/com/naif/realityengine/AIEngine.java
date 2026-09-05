@@ -361,7 +361,12 @@ public class AIEngine {
         prompt.append("12. استخدم دالة (function) ").append(TOOL_NAME).append(" حصرًا لإرجاع نتيجتك\n");
         prompt.append("13. لكل دالة ناقصة، فكّر: وش النية؟ (بحث/حساب/فلتر/ترتيب) ثم اكتب كود يتماشى مع هذه النية\n");
         prompt.append("14. لو الدالة اسمها find_best_X → استخدم max(), لو find_worst_X → min()\n");
-        prompt.append("15. لو الدالة اسمها calculate_average → اقسم على len(), لا تعيد نفس كود calculate_total\n\n");
+        prompt.append("15. لو الدالة اسمها calculate_average → اقسم على len(), لا تعيد نفس كود calculate_total\n");
+        prompt.append("16. ممنوع منعاً باتاً حذف دالة كاملة وتعويضها بتعليق — يجب كتابة كود حقيقي يشتغل\n");
+        prompt.append("17. ممنوع استخدام // أو # كتعليق بدل كود حقيقي — كل fix يجب أن يحتوي كوداً قابلاً للتنفيذ\n");
+        prompt.append("18. ممنوع حذف توقيع الدالة (function signature) — احتفظ بها كما هي وعدّل الجسم فقط\n");
+        prompt.append("19. Python فقط يستخدم # للتعليقات — ممنوع استخدام // في Python\n");
+        prompt.append("20. كل دالة يجب أن تنتهي بـ return صحيح — ممنوع ترك دالة بدون return إذا كانت تُرجع قيمة\n\n");
 
         // تحليل SemanticEngine للدوال الناقصة
         prompt.append("🧠 تحليل ذكي للدوال الناقصة:\n");
