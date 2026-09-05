@@ -36,16 +36,21 @@ function fixSQLInjection(code, issue) {
   const ext = detectExt(code);
 
   if (ext === 'py') {
-    // Python: استبدل string concatenation بـ parameterized query
-    const m = line.match(/(\w+)\s*=\s*["']([^"']*)\s*["']\s*\+\s*(\w+)/);
+    const m = line.match(/(\w+)\s*=\s*["']([^"']+)["']\s*\+\s*(\w+)/);
     if (m) {
-      lines[ln] = line.replace(
-        /["']([^"']*)\s*["']\s*\+\s*(\w+)/,
-        '"$1?"'
-      );
-      // أضف execute مع params
       const indent = ' '.repeat(line.search(/\S/));
-      lines.splice(ln + 1, 0, `${indent}cursor.execute(${m[1]}, (${m[3]},))`);
+      const varName = m[1];
+      const param = m[3];
+      // استبدل السطر كاملاً بـ parameterized query
+      lines[ln] = `${indent}${varName} = "${m[2].trim()}?"`;
+      // احذف أي conn.execute أو cursor.execute قديم بعده
+      let nextIdx = ln + 1;
+      while (nextIdx < lines.length && /cursor|conn/.test(lines[nextIdx])) {
+        lines.splice(nextIdx, 1);
+      }
+      // أضف cursor.execute الصح
+      lines.splice(ln + 1, 0, `${indent}cursor = conn.cursor()`);
+      lines.splice(ln + 2, 0, `${indent}cursor.execute(${varName}, (${param},))`);
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection fixed with parameterized query' };
     }
   } else if (ext === 'js' || ext === 'ts') {
