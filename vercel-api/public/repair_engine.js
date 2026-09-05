@@ -44,9 +44,10 @@ function fixSQLInjection(code, issue) {
       const queryStr = m[2].trim();
       // استبدل السطر بـ parameterized query + cursor.execute
       lines[ln] = `${indent}${varName} = "${queryStr}?"`;
-      // احذف أي cursor/conn.execute قديم بعده
+      // احذف أي cursor/conn.execute وreturn قديمة بعده
       let nextIdx = ln + 1;
-      while (nextIdx < lines.length && /cursor\s*=\s*conn\.execute|conn\.execute/.test(lines[nextIdx])) {
+      while (nextIdx < lines.length && 
+             /cursor\s*=\s*conn\.execute|conn\.execute|return cursor/.test(lines[nextIdx])) {
         lines.splice(nextIdx, 1);
       }
       // أضف cursor.execute الصح مباشرة
