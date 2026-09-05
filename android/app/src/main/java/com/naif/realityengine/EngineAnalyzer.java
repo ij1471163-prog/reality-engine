@@ -173,6 +173,21 @@ public class EngineAnalyzer {
             }
         }
 
+        // Dart/Flutter Analysis
+        if (fileName.endsWith(".dart")) {
+            java.util.List<DartAnalyzer.DartIssue> dartIssues = DartAnalyzer.analyze(code, fileName);
+            if (!dartIssues.isEmpty()) {
+                StringBuilder dartSummary = new StringBuilder("\n\n[Dart] ");
+                dartSummary.append(dartIssues.size()).append(" مشاكل:\n");
+                for (DartAnalyzer.DartIssue di : dartIssues) {
+                    dartSummary.append("[").append(di.severity).append("] ")
+                        .append(di.title).append(" — السطر ").append(di.line).append("\n");
+                }
+                if (report.engineMessage != null)
+                    report.engineMessage = report.engineMessage + dartSummary.toString();
+            }
+        }
+
         // ML Pattern Detection
         java.util.List<MLPatternFinder.MLIssue> mlPatterns = MLPatternFinder.analyze(code, fileName);
         if (!mlPatterns.isEmpty()) {
