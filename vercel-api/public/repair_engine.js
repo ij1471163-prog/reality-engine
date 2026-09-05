@@ -616,6 +616,7 @@ function detectStrategy(issue) {
   const t = (issue.title || '').toLowerCase();
   if (t.includes('sql'))                                                  return 'SQL_INJECTION';
   if (t.includes('innerhtml') || t.includes('xss'))                      return 'XSS_INNER_HTML';
+  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('لتشفير') || t.includes('crypto')) return 'WEAK_CRYPTO';
   if (t.includes('مرور') || t.includes('مفتاح') || t.includes('مُضمَّن') || t.includes('password')) return 'HARDCODED_PASS';
   if (t.includes('secret') || t.includes('api key') || t.includes('مكشوف')) return 'HARDCODED_SECRET';
   if (t.includes('تراكم') || t.includes('+='))                           return 'ACCUMULATION';
