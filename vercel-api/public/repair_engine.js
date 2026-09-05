@@ -619,31 +619,27 @@ function repairCode(code, issues, fileName) {
 
 function detectStrategy(issue) {
   const t = (issue.title || '').toLowerCase();
-  if (t.includes('sql'))                                                  return 'SQL_INJECTION';
-  if (t.includes('innerhtml') || t.includes('xss'))                      return 'XSS_INNER_HTML';
+  if (t.includes('sql'))                                          return 'SQL_INJECTION';
+  if (t.includes('innerhtml') || t.includes('xss'))              return 'XSS_INNER_HTML';
   if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('لتشفير') || t.includes('crypto')) return 'WEAK_CRYPTO';
-  if (t.includes('مرور') || t.includes('مفتاح') || t.includes('مُضمَّن') || t.includes('password')) return 'HARDCODED_PASS';
-  if (t.includes('secret') || t.includes('api key') || t.includes('مكشوف')) return 'HARDCODED_SECRET';
-  if (t.includes('تراكم') || t.includes('+='))                           return 'ACCUMULATION';
-  if (t.includes('===') || t.includes('=='))                             return 'LOOSE_EQUALITY';
-  if (t.includes('var'))                                                  return 'VAR_USAGE';
-  if (t.includes('eval'))                                                 return 'EVAL_USAGE';
-  if (t.includes('catch'))                                                return 'EMPTY_CATCH';
-  if (t.includes('http'))                                                 return 'HTTP_USAGE';
-  if (t.includes('تسجيل') || t.includes('log'))                          return 'LOG_SECRET';
-  if (t.includes('ناقصة') || t.includes('empty function'))               return 'EMPTY_FUNCTION';
-  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto') || t.includes('MD5') || t.includes('SHA1') || t.includes('لتشفير')) return 'WEAK_CRYPTO';
-  if (t.includes('none') || t.includes('is none'))                       return 'NONE_COMPARE';
-  if (t.includes('nameerror') || t.includes('غير معرّف'))                  return 'NAMEERROR';
-  if (t.includes('command injection') && t.includes('python'))             return 'CMD_INJECTION_PY';
-  if (t.includes('command') || t.includes('os.system'))                  return 'CMD_INJECTION';
-  if (t.includes('return null'))                                          return 'RETURN_NULL';
-  if (t.includes('npe') || t.includes('null check'))                     return 'NPE_CHAIN';
-  if (t.includes('callback') || t.includes('callback hell'))               return 'CALLBACK_HELL';
-  if (t.includes('api key') || t.includes('google') || t.includes('stripe') || t.includes('secret key')) return 'API_KEY';
+  if (t.includes('command') || t.includes('os.system'))          return 'CMD_INJECTION_PY';
+  if (t.includes('eval'))                                         return 'EVAL_USAGE';
+  if (t.includes('مرور') || t.includes('password'))              return 'HARDCODED_PASS';
+  if (t.includes('secret') || t.includes('مكشوف'))               return 'HARDCODED_SECRET';
+  if (t.includes('api key') || t.includes('google') || t.includes('stripe')) return 'API_KEY';
+  if (t.includes('تراكم') || t.includes('+='))                   return 'ACCUMULATION';
+  if (t.includes('مقارنة') || t.includes('string'))              return 'LOOSE_EQUALITY';
+  if (t.includes('===') || t.includes('=='))                     return 'LOOSE_EQUALITY';
+  if (t.includes('var'))                                          return 'VAR_USAGE';
+  if (t.includes('catch'))                                        return 'EMPTY_CATCH';
+  if (t.includes('http'))                                         return 'HTTP_USAGE';
+  if (t.includes('log') || t.includes('تسجيل'))                  return 'LOG_SECRET';
+  if (t.includes('ناقصة') || t.includes('empty'))                return 'EMPTY_FUNCTION';
+  if (t.includes('none') || t.includes('is none'))               return 'NONE_COMPARE';
+  if (t.includes('nameerror') || t.includes('غير معرّف'))        return 'NAMEERROR';
+  if (t.includes('callback'))                                     return 'CALLBACK_HELL';
   return null;
 }
-
 function getAIReason(strategy) {
   const reasons = {
     SQL_INJECTION:  'يحتاج تعديل query + execute() معاً',
