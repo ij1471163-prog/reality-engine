@@ -38,7 +38,7 @@ function fixSQLInjection(code, issue) {
   const ext = detectExt(code);
 
   if (ext === 'py') {
-    const m = line.match(/(\w+)\s*=\s*["']([^"']+)["']\s*\+\s*(\w+)/);
+    const m = line.match(/(\w+)\s*=\s*["']([^"']+)["'].*\+.*?(\w+)\s*\+?\s*["']?[^"']*["']?\s*;?$/);
     if (m) {
       const indent = ' '.repeat(line.search(/\S/));
       const varName = m[1];
@@ -75,6 +75,16 @@ function fixSQLInjection(code, issue) {
     fixedLine = line
       .replace(/md5\s*\(/gi, 'hash("sha256", ')
       .replace(/sha1\s*\(/gi, 'hash("sha256", ');
+  } else if (ext === 'php') {
+    // PHP: استبدل . concatenation بـ prepared statement
+    const phpM = line.match(/(\w+)\s*=\s*["']([^"']+)["']\s*\.\s*\$(\w+)/);
+    if (phpM) {
+      const indent = ' '.repeat(line.search(/\S/));
+      lines[ln] = `${indent}$stmt = $conn->prepare("${phpM[2]}?");`;
+      lines.splice(ln + 1, 0, `${indent}$stmt->bind_param("s", $${phpM[3]});`);
+      lines.splice(ln + 2, 0, `${indent}$stmt->execute();`);
+      return { fixed: lines.join('\n'), patch: lines[ln], reason: 'PHP SQL Injection fixed with prepared statement' };
+    }
   } else if (ext === 'cs') {
     // C#: استبدل بـ SqlParameter
     const m = line.match(/"([^"]+)"\s*\+\s*(\w+)/);
