@@ -626,7 +626,7 @@ function detectStrategy(issue) {
   if (t.includes('http'))                                                 return 'HTTP_USAGE';
   if (t.includes('تسجيل') || t.includes('log'))                          return 'LOG_SECRET';
   if (t.includes('ناقصة') || t.includes('empty function'))               return 'EMPTY_FUNCTION';
-  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto') || t.includes('MD5') || t.includes('SHA1')) return 'WEAK_CRYPTO';
+  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto') || t.includes('MD5') || t.includes('SHA1') || t.includes('لتشفير')) return 'WEAK_CRYPTO';
   if (t.includes('none') || t.includes('is none'))                       return 'NONE_COMPARE';
   if (t.includes('nameerror') || t.includes('غير معرّف'))                  return 'NAMEERROR';
   if (t.includes('command injection') && t.includes('python'))             return 'CMD_INJECTION_PY';

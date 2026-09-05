@@ -195,6 +195,14 @@ function analyzeCode(code, fileName) {
         analyzePython(code, issues);
         analyzePythonSecurity(code, issues);
 
+        // Command Injection في Python
+        if (/os\.system\s*\(/.test(t) || /subprocess\.call\s*\(.*shell\s*=\s*True/.test(t)) {
+            issues.push({ type:'py', sev:'c', line:ln, ev:t,
+                title:'🔴 Command Injection Python — os.system خطير',
+                fix: t.replace(/os\.system\s*\((.+)\)/, 'subprocess.run(shlex.split($1), check=True)'),
+                conf:92, cIcon:'🔴', cAct:'CWE-78 Command Injection' });
+        }
+
         // اكتشف query معرّف كـ comment
         if (code.includes('cursor.execute(query') && !code.match(/^\s*query\s*=/m)) {
             const qLine = code.split('\n').findIndex(l => l.includes('cursor.execute(query')) + 1;
