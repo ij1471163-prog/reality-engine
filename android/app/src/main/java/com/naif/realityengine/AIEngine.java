@@ -301,6 +301,18 @@ public class AIEngine {
     // بناء الـPrompt الذكي
     // ═══════════════════════════════════════════════════════════
 
+    private static String loadRepairGuide(android.content.Context ctx) {
+        try {
+            java.io.InputStream is = ctx.getAssets().open("repair_guide.md");
+            byte[] buffer = new byte[is.available()];
+            is.read(buffer);
+            is.close();
+            return new String(buffer);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private static String buildContextualPrompt(String fullCode, String fileName,
                                                    List<StubDetector.Candidate> candidates,
                                                    Map<String, String> relatedFiles) {
@@ -342,6 +354,12 @@ public class AIEngine {
             prompt.append("و users هي list[dict] فيها username وemail وscore وactive.\n\n");
         }
 
+        // أضف repair guide
+        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("📚 دليل الإصلاح — اتبعه بدقة:\n");
+        prompt.append("═══════════════════════════════════════\n");
+        // prompt.append(loadRepairGuide(ctx)); // TODO: pass context
+        prompt.append("\n");
         prompt.append("⚠️ قواعد صارمة جداً:\n");
         prompt.append("1. اقرأ الملف الكامل أولاً لفهم السياق والمتغيرات والدوال الأخرى\n");
         prompt.append("2. لا تُعدّل أي دالة مكتملة أو صحيحة\n");
