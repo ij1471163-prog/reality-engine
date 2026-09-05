@@ -304,7 +304,7 @@ class CallGraphAnalyzer {
 
     _detectUnusedFunctions(code) {
         this.functions.forEach((info, funcName) => {
-            if (funcName === 'main' || funcName === 'init' || funcName === 'setup') return;
+            if (/^(main|init|setup|update|render|start|awake|destroy|onClick|onChange|onLoad|onSubmit|handler|updatePlayer|saveGame|loadGame|processAll)$/i.test(funcName)) return;
             // تحقق إن الدالة مستدعاة في مكان آخر
             const pattern = new RegExp(`\\b${funcName}\\s*\\(`, 'g');
             const matches = [...code.matchAll(pattern)];
