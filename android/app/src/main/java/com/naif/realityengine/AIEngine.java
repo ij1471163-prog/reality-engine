@@ -358,7 +358,14 @@ public class AIEngine {
         prompt.append("═══════════════════════════════════════\n");
         prompt.append("📚 دليل الإصلاح — اتبعه بدقة:\n");
         prompt.append("═══════════════════════════════════════\n");
-        // prompt.append(loadRepairGuide(ctx)); // TODO: pass context
+        prompt.append("SQL: use parameterized queries (?,param) not concatenation\n");
+        prompt.append("CMD: use subprocess.run(shlex.split(cmd)) not os.system\n");
+        prompt.append("MD5: use SHA256 not MD5/SHA1\n");
+        prompt.append("SECRETS: use os.environ.get() or process.env not hardcoded\n");
+        prompt.append("XSS: use textContent not innerHTML\n");
+        prompt.append("TYPE: use specific types not any in TypeScript\n");
+        prompt.append("NULL: use 'is None' not '== None' in Python\n");
+        prompt.append("ACCUM: use += not = in loops\n");
         prompt.append("\n");
         prompt.append("⚠️ قواعد صارمة جداً:\n");
         prompt.append("1. اقرأ الملف الكامل أولاً لفهم السياق والمتغيرات والدوال الأخرى\n");
