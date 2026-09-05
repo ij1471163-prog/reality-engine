@@ -191,7 +191,10 @@ function analyzeCode(code, fileName) {
     const issues = [];
     const ext    = fileName.split('.').pop().toLowerCase();
 
-    if (ext === 'py') analyzePython(code, issues);
+    if (ext === 'py') {
+        analyzePython(code, issues);
+        analyzePythonSecurity(code, issues);
+    }
     if (['js','ts','jsx','html'].includes(ext)) analyzeJS(code, fileName, ext, issues);
 
     enhanceStubs(issues, code);
@@ -371,6 +374,58 @@ function analyzeCode(code, fileName) {
     }
 
         return issues;
+}
+
+// ═══════════════════════════════════════════════════════
+// Python Security Analyzer
+// ═══════════════════════════════════════════════════════
+
+function analyzePythonSecurity(code, issues) {
+    const lines = code.split('\n');
+    lines.forEach((line, i) => {
+        const t = line.trim();
+        const ln = i + 1;
+        if (t.startsWith('#')) return;
+
+        // Hardcoded secrets
+        if (/^[A-Z_]+(KEY|SECRET|TOKEN|PASSWORD|PASS|PWD)\s*=\s*["'][^"']{6,}["']/i.test(t)) {
+            issues.push({ type:'py', sev:'c', line:ln, ev:t,
+                title:'🔐 ' + (t.match(/^(\w+)/)?.[1] || 'Secret') + ' مكشوف في الكود',
+                fix: t.replace(/["'][^"']+["']/, "os.environ.get('" + (t.match(/^(\w+)/)?.[1] || 'SECRET') + "', '')"),
+                conf:92, cIcon:'🔐', cAct:'CWE-798' });
+        }
+
+        // SQL Injection في Python
+        if (/["']\s*SELECT.*["']\s*\+/.test(t) || /["']\s*INSERT.*["']\s*\+/.test(t) ||
+            /["']\s*UPDATE.*["']\s*\+/.test(t) || /["']\s*DELETE.*["']\s*\+/.test(t)) {
+            issues.push({ type:'py', sev:'c', line:ln, ev:t,
+                title:'🔴 SQL Injection — String Concatenation في Python',
+                fix: t.replace(/["'][^"']*["']\s*\+\s*\w+/, '"?" # use cursor.execute(query, (param,))'),
+                conf:90, cIcon:'🔴', cAct:'CWE-89' });
+        }
+
+        // MD5 في Python
+        if (/hashlib\s*\.\s*md5\s*\(/.test(t) || /hashlib\s*\.\s*sha1\s*\(/.test(t)) {
+            issues.push({ type:'py', sev:'h', line:ln, ev:t,
+                title:'🟠 MD5/SHA1 ضعيف — استخدم SHA256',
+                fix: t.replace(/hashlib\s*\.\s*md5\s*\(/, 'hashlib.sha256(').replace(/hashlib\s*\.\s*sha1\s*\(/, 'hashlib.sha256('),
+                conf:90, cIcon:'🟠', cAct:'CWE-327' });
+        }
+
+        // Accumulation في Python
+        if (/^\s*(\w+)\s*=\s*\w+\[["']\w+["']\]\s*$/.test(line)) {
+            const prevCode = lines.slice(Math.max(0,i-8),i).join('\n');
+            if (/for\s+\w+\s+in/.test(prevCode)) {
+                const m = line.match(/(\w+)\s*=\s*(\w+\[["']\w+["']\])/);
+                if (m) {
+                    issues.push({ type:'py', sev:'h', line:ln, ev:t,
+                        title:'🟠 خطأ تراكم: ' + m[1] + ' = بدل +=',
+                        fix: line.replace(/(\w+)\s*=\s*/, '$1 += '),
+                        conf:85, cIcon:'🟠', cAct:'Accumulation Error' });
+                }
+            }
+        }
+    });
 }
 
 // ═══════════════════════════════════════════════════════
