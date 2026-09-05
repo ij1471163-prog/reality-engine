@@ -72,10 +72,6 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
     lines[ln] = pyComment + 'SECURITY: SQL Injection — use prepared statements\n' + pyComment + line.trim();
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection marked for fix' };
   } else if (ext === 'php') {
-    fixedLine = line
-      .replace(/md5\s*\(/gi, 'hash("sha256", ')
-      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
-  } else if (ext === 'php') {
     const phpM = line.match(/\$(\w+)\s*=\s*["']([^"']+)["']\s*\.\s*\$(\w+)/);
     if (phpM) {
       const indent = ' '.repeat(line.search(/\S/));
@@ -361,10 +357,6 @@ function fixEmptyCatch(code, issue, lines, ext) {
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ android.util.Log.e("Error", "exception occurred"); }');
   } else if (ext === 'py') {
     fixed = line + '\n' + ' '.repeat(line.search(/\S/) + 4) + 'logging.error("Exception: %s", str(e))';
-  } else if (ext === 'php') {
-    fixedLine = line
-      .replace(/md5\s*\(/gi, 'hash("sha256", ')
-      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
   } else if (ext === 'cs') {
     fixed = line.replace(/catch\s*(\([^)]*\))?\s*\{\s*\}/, 'catch (Exception ex) { Debug.LogError("Error: " + ex.Message); }');
   } else {
@@ -493,9 +485,7 @@ function fixApiKeyAdvanced(code, issue) {
     lines[ln] = line.replace(/["'][^"']+["']/, `process.env.${envName}`);
     lines.splice(ln + 1, 0, `// Add to .env file: ${envName}=your_value_here`);
   } else if (ext === 'php') {
-    fixedLine = line
-      .replace(/md5\s*\(/gi, 'hash("sha256", ')
-      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
+    lines[ln] = line.replace(/["'][^"']+["']/, `getenv('${envName}')`);
   } else if (ext === 'cs') {
     lines[ln] = line.replace(/["'][^"']+["']/, `Environment.GetEnvironmentVariable("${envName}")`);
   } else if (ext === 'java') {
