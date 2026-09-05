@@ -449,41 +449,29 @@ ${F[fn]}
 // ═══════════════════════════════════════════════════════
 
 function fixAllEngine() {
-    // فحص typos خطرة
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
         if (hasRisk && !confirm('⚠️ الكود يحتوي APIs خطرة. متابعة للاختبار؟')) { return; }
     }
-    let fixed = 0;
+    let totalFixed = 0;
     Object.keys(R).forEach(fn => {
-        const issues = (typeof analyzeCodeEnhanced !== "undefined" ? analyzeCodeEnhanced : analyzeCode)(F[fn], fn);
-        const lines  = F[fn].split('\n');
-        // ✅ من الأسفل للأعلى — no index drift
-        issues.slice().reverse().forEach(issue => {
-            if (!issue.fix) return;
-            const li = issue.line - 1;
-            if (li < 0 || li >= lines.length) return;
-            if (issue.title.includes('forEach')) {
-                for (let i = li; i >= Math.max(0, li - 5); i--) {
-                    if (lines[i].includes('.forEach(')) {
-                        const ind = lines[i].match(/^(\s*)/)[1];
-                        lines[i] = ind + issue.fix.trimStart();
-                        fixed++; break;
-                    }
-                }
-            } else {
-                const ind = lines[li].match(/^(\s*)/)[1];
-                lines[li] = ind + issue.fix.trimStart();
-                fixed++;
+        const issues = analyzeCode(F[fn], fn);
+        if (!issues.length) return;
+
+        // استخدم repairCode الجديد
+        if (typeof repairCode === 'function') {
+            const result = repairCode(F[fn], issues, fn);
+            if (result && result.repaired !== F[fn]) {
+                F[fn] = result.repaired;
+                totalFixed += result.repairs.length;
+                R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
             }
-        });
-        F[fn] = lines.join('\n');
-        R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
+        }
     });
-    toast('✅ تم إصلاح ' + fixed + ' مشكلة');
+    toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
-    if (fixed > 0) setTimeout(() => { if (_fromZip) dlAsZip(); else dlAll(); }, 300);
+    if (totalFixed > 0) setTimeout(() => { if (_fromZip) dlAsZip(); else dlAll(); }, 300);
 }
 
 // ═══════════════════════════════════════════════════════
