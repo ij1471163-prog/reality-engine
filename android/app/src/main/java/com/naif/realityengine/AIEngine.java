@@ -420,6 +420,9 @@ public class AIEngine {
         prompt.append("أي أن السطر الأول في الملف رقمه 0 وليس 1.\n");
         prompt.append("⚠️ مهم: إذا لم يكن هناك تعديل مطلوب، استدعِ الدالة بمصفوفة fixes فارغة.\n");
         prompt.append("⚠️ مهم: 'after' يجب أن يكون كوداً كاملاً يستبدل 'before' بالضبط.\n");
+        prompt.append("⚠️ مهم: عدل السطر المطلوب فقط — ممنوع تغيير أكثر من 5 أسطر في كل fix.\n");
+        prompt.append("⚠️ مهم: ممنوع إضافة imports أو تعليقات إلا لو ضرورية جداً.\n");
+        prompt.append("⚠️ مهم: لو ما تعرف كيف تصلح — استدعِ fixes بمصفوفة فارغة.\n");
 
         return prompt.toString();
     }
