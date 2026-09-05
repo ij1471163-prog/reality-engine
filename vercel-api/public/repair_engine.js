@@ -23,6 +23,7 @@ const STRATEGIES = {
   HARDCODED_PASS:   { fn: fixHardcodedPassword, autoFix: true,  confidence: 0.82 },
   CMD_INJECTION:    { fn: fixCommandInjection,  autoFix: true,  confidence: 0.78 },
   NONE_COMPARE:     { fn: fixNoneCompare,       autoFix: true,  confidence: 0.95 },
+  NAMEERROR:        { fn: fixNameError,         autoFix: true,  confidence: 0.90 },
   RETURN_NULL:      { fn: null,                 autoFix: false, confidence: 0.10 },
   NPE_CHAIN:        { fn: null,                 autoFix: false, confidence: 0.15 },
 };
@@ -220,6 +221,19 @@ function fixWeakCrypto(code, issue) {
   if (fixedLine === line) return null;
   lines[ln] = fixedLine;
   return { fixed: lines.join('\n'), patch: fixedLine.trim(), reason: 'Weak crypto MD5/SHA1 → SHA256' };
+}
+
+// ─── NameError Fix ───────────────────────────────────────
+function fixNameError(code, issue) {
+  const lines = code.split('\n');
+  // ابحث عن # query معلق وأزل الـ #
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*#\s*query\s*=/.test(lines[i])) {
+      lines[i] = lines[i].replace(/^(\s*)#\s*/, '$1');
+      return { fixed: lines.join('\n'), patch: lines[i].trim(), reason: 'Uncommented query definition' };
+    }
+  }
+  return null;
 }
 
 // ─── None Compare ─────────────────────────────────────
@@ -568,6 +582,7 @@ function detectStrategy(issue) {
   if (t.includes('ناقصة') || t.includes('empty function'))               return 'EMPTY_FUNCTION';
   if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto') || t.includes('MD5') || t.includes('SHA1')) return 'WEAK_CRYPTO';
   if (t.includes('none') || t.includes('is none'))                       return 'NONE_COMPARE';
+  if (t.includes('nameerror') || t.includes('غير معرّف'))                  return 'NAMEERROR';
   if (t.includes('command') || t.includes('os.system'))                  return 'CMD_INJECTION';
   if (t.includes('return null'))                                          return 'RETURN_NULL';
   if (t.includes('npe') || t.includes('null check'))                     return 'NPE_CHAIN';
