@@ -546,9 +546,14 @@ function fixCommandInjectionPy(code, issue) {
 
 // ─── Helpers ──────────────────────────────────────────
 
-function detectExt(code) {
+function detectExt(code, fileName) {
+  if (fileName && fileName.endsWith('.php')) return 'php';
+  if (fileName && fileName.endsWith('.py')) return 'py';
+  if (fileName && fileName.endsWith('.cs')) return 'cs';
+  if (fileName && fileName.endsWith('.java')) return 'java';
   if (/def\s+\w+|import\s+\w+|print\s*\(|hashlib|os\.environ/.test(code)) return 'py';
-  if (/using\s+System|namespace\s+\w+|public\s+class/.test(code) && /\.cs/.test(code || '')) return 'cs';
+  if (/<\?php|mysqli|\$_GET|\$_POST/.test(code)) return 'php';
+  if (/using\s+System|namespace\s+\w+|public\s+class/.test(code) && !/def\s+\w+/.test(code)) return 'cs';
   if (/public\s+class|System\.out\.println/.test(code)) return 'java';
   return 'js';
 }
