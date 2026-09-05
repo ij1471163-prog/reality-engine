@@ -455,18 +455,16 @@ function fixAllEngine() {
     }
     let totalFixed = 0;
     Object.keys(R).forEach(fn => {
-        const issues = analyzeCode(F[fn], fn);
-        if (!issues.length) return;
-
-        // استخدم repairCode الجديد
-        if (typeof repairCode === 'function') {
+        if (typeof repairCode !== 'function') return;
+        for (let pass = 0; pass < 5; pass++) {
+            const issues = analyzeCode(F[fn], fn);
+            if (!issues.length) break;
             const result = repairCode(F[fn], issues, fn);
-            if (result && result.repaired !== F[fn]) {
-                F[fn] = result.repaired;
-                totalFixed += result.repairs.length;
-                R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
-            }
+            if (!result || result.repaired === F[fn] || !result.repairs.length) break;
+            F[fn] = result.repaired;
+            totalFixed += result.repairs.length;
         }
+        R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
     });
     toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
     refreshStats();
