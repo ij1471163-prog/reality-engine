@@ -417,10 +417,31 @@ async function fixAllWithAI() {
         // ✅ انتظر كل ملف بشكل متسلسل — مو داخل forEach
         for (const fn of Object.keys(F)) {
             if (!R[fn]?.issues?.length) continue;
-            const prompt = `أنت مبرمج خبير. أصلح هذا الكود — أكمل الدوال الناقصة وصلح الأخطاء المنطقية.
-أرجع الكود الكامل المصلح فقط بدون شرح بين \`\`\` و \`\`\`.
+            const issues = R[fn]?.issues?.map(i => `- ${i.title} (السطر ${i.line})`).join('\n') || '';
+            const prompt = `أنت مبرمج أمان خبير. مهمتك إصلاح الثغرات الأمنية فقط.
 
-الكود:
+## قواعد صارمة:
+1. صلح الثغرات المذكورة فقط — لا تغير باقي الكود
+2. لا تحذف كود موجود — بدّله فقط
+3. Python: استخدم # للتعليقات — ممنوع //
+4. لا تغير أكثر من 5 أسطر لكل مشكلة
+5. أرجع الكود الكامل بين \`\`\` و \`\`\`
+
+## الثغرات المكتشفة:
+${issues}
+
+## قواعد الإصلاح:
+- SQL Injection: استخدم parameterized queries (? بدل concatenation)
+- Command Injection: استخدم subprocess.run(shlex.split(cmd)) بدل os.system
+- MD5/SHA1: استبدل بـ SHA256
+- Hardcoded Secrets: استخدم process.env أو os.environ.get
+- XSS: استخدم textContent بدل innerHTML
+- TypeScript any: استخدم unknown أو type محدد
+- JWT: استخدم process.env.JWT_SECRET
+- None compare: استخدم is None بدل == None
+- Accumulation: استخدم += بدل = في loops
+
+## الكود:
 \`\`\`
 ${F[fn]}
 \`\`\``;
