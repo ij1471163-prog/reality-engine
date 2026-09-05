@@ -13,6 +13,8 @@ const STRATEGIES = {
   LOG_SECRET:       { fn: fixLogSecret,         autoFix: true,  confidence: 0.90 },
   EMPTY_CATCH:      { fn: fixEmptyCatch,        autoFix: true,  confidence: 0.80 },
   EMPTY_FUNCTION:   { fn: fixEmptyFunction,     autoFix: true,  confidence: 0.70 },
+  CALLBACK_HELL:    { fn: fixCallbackHell,      autoFix: true,  confidence: 0.75 },
+  API_KEY:          { fn: fixApiKeyAdvanced,     autoFix: true,  confidence: 0.90 },
   SQL_INJECTION:    { fn: fixSQLInjection,      autoFix: true,  confidence: 0.75 },
   EVAL_USAGE:       { fn: fixEval,              autoFix: true,  confidence: 0.85 },
   WEAK_CRYPTO:      { fn: fixWeakCrypto,        autoFix: true,  confidence: 0.90 },
@@ -47,13 +49,12 @@ function fixSQLInjection(code, issue) {
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection fixed with parameterized query' };
     }
   } else if (ext === 'js' || ext === 'ts') {
-    const params = [];
-    const fixedLine = line.replace(/"([^"]*)"\s*\+\s*(\w+)/g, (m, q, v) => { params.push(v); return '"' + q + '?"'; });
-    if (fixedLine !== line && params.length > 0) {
-      lines[ln] = fixedLine.replace(/\);\s*$/, ', [' + params.join(', ') + ']);');
-      return { fixed: lines.join('\n'), patch: lines[ln].trim(), reason: 'SQL Injection fixed with parameterized query' };
+    const fixedLine = line.replace(/"([^"]*)" \+ (\w+)/g, '"$1?"');
+    if (fixedLine !== line) {
+      lines[ln] = fixedLine + ' // use: db.query(sql, [param])';
+      return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — use parameterized queries' };
     }
-    lines[ln] = '// SECURITY: SQL Injection — use prepared statements\n  // ' + line.trim();
+    lines[ln] = `// SECURITY: SQL Injection — use prepared statements\n  // ${line.trim()}`;
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection marked for fix' };
   } else if (ext === 'cs') {
     // C#: استبدل بـ SqlParameter
@@ -91,12 +92,11 @@ function fixEval(code, issue) {
   const arg = argMatch ? argMatch[1] : 'data';
 
   if (ext === 'js' || ext === 'ts') {
+    // استبدل eval بـ JSON.parse لو كان JSON
     if (/json|data|response|result/i.test(arg)) {
       lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
     } else {
-      // eval على user input → أزله واحفظ input بأمان
-      lines[ln] = line.replace(/eval\s*\([^)]+\)/,
-        `(function(input) { return input.replace(/[^a-zA-Z0-9 ]/g, ''); })(${arg})`);
+      lines[ln] = line.replace(/eval\s*\([^)]+\)/, `new Function('return ' + ${arg})()`);
     }
   } else if (ext === 'py') {
     // استبدل eval بـ ast.literal_eval
@@ -353,6 +353,119 @@ function fixEmptyFunction(code, issue, lines, ext) {
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: 'Added smart stub', reason: 'Empty function with smart placeholder' };
 }
 
+
+// ─── Callback Hell → async/await ─────────────────────
+function fixCallbackHell(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+
+  // استخرج الدوال المتداخلة
+  const callbackPattern = /(\w+)\s*\(\s*(?:function\s*\([^)]*\)|[^)]*=>\s*\{)/;
+  const matches = [];
+  let depth = 0;
+  let start = -1;
+
+  lines.forEach((line, i) => {
+    if (callbackPattern.test(line)) {
+      if (depth === 0) start = i;
+      depth++;
+      matches.push({ line: i, content: line.trim() });
+    }
+    if (line.includes('});') || line.includes('})')) {
+      depth = Math.max(0, depth - 1);
+    }
+  });
+
+  if (matches.length < 3) return null;
+
+  // بناء async/await بديل
+  const indent = ' '.repeat(lines[start].search(/\S/));
+  const asyncLines = [`${indent}async function processAll() {`, `${indent}  try {`];
+
+  matches.forEach(m => {
+    const funcMatch = m.content.match(/(\w+)\s*\(/);
+    if (funcMatch) {
+      asyncLines.push(`${indent}    const result_${funcMatch[1]} = await ${funcMatch[1]}();`);
+    }
+  });
+
+  asyncLines.push(`${indent}  } catch (error) {`);
+  asyncLines.push(`${indent}    console.error('Error:', error);`);
+  asyncLines.push(`${indent}  }`);
+  asyncLines.push(`${indent}}`);
+  asyncLines.push(`${indent}processAll();`);
+
+  // استبدل الكود القديم
+  const newLines = [...lines.slice(0, start), ...asyncLines];
+  return {
+    fixed: newLines.join('\n'),
+    patch: asyncLines.join('\n'),
+    reason: 'Callback Hell → async/await'
+  };
+}
+
+// ─── Hardcoded API Keys (متقدم) ───────────────────────
+function fixApiKeyAdvanced(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+  const ext = detectExt(code);
+
+  // استخرج اسم المتغير والقيمة
+  const m = line.match(/(?:const|let|var|private|public|string)?\s*(\w+)\s*[:=]\s*["']([^"']+)["']/);
+  if (!m) return null;
+
+  const varName = m[1];
+  const envName = varName.toUpperCase().replace(/([A-Z])/g, '_$1').replace(/^_/, '');
+
+  if (ext === 'py') {
+    lines[ln] = line.replace(/["'][^"']+["']/, `os.environ.get('${envName}', '')`);
+    // أضف import os لو ما موجود
+    if (!code.includes('import os')) {
+      lines.unshift('import os');
+    }
+    // أضف .env example comment
+    lines.splice(ln + 2, 0, `# Add to .env file: ${envName}=your_value_here`);
+  } else if (ext === 'js' || ext === 'ts') {
+    lines[ln] = line.replace(/["'][^"']+["']/, `process.env.${envName}`);
+    lines.splice(ln + 1, 0, `// Add to .env file: ${envName}=your_value_here`);
+  } else if (ext === 'cs') {
+    lines[ln] = line.replace(/["'][^"']+["']/, `Environment.GetEnvironmentVariable("${envName}")`);
+  } else if (ext === 'java') {
+    lines[ln] = line.replace(/["'][^"']+["']/, `System.getenv("${envName}")`);
+  }
+
+  return {
+    fixed: lines.join('\n'),
+    patch: lines[ln].trim(),
+    reason: `Hardcoded secret → ${envName} env variable`
+  };
+}
+
+// ─── Fix Accumulation (متقدم) ─────────────────────────
+function fixAccumulationAdvanced(code, issue) {
+  const lines = code.split('\n');
+  const ln = issue.line - 1;
+  if (ln < 0 || ln >= lines.length) return null;
+  const line = lines[ln];
+
+  // x = y.prop → x += y.prop
+  const m = line.match(/(\s*)(\w+)\s*=\s*(\w+\.\w+)/);
+  if (!m) return null;
+
+  const [, indent, varName, value] = m;
+  lines[ln] = `${indent}${varName} += ${value};`;
+
+  return {
+    fixed: lines.join('\n'),
+    patch: lines[ln].trim(),
+    reason: `Accumulation: ${varName} = → ${varName} +=`
+  };
+}
+
+
 // ─── Helpers ──────────────────────────────────────────
 
 function detectExt(code) {
@@ -440,6 +553,8 @@ function detectStrategy(issue) {
   if (t.includes('command') || t.includes('os.system'))                  return 'CMD_INJECTION';
   if (t.includes('return null'))                                          return 'RETURN_NULL';
   if (t.includes('npe') || t.includes('null check'))                     return 'NPE_CHAIN';
+  if (t.includes('callback') || t.includes('callback hell'))               return 'CALLBACK_HELL';
+  if (t.includes('api key') || t.includes('google') || t.includes('stripe') || t.includes('secret key')) return 'API_KEY';
   return null;
 }
 
