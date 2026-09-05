@@ -195,14 +195,6 @@ function analyzeCode(code, fileName) {
         analyzePython(code, issues);
         analyzePythonSecurity(code, issues);
 
-        // Command Injection في Python
-        if (/os\.system\s*\(/.test(t) || /subprocess\.call\s*\(.*shell\s*=\s*True/.test(t)) {
-            issues.push({ type:'py', sev:'c', line:ln, ev:t,
-                title:'🔴 Command Injection Python — os.system خطير',
-                fix: t.replace(/os\.system\s*\((.+)\)/, 'subprocess.run(shlex.split($1), check=True)'),
-                conf:92, cIcon:'🔴', cAct:'CWE-78 Command Injection' });
-        }
-
         // اكتشف query معرّف كـ comment
         if (code.includes('cursor.execute(query') && !code.match(/^\s*query\s*=/m)) {
             const qLine = code.split('\n').findIndex(l => l.includes('cursor.execute(query')) + 1;
@@ -446,6 +438,16 @@ function analyzePythonSecurity(code, issues) {
         const t = line.trim();
         const ln = i + 1;
         if (t.startsWith('#')) return;
+
+        // Command Injection
+        if (/os\.system\s*\(/.test(t)) {
+            const m = t.match(/os\.system\s*\((.+)\)/);
+            const arg = m ? m[1] : 'cmd';
+            issues.push({ type:'py', sev:'c', line:ln, ev:t,
+                title:'🔴 Command Injection Python — os.system خطير',
+                fix: `subprocess.run(shlex.split(${arg}), check=True)`,
+                conf:92, cIcon:'🔴', cAct:'CWE-78 Command Injection' });
+        }
 
         // Hardcoded secrets
         if (/^[A-Z_]+(KEY|SECRET|TOKEN|PASSWORD|PASS|PWD)\s*=\s*["'][^"']{6,}["']/i.test(t)) {
