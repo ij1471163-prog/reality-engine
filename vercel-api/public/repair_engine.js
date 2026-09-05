@@ -472,7 +472,7 @@ function fixAccumulationAdvanced(code, issue) {
 // ─── Helpers ──────────────────────────────────────────
 
 function detectExt(code) {
-  if (/def\s+\w+|import\s+\w+|print\s*\(/.test(code)) return 'py';
+  if (/def\s+\w+|import\s+\w+|print\s*\(|hashlib|os\.environ/.test(code)) return 'py';
   if (/using\s+System|namespace\s+\w+|public\s+class/.test(code) && /\.cs/.test(code || '')) return 'cs';
   if (/public\s+class|System\.out\.println/.test(code)) return 'java';
   return 'js';
