@@ -219,6 +219,9 @@ class DataFlowAnalyzer {
     }
 
     _detectDeadAssignment(line, ln, lines, idx) {
+        // تجاهل env variables وconstants
+        if (/process\.env\.|os\.environ|Environment\.GetEnvironmentVariable/i.test(line)) return;
+        if (/^(?:const|let|var)\s+(?:API|SECRET|TOKEN|CONFIG|ENV|KEY|DB|AWS|STRIPE|GOOGLE)_/i.test(line.trim())) return;
         // تعيين متغير لا يُستخدم
         const assignMatch = line.match(/^(?:const|let|var)\s+(\w+)\s*=/);
         if (!assignMatch) return;
