@@ -41,16 +41,18 @@ function fixSQLInjection(code, issue) {
       const indent = ' '.repeat(line.search(/\S/));
       const varName = m[1];
       const param = m[3];
-      // استبدل السطر كاملاً بـ parameterized query
-      lines[ln] = `${indent}${varName} = "${m[2].trim()}?"`;
-      // احذف أي conn.execute أو cursor.execute قديم بعده
+      const queryStr = m[2].trim();
+      // استبدل السطر بـ parameterized query + cursor.execute
+      lines[ln] = `${indent}${varName} = "${queryStr}?"`;
+      // احذف أي cursor/conn.execute قديم بعده
       let nextIdx = ln + 1;
-      while (nextIdx < lines.length && /cursor|conn/.test(lines[nextIdx])) {
+      while (nextIdx < lines.length && /cursor\s*=\s*conn\.execute|conn\.execute/.test(lines[nextIdx])) {
         lines.splice(nextIdx, 1);
       }
-      // أضف cursor.execute الصح
+      // أضف cursor.execute الصح مباشرة
       lines.splice(ln + 1, 0, `${indent}cursor = conn.cursor()`);
       lines.splice(ln + 2, 0, `${indent}cursor.execute(${varName}, (${param},))`);
+      lines.splice(ln + 3, 0, `${indent}return cursor.fetchall()`);
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection fixed with parameterized query' };
     }
   } else if (ext === 'js' || ext === 'ts') {
