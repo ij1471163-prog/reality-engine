@@ -30,12 +30,12 @@ const STRATEGIES = {
 };
 
 // ─── SQL Injection ────────────────────────────────────
-function fixSQLInjection(code, issue) {
+function fixSQLInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
 
   if (ext === 'py') {
     const m = line.match(/(\w+)\s*=\s*["']([^"']+)["'].*\+.*?(\w+)\s*\+?\s*["']?[^"']*["']?\s*;?$/);
