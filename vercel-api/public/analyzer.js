@@ -396,7 +396,19 @@ function analyzeCode(code, fileName) {
         });
     }
 
-    // Callback Hell Detection
+    // String vs Number comparison
+    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (/===\s*["']\d+["']|!==\s*["']\d+["']/.test(line) && !line.trim().startsWith('//')) {
+                issues.push({ type:'js', sev:'m', line:i+1, ev:line.trim(),
+                    title:'🟡 مقارنة رقم مع string — استخدم === بدون quotes',
+                    fix: line.replace(/===\s*["'](\d+)["']/g, '=== $1').replace(/!==\s*["'](\d+)["']/g, '!== $1').trim(),
+                    conf:88, cIcon:'🟡', cAct:'Type Coercion' });
+            }
+        });
+    }
+
+        // Callback Hell Detection
         if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
             let cbDepth = 0, cbMax = 0, cbStart = 0;
             code.split('\n').forEach((line, i) => {
