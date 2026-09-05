@@ -128,6 +128,7 @@ function fixHardcodedPassword(code, issue) {
       /(["\'])[^"\']+(["\'])/,
       `os.environ.get('${varName}', '')`
     );
+    if (line.includes('os.environ')) return null;
     if (!code.includes('import os')) lines.unshift('import os');
   } else if (ext === 'js' || ext === 'ts') {
     lines[ln] = line.replace(
@@ -248,7 +249,7 @@ function fixHTTP(code, issue, lines, ext) {
 function fixVar(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const fixed = line.replace(/\bvar\b/, /=/.test(line) && !/\+\+|--/.test(line) ? 'const' : 'let');
+  const fixed = line.replace(/\bvar\b/, 'let');
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'var → const/let' };
 }
