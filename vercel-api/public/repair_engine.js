@@ -185,26 +185,28 @@ function fixWeakCrypto(code, issue) {
   const line = lines[ln];
   const ext = detectExt(code);
 
+  let fixedLine = line;
   if (ext === 'py') {
-    lines[ln] = line
+    fixedLine = line
       .replace(/hashlib\.md5\s*\(/g, 'hashlib.sha256(')
       .replace(/hashlib\.sha1\s*\(/g, 'hashlib.sha256(');
   } else if (ext === 'js' || ext === 'ts') {
-    lines[ln] = line
+    fixedLine = line
       .replace(/createHash\s*\(\s*["']md5["']\s*\)/gi, 'createHash("sha256")')
       .replace(/createHash\s*\(\s*["']sha1["']\s*\)/gi, 'createHash("sha256")');
   } else if (ext === 'cs') {
-    lines[ln] = line
+    fixedLine = line
       .replace(/MD5\.Create\s*\(\s*\)/g, 'SHA256.Create()')
       .replace(/new MD5CryptoServiceProvider\s*\(\s*\)/g, 'new SHA256Managed()');
   } else if (ext === 'java') {
-    lines[ln] = line
+    fixedLine = line
       .replace(/MessageDigest\.getInstance\s*\(\s*["']MD5["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")')
       .replace(/MessageDigest\.getInstance\s*\(\s*["']SHA-1["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")');
   }
 
-  if (lines[ln] === line) return null;
-  return { fixed: lines.join('\n'), patch: lines[ln], reason: 'Weak crypto MD5/SHA1 → SHA256' };
+  if (fixedLine === line) return null;
+  lines[ln] = fixedLine;
+  return { fixed: lines.join('\n'), patch: fixedLine.trim(), reason: 'Weak crypto MD5/SHA1 → SHA256' };
 }
 
 // ─── None Compare ─────────────────────────────────────
