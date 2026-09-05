@@ -194,6 +194,17 @@ function analyzeCode(code, fileName) {
     if (ext === 'py') {
         analyzePython(code, issues);
         analyzePythonSecurity(code, issues);
+
+        // اكتشف query معرّف كـ comment
+        if (code.includes('cursor.execute(query') && !code.match(/^\s*query\s*=/m)) {
+            const qLine = code.split('\n').findIndex(l => l.includes('cursor.execute(query')) + 1;
+            if (qLine > 0) {
+                issues.push({ type:'py', sev:'c', line:qLine, ev:'cursor.execute(query, ...)',
+                    title:'🔴 NameError: query غير معرّف — أزل # من query',
+                    fix:'query = "SELECT * FROM ... WHERE id=?"',
+                    conf:95, cIcon:'🔴', cAct:'NameError' });
+            }
+        }
     }
     if (['js','ts','jsx','html'].includes(ext)) analyzeJS(code, fileName, ext, issues);
 
