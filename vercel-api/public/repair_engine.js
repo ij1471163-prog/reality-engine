@@ -201,12 +201,12 @@ function fixCommandInjection(code, issue) {
 }
 
 // ─── Weak Crypto ──────────────────────────────────────
-function fixWeakCrypto(code, issue) {
+function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
 
   let fixedLine = line;
   if (ext === 'py') {
@@ -588,7 +588,7 @@ function repairCode(code, issues, fileName) {
     }
 
     const lines = repairedCode.split('\n');
-    const result = strat.fn(repairedCode, issue, lines, ext);
+    const result = strat.fn(repairedCode, issue, lines, ext, fileName);
     if (!result || result.fixed === repairedCode) { return; }
 
     repairs.push({
