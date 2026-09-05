@@ -329,6 +329,14 @@ function analyzeCode(code, fileName) {
         });
     }
 
+    // Dart/Flutter Analysis
+    if (fileName.endsWith('.dart') && typeof analyzeDart === 'function') {
+        analyzeDart(code, fileName).forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title))
+                issues.push(i);
+        });
+    }
+
     return issues;
 }
 
@@ -655,14 +663,6 @@ function enhanceStubs(issues, code) {
         }
     });
     
-    // Dart/Flutter Analysis
-    if (fileName.endsWith('.dart') && typeof analyzeDart === 'function') {
-        analyzeDart(code, fileName).forEach(i => {
-            if (!issues.some(x => x.line === i.line && x.title === i.title))
-                issues.push(i);
-        });
-    }
-
 return issues;
 }
 
