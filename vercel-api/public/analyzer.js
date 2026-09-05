@@ -345,6 +345,21 @@ function analyzeCode(code, fileName) {
         });
     }
 
+        // AST Deep Analysis (JS only)
+    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+        if (typeof analyzeJSWithAST === 'function') {
+            try {
+                const astIssues = analyzeJSWithAST(code, fileName);
+                if (astIssues && astIssues.length) {
+                    astIssues.forEach(i => {
+                        if (!issues.some(x => x.line === i.line && x.title === i.title))
+                            issues.push(i);
+                    });
+                }
+            } catch(e) { console.warn('AST analysis failed:', e.message); }
+        }
+    }
+
         return issues;
 }
 
