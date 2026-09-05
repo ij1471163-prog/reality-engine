@@ -54,7 +54,8 @@ function fixSQLInjection(code, issue) {
       lines[ln] = fixedLine + ' // use: db.query(sql, [param])';
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — use parameterized queries' };
     }
-    lines[ln] = `// SECURITY: SQL Injection — use prepared statements\n  // ${line.trim()}`;
+    const pyComment = ext === 'py' ? '# ' : '// ';
+    lines[ln] = pyComment + 'SECURITY: SQL Injection — use prepared statements\n' + pyComment + line.trim();
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection marked for fix' };
   } else if (ext === 'cs') {
     // C#: استبدل بـ SqlParameter
@@ -548,7 +549,7 @@ function detectStrategy(issue) {
   if (t.includes('http'))                                                 return 'HTTP_USAGE';
   if (t.includes('تسجيل') || t.includes('log'))                          return 'LOG_SECRET';
   if (t.includes('ناقصة') || t.includes('empty function'))               return 'EMPTY_FUNCTION';
-  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto')) return 'WEAK_CRYPTO';
+  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('crypto') || t.includes('MD5') || t.includes('SHA1')) return 'WEAK_CRYPTO';
   if (t.includes('none') || t.includes('is none'))                       return 'NONE_COMPARE';
   if (t.includes('command') || t.includes('os.system'))                  return 'CMD_INJECTION';
   if (t.includes('return null'))                                          return 'RETURN_NULL';
