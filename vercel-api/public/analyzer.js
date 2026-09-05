@@ -360,6 +360,16 @@ function analyzeCode(code, fileName) {
         }
     }
 
+        // Deep Analysis (Type Inference + Data Flow + Call Graph + Scope)
+    if (typeof deepAnalyze === 'function') {
+        try {
+            deepAnalyze(code, fileName).forEach(i => {
+                if (!issues.some(x => x.line === i.line && x.title === i.title))
+                    issues.push(i);
+            });
+        } catch(e) { console.warn('deepAnalyze:', e.message); }
+    }
+
         return issues;
 }
 
