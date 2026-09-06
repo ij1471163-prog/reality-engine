@@ -713,7 +713,7 @@ function refreshStats() {
 // ═══════════════════════════════════════════════════════
 
 function exportPDF() {
-    const date = new Date().toLocaleDateString('ar-SA');
+    const date = new Date().toLocaleDateString('ar-SA', {day:'numeric', month:'numeric', year:'numeric'});
     let critical=0, high=0, medium=0, low=0;
     Object.values(R).forEach(r => r.issues.forEach(i => {
         if (i.sev==='c') critical++;
