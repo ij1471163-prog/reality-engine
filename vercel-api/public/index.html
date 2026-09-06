@@ -72,6 +72,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/security_scanner.js"></script>
 <script src="/repair_engine.js"></script>
 <script src="/smart_repair.js"></script>
+<script src="/repair_sql.js"></script>
 <script src="/fallback_fixes.js"></script>
 <script src="/command_injection_fix.js"></script>
 <script src="/sql_injection_fix.js"></script>
@@ -499,6 +500,17 @@ function fixAllEngine() {
         }
         R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
     });
+    // RepairSQL — الخط الخامس المتخصص بـ SQL
+    if (typeof RepairSQL !== 'undefined') {
+        Object.keys(F).forEach(fn => {
+            const r = RepairSQL.fix(F[fn], fn);
+            if (r.count > 0 && r.code !== F[fn]) {
+                F[fn] = r.code;
+                totalFixed += r.count;
+                R[fn] = { code: r.code, issues: analyzeCode(r.code, fn) };
+            }
+        });
+    }
     // Smart Repair — الخط الذكي
     if (typeof SmartRepairEngine !== 'undefined') {
         const sr = SmartRepairEngine.applySmartRepair(F, R);
