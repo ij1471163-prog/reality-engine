@@ -623,9 +623,9 @@ async function chatAPI(token, prompt) {
         headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
         body: JSON.stringify({ prompt })
     });
-    if (!cr.ok) throw new Error('خطأ في AI');
-    const { result } = await cr.json();
-    return result;
+    const crData = await cr.json();
+    if (!cr.ok) throw new Error('خطأ في AI: ' + (crData.error || cr.status));
+    return crData.result;
 }
 
 function applyAIResult(fn, ev, after) {
