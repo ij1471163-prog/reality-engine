@@ -295,10 +295,10 @@ function applyEmergencyToAll(F, R) {
   Object.keys(F).forEach(fn => {
     const { fixed, repairs } = emergencyFix(F[fn], fn);
 
-    if (repairs.length > 0 && fixed !== F[fn]) {
+    if (fixed !== F[fn]) {
       F[fn] = fixed;
       R[fn] = { code: fixed, issues: typeof analyzeCode === 'function' ? analyzeCode(fixed, fn) : [] };
-      totalFixed += repairs.length;
+      totalFixed += Math.max(repairs.length, 1);
       results[fn] = repairs;
     }
   });
