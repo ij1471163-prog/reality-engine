@@ -71,6 +71,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/secret_detector.js"></script>
 <script src="/security_scanner.js"></script>
 <script src="/repair_engine.js"></script>
+<script src="/smart_repair.js"></script>
 <script src="/fallback_fixes.js"></script>
 <script src="/command_injection_fix.js"></script>
 <script src="/sql_injection_fix.js"></script>
@@ -498,6 +499,11 @@ function fixAllEngine() {
         }
         R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
     });
+    // Smart Repair — الخط الذكي
+    if (typeof SmartRepairEngine !== 'undefined') {
+        const sr = SmartRepairEngine.applySmartRepair(F, R);
+        if (sr.totalFixed > 0) totalFixed += sr.totalFixed;
+    }
     // Fallback — لو المحرك ما صلح كل شيء
     if (typeof applyFallbackToAll === 'function') {
         const fb = applyFallbackToAll(F, R);
