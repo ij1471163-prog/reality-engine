@@ -546,8 +546,10 @@ function fixAllEngine() {
     // Learning — يتعلم من الإصلاحات
     if (typeof LearningEngine !== 'undefined') {
         Object.keys(F).forEach(fn => {
-            if (R[fn]?.issues?.length > 0) {
-                LearningEngine.learn(origF[fn] || F[fn], F[fn], R[fn].issues, fn);
+            // يتعلم لو الكود تغير
+            if (origF[fn] && origF[fn] !== F[fn]) {
+                const origIssues = analyzeCode(origF[fn], fn);
+                LearningEngine.learn(origF[fn], F[fn], origIssues, fn);
             }
         });
     }
