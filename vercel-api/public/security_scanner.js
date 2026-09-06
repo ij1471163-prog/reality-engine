@@ -26,7 +26,9 @@ function scanSecurity(code, fileName) {
     // ─── 2. Hardcoded Password/Secret ──────────────
     if (/password|secret|api_key|apikey|token/i.test(t) &&
         /=\s*["'][^"']{4,}["']/.test(t) &&
-        !/test|example|placeholder|your_/i.test(t)) {
+        !/test|example|placeholder|your_/i.test(t) &&
+        !/(?:SELECT|INSERT|UPDATE|DELETE|WHERE|FROM)/i.test(t) &&
+        !/[?]/.test(t.split('=')[1] || '')) {
       issues.push({
         type: 'security', sev: 'c',
         title: '🔴 كلمة مرور/مفتاح مُضمَّن في الكود',
