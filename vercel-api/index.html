@@ -769,8 +769,16 @@ function exportPDF() {
     doc.text('Findings', 15, y);
     y += 8;
 
+    // dedup المشاكل - نفس السطر ونفس النوع
+    const seen = new Set();
     Object.entries(R).forEach(([fn, {issues}]) => {
-        issues.forEach(issue => {
+        const dedupIssues = issues.filter(issue => {
+            const key = fn + ':' + issue.line + ':' + (issue.type||'') + ':' + (issue.title||'').substring(0,30);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        dedupIssues.forEach(issue => {
             if (y > 270) { doc.addPage(); y = 20; }
             const sevColor = issue.sev === 'c' ? [248,81,73] :
                              issue.sev === 'h' ? [240,136,62] :
