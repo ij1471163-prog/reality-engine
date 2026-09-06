@@ -215,12 +215,7 @@ function emergencyFix(code, fileName) {
     // XSS في res.send
     fixed = fixed.replace(
       /res\.send\s*\(([^)]*\+[^)]*)\)/g,
-      (m, inner) => {
-        // استخرج المتغيرات وأضف escapeHtml
-        const escaped = inner.trim().replace(/(\w+)(?!\s*[+<>])/g, (v) => 
-          /^['"`]/.test(v) ? v : `escapeHtml(${v})`);
-        return `res.json({ message: ${escaped} })`;
-      }
+      (m, inner) => `res.json({ message: sanitize(${inner.trim()}) })`
     );
 
     // eval → JSON.parse أو comment
