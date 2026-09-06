@@ -222,7 +222,7 @@ document.getElementById('inp-zip').addEventListener('change', async e => {
 function loadFiles(fl) {
     _fromZip = false;
     for (const f of fl) {
-        if (Object.keys(F).length >= 10) { toast('الحد 10 ملفات', 'e'); break; }
+        if (Object.keys(F).length >= 50) { toast('الحد 50 ملفاً', 'e'); break; }
         if (f.size > 512000)              { toast(f.name + ': يتجاوز 500KB', 'e'); continue; }
         const r = new FileReader();
         r.onload = e => { F[f.name] = e.target.result; renderFiles(); };
