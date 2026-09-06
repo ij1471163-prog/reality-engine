@@ -99,6 +99,23 @@ function emergencyFix(code, fileName) {
       fixed = 'import os\n' + fixed;
     }
 
+    // DB_URL وDatabase Connection Strings → env
+    fixed = fixed.replace(
+      /\bDB_URL\b\s*=\s*["'][^"']+["']/g,
+      "DB_URL = os.environ.get('DATABASE_URL', '')"
+    );
+    fixed = fixed.replace(
+      /\bDATABASE_URL\b\s*=\s*["'][^"']+["']/g,
+      "DATABASE_URL = os.environ.get('DATABASE_URL', '')"
+    );
+    fixed = fixed.replace(
+      /\bDB_HOST\b\s*=\s*["'][^"']+["']/g,
+      "DB_HOST = os.environ.get('DB_HOST', '')"
+    );
+    if (fixed !== code && !fixed.includes('import os') && fixed.includes('os.environ')) {
+      fixed = 'import os\n' + fixed;
+    }
+
     // accumulation = → +=
     fixed = fixed.replace(
       /^(\s+)(total|sum|count|revenue)\s*=\s*(?!\s*0\b)(\w+\[)/gm,
@@ -109,6 +126,37 @@ function emergencyFix(code, fileName) {
   // ─── JavaScript / TypeScript ──────────────────────
 
   if (ext === 'js' || ext === 'ts') {
+
+    // صلح SQL string مكسور: "SELECT...?" + "' AND..."
+    {
+      const fLines = fixed.split('\n');
+      let fChanged = false;
+      fLines.forEach((line, i) => {
+        if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(line)) return;
+        if (!line.includes('?') || !line.includes('" +')) return;
+        const varM2 = line.match(/(\w+)\s*=/);
+        if (!varM2) return;
+        const indent2 = ' '.repeat(line.search(/\S/));
+        const parts2 = line.match(/"([^"]*)"/g);
+        if (parts2 && parts2.length > 1) {
+          const joined2 = parts2.map(p => p.slice(1,-1)).join('');
+          if (/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(joined2)) {
+            const cleanQ2 = joined2.replace(/='\?'/g, '=?').replace(/'\?'/g, '?');
+            const hasDecl2 = /^\s*(?:let|const|var)\s+/.test(line);
+            fLines[i] = `${indent2}${hasDecl2 ? '' : 'let '}${varM2[1]} = "${cleanQ2}";`;
+            repairs.push({ fix: 'SQL fragments → clean' });
+            fChanged = true;
+          }
+        }
+      });
+      if (fChanged) fixed = fLines.join('\n');
+    }
+
+    // أضف let لو ناقص في SQL variables
+    fixed = fixed.replace(
+      /^(\s*)(?<!(?:let|const|var)\s)(\w+)\s*=\s*("SELECT[^"]*");/gm,
+      '$1let $2 = $3;'
+    );
 
     // SQL في JS/TS
     if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']\s*\+/.test(fixed)) {
@@ -129,38 +177,6 @@ function emergencyFix(code, fileName) {
       });
       fixed = lines.join('\n');
     }
-
-    // db.query بدون params → نظف fragments وأضف params
-    {
-      const qLines = fixed.split('\n');
-      let qChanged = false;
-      qLines.forEach((line, i) => {
-        // نظف SQL fragments أولاً
-        if (/\.query\s*\(/.test(line) && /[?]["']\s*\+/.test(line)) {
-          const parts = line.match(/"([^"]*)"/g);
-          if (parts && parts.length > 1) {
-            const joined = parts.map(p => p.slice(1,-1)).join('');
-            if (/SELECT|INSERT|UPDATE|DELETE/i.test(joined)) {
-              const clean = joined.replace(/='\?'/g,'=?').replace(/'\?'/g,'?');
-              qLines[i] = line.replace(/["'].*["']\s*(\+\s*["'][^"']*["'])*/, `"${clean}"`);
-              qChanged = true;
-            }
-          }
-        }
-        // أضف params لـ db.query بدون array
-        if (/\.query\s*\(\w+\s*,\s*function/.test(qLines[i]) && !/\[/.test(qLines[i])) {
-          qLines[i] = qLines[i].replace(/\.query\s*\((\w+)\s*,\s*function/, '.query($1, [/* params */], function');
-          qChanged = true;
-        }
-      });
-      if (qChanged) fixed = qLines.join('\n');
-    }
-
-    // XSS في res.send → res.json
-    fixed = fixed.replace(
-      /res\.send\s*\(([^)]*\+[^)]*)\)/g,
-      (m, inner) => `res.json({ message: ${inner.trim()} })`
-    );
 
     // eval → JSON.parse أو comment
     if (/\beval\s*\(/.test(fixed)) {
@@ -289,4 +305,3 @@ function applyEmergencyToAll(F, R) {
 
   return { totalFixed, results };
 }
-
