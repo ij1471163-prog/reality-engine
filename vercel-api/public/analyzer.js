@@ -492,6 +492,30 @@ function analyzeCode(code, fileName) {
         });
     }
 
+    // db.query بدون params array
+    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (/(?:db|conn|pool)\.query\s*\(\s*\w+\s*,\s*function/.test(line) && !/\[/.test(line.split(',')[1] || '')) {
+                issues.push({ type:'js', sev:'h', line:i+1, ev:line.trim(),
+                    title:'🟠 db.query ناقص params array',
+                    fix: line.replace(/\.query\s*\((\w+)\s*,\s*function/, '.query($1, [/* params */], function').trim(),
+                    conf:85, cIcon:'🟠', cAct:'SQL Missing Params' });
+            }
+        });
+    }
+
+    // XSS في res.send
+    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (/res\.send\s*\(.*\+/.test(line) && !line.trim().startsWith('//')) {
+                issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
+                    title:'🔴 XSS في res.send — user input مباشر',
+                    fix: line.replace(/res\.send\s*\((.+)\)/, 'res.json({ message: $1 })').trim(),
+                    conf:88, cIcon:'🔴', cAct:'CWE-79 XSS' });
+            }
+        });
+    }
+
     // JWT weak secret
     if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
         code.split('\n').forEach((line, i) => {
