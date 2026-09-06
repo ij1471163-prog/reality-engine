@@ -234,6 +234,48 @@ function emergencyFix(code, fileName) {
       }
     );
 
+    // Python params mismatch → صلح عدد ?
+    {
+      const pyLines = fixed.split('\n');
+      let lastQuery = null;
+      let changed = false;
+      pyLines.forEach((line, i) => {
+        const qM = line.match(/(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
+        if (qM) {
+          lastQuery = { varName: qM[1], count: (qM[2].match(/\?/g)||[]).length, line: i };
+        }
+        const exM = line.match(/(cursor\.execute\s*\(\s*\w+\s*,\s*\()([^)]+)(\)\s*\))/);
+        if (exM && lastQuery) {
+          const params = exM[2].split(',').filter(p => p.trim()).length;
+          if (params !== lastQuery.count) {
+            const paramList = exM[2].split(',').map(p => p.trim()).filter(Boolean);
+            const correct = paramList.slice(0, lastQuery.count).join(', ');
+            pyLines[i] = line.replace(exM[0], `cursor.execute(${lastQuery.varName}, (${correct},))`);
+            changed = true;
+            repairs.push({ fix: 'Python SQL params mismatch fixed' });
+          }
+        }
+      });
+      if (changed) fixed = pyLines.join('\n');
+    }
+
+    // JS db.query با ? بدون array
+    fixed = fixed.replace(
+      /((?:db|conn|pool)\.query\s*\()("SELECT[^"]*\?[^"]*")(\s*,\s*function)/g,
+      (m, pre, query, post) => {
+        const prevLines = fixed.split('\n');
+        const vars = [];
+        prevLines.forEach(l => {
+          const m2 = l.match(/(?:const|let|var)\s+(\w+)\s*=\s*req\.(?:query|params|body)\.(\w+)/);
+          if (m2) vars.push(m2[1]);
+          const m3 = l.match(/(?:const|let|var)\s*\{([^}]+)\}\s*=\s*req\.(?:query|params|body)/);
+          if (m3) m3[1].split(',').forEach(v => vars.push(v.trim()));
+        });
+        const paramStr = vars.length ? vars.join(', ') : '/* params */';
+        return `${pre}${query}, [${paramStr}]${post}`;
+      }
+    );
+
     // eval → JSON.parse أو comment
     if (/\beval\s*\(/.test(fixed)) {
       fixed = fixed.replace(/\beval\s*\(([^)]+)\)/g, (m, arg) => {
