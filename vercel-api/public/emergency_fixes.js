@@ -27,36 +27,38 @@ function emergencyFix(code, fileName) {
       }
     ];
 
-    // Simple approach — استبدل concatenation SQL
-    if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']\s*\+/i.test(fixed) ||
-        /\+\s*["'].*(?:WHERE|AND|OR).*["']/i.test(fixed)) {
+    // SQL Python — استبدل concatenation
+    {
       const lines = fixed.split('\n');
-      lines.forEach((line, i) => {
-        if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']\s*\+/i.test(line) ||
-            (/["'].*(?:WHERE|AND).*["']\s*\+/.test(line) && !/cursor|execute/.test(line))) {
-          // استخرج اسم المتغير
-          const varM = line.match(/(\w+)\s*=/);
-          const varName = varM ? varM[1] : 'query';
-          const indent = ' '.repeat(line.search(/\S/));
-          
-          // استخرج كل الـ params
-          const params = [];
-          line.replace(/\+\s*(\w+)\s*\+?/g, (_, p) => {
-            if (!['SELECT','INSERT','UPDATE','DELETE','WHERE','AND','OR','FROM'].includes(p.toUpperCase()))
-              params.push(p);
-          });
-          
-          if (params.length > 0) {
-            lines[i] = `${indent}${varName} = "${line.replace(/["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*)["'].*/, '$1').replace(/'\s*\+.*$/, '').trim()}${params.map(() => '?').join('')}"`;
-            // أضف cursor.execute
-            lines.splice(i + 1, 0, `${indent}cursor = conn.cursor()`);
-            lines.splice(i + 2, 0, `${indent}cursor.execute(${varName}, (${params.join(', ')},))`);
-            lines.splice(i + 3, 0, `${indent}return cursor.fetchall()`);
-            repairs.push({ line: i + 1, fix: 'SQL → parameterized query' });
-          }
-        }
-      });
-      fixed = lines.join('\n');
+      let sqlChanged = false;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(line)) continue;
+        if (!/["\'"].*\+|\+.*["\'"]/.test(line)) continue;
+        if (/cursor|execute|prepare/.test(line)) continue;
+        const varM = line.match(/(\w+)\s*=/);
+        if (!varM) continue;
+        const varName = varM[1];
+        const indent = ' '.repeat(line.search(/\S/));
+        const params = [];
+        line.replace(/\+\s*(\w+)\b/g, (_, p) => {
+          if (!/^(?:SELECT|INSERT|UPDATE|DELETE|WHERE|AND|OR|FROM|JOIN)$/i.test(p)) params.push(p);
+        });
+        if (!params.length) continue;
+        const qM = line.match(/["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*)["']/i);
+        if (!qM) continue;
+        let q = qM[1].replace(/='[^']*'?$/, '=?').replace(/'$/, '').trim();
+        if (!q.includes('?')) q += '?';
+        lines[i] = `${indent}${varName} = "${q}"`;
+        let j = i + 1;
+        while (j < lines.length && /cursor.*conn\.execute|conn\.execute/.test(lines[j])) lines.splice(j, 1);
+        lines.splice(i + 1, 0, `${indent}cursor = conn.cursor()`);
+        lines.splice(i + 2, 0, `${indent}cursor.execute(${varName}, (${params.join(', ')},))`);
+        lines.splice(i + 3, 0, `${indent}return cursor.fetchall()`);
+        repairs.push({ line: i + 1, fix: 'SQL → parameterized' });
+        sqlChanged = true; i += 4;
+      }
+      if (sqlChanged) fixed = lines.join('\n');
     }
 
     // os.system → subprocess
