@@ -439,17 +439,6 @@ function analyzeCode(code, fileName) {
     }
 
 
-    // XSS في res.send
-    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
-        code.split('\n').forEach((line, i) => {
-            if (/res\.send\s*\(.*\+.*\)/.test(line) && !line.trim().startsWith('//')) {
-                issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
-                    title:'🔴 XSS في res.send — user input مباشر',
-                    fix: line.replace(/res\.send\s*\((.+)\)/, 'res.send(escapeHtml($1))').trim(),
-                    conf:88, cIcon:'🔴', cAct:'CWE-79 XSS' });
-            }
-        });
-    }
 
     // SQL Injection JS — يدعم quotes مضمّنة
     if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
