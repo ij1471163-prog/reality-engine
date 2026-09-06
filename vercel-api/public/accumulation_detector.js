@@ -41,7 +41,7 @@ function detectAccumulation(code, fileName) {
     // اكتشف = بدل += داخل حلقة
     if (inLoop) {
       ACCUM_DETECTOR_VARS.forEach(varName => {
-        const accumPattern = new RegExp(`\\b${varName}\\s*=(?!=|\\+|-|\\*|/)\\s*\\S`);
+        const accumPattern = new RegExp(`\\b${varName}\\s*=(?!=|\\+|-|\\*|\/|>)\\s*\\S`);
         if (accumPattern.test(t) && !t.match(/(?:let|var|const|int|double|float)\s+/)) {
           // تحقق إن المتغير معرّف قبلاً بـ 0
           const isDeclared = declaredVars.has(varName) || 
