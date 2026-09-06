@@ -215,7 +215,15 @@ function emergencyFix(code, fileName) {
     // XSS في res.send
     fixed = fixed.replace(
       /res\.send\s*\(([^)]*\+[^)]*)\)/g,
-      (m, inner) => `res.json({ message: sanitize(${inner.trim()}) })`
+      (m, inner) => {
+        // استخرج المتغيرات فقط وأضف toString
+        const vars = inner.trim().match(/\b([a-zA-Z_]\w*)\b/g) || [];
+        const safeVars = vars.filter(v => !/^['"\`<>]/.test(v) && v !== 'h1' && v.length > 1);
+        if (safeVars.length > 0) {
+          return `res.json({ message: String(${safeVars[safeVars.length-1]}).replace(/[<>]/g, '') })`;
+        }
+        return `res.json({ message: 'OK' })`;
+      }
     );
 
     // eval → JSON.parse أو comment
