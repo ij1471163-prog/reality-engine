@@ -160,6 +160,36 @@ function emergencyFix(code, fileName) {
 
   if (ext === 'js' || ext === 'ts') {
 
+    // صلح LIKE SQL - "LIKE '%" + var + "%'" → "LIKE ?" + ['%' + var + '%']
+    {
+      const likeLines = fixed.split('\n');
+      let likeChanged = false;
+      likeLines.forEach((line, i) => {
+        if (!/LIKE/i.test(line)) return;
+        const m = line.match(/((?:let|var|const)\s+)?(\w+)\s*=\s*["']([^"']*LIKE\s*['"]?%?)["']\s*\+\s*(\w+)\s*\+\s*["'](%?[^"']*)["']/i);
+        if (!m) return;
+        const decl = m[1] || 'let ';
+        const varName = m[2];
+        const queryPart = m[3].replace(/%$/, '').replace(/'$/, '').trim();
+        const paramVar = m[4];
+        const indent = ' '.repeat(line.search(/\S/));
+        likeLines[i] = `${indent}${decl}${varName} = "${queryPart} ?";`;
+        // صلح db.query التالي
+        for (let j = i+1; j < Math.min(i+5, likeLines.length); j++) {
+          if (/\.query\s*\(/.test(likeLines[j])) {
+            likeLines[j] = likeLines[j].replace(
+              /\.query\s*\((\w+)\s*,\s*function/,
+              `.query($1, ['%' + ${paramVar} + '%'], function`
+            );
+            break;
+          }
+        }
+        repairs.push({ fix: 'LIKE → parameterized' });
+        likeChanged = true;
+      });
+      if (likeChanged) fixed = likeLines.join('\n');
+    }
+
     // صلح SQL string مكسور: "SELECT...?" + "' AND..."
     {
       const fLines = fixed.split('\n');
