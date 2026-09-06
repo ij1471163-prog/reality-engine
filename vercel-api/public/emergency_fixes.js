@@ -161,6 +161,12 @@ function emergencyFix(code, fileName) {
       fixed = lines.join('\n');
     }
 
+    // أضف let لو ناقص في SQL variables
+    fixed = fixed.replace(
+      /^(\s*)(?<!(?:let|const|var)\s)(\w+)\s*=\s*("SELECT[^"]*");/gm,
+      '$1let $2 = $3;'
+    );
+
     // eval → JSON.parse أو comment
     if (/\beval\s*\(/.test(fixed)) {
       fixed = fixed.replace(/\beval\s*\(([^)]+)\)/g, (m, arg) => {
