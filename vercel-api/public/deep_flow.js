@@ -297,6 +297,18 @@ var DeepFlow = (() => {
 
       // SQL Sinks
       if (/\.(?:query|execute)\s*\(|cursor\.execute|mysqli_query/.test(t)) {
+        // اكتشف SQL concat مباشر في نفس السطر
+        const inlineSQL = t.match(/["'`][^"'`]*(?:SELECT|INSERT|UPDATE|DELETE)[^"'`]*["'`]\s*\+\s*(\w+)/i);
+        if (inlineSQL) {
+          const dangerVar = inlineSQL[1];
+          if (varTypes.get(dangerVar) === T.USER_INPUT) {
+            issues.push({
+              type: 'SQL_INJECTION', sev: 'c', line: ln,
+              title: `🔴 SQL Injection: ${dangerVar} في query مباشر`,
+              ev: t, conf: 95, cIcon: '🔴', cAct: 'SQL_INJECTION',
+            });
+          }
+        }
         const vars = (t.match(/\b([a-zA-Z_$]\w*)\b/g) || []);
         const resolvedVars = vars.map(v => aliasTracker.resolve(v));
 
