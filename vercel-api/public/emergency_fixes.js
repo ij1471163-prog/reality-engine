@@ -123,15 +123,24 @@ function emergencyFix(code, fileName) {
       let pyChanged = false;
       pyLines.forEach((line, i) => {
         const qM = line.match(/(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
-        if (qM) lastQuery = { varName: qM[1], count: (qM[2].match(/\?/g)||[]).length };
+        if (qM) lastQuery = { varName: qM[1], count: (qM[2].match(/\?/g)||[]).length, line: i };
         const exM = line.match(/cursor\.execute\s*\(\s*(\w+)\s*,\s*\(([^)]+)\)\s*\)/);
         if (exM && lastQuery && exM[1] === lastQuery.varName) {
           const params = exM[2].split(',').filter(p => p.trim()).length;
           if (params !== lastQuery.count) {
             const paramList = exM[2].split(',').map(p => p.trim()).filter(Boolean);
-            const correct = paramList.slice(0, lastQuery.count).join(', ');
             const ind = ' '.repeat(line.search(/\S/));
-            pyLines[i] = `${ind}cursor.execute(${lastQuery.varName}, (${correct},))`;
+            if (params > lastQuery.count) {
+              // params أكثر من ? → أضف ? في query
+              const newQ = pyLines[lastQuery.line].replace(
+                /(["'])([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)\1/i,
+                (_, q, sql) => `"${sql} AND ?=?"`
+              );
+              pyLines[lastQuery.line] = newQ;
+              pyLines[i] = `${ind}cursor.execute(${lastQuery.varName}, (${paramList.join(', ')},))`;
+            } else {
+              pyLines[i] = `${ind}cursor.execute(${lastQuery.varName}, (${paramList.join(', ')},))`;
+            }
             pyChanged = true;
             repairs.push({ fix: 'Python SQL params mismatch fixed' });
           }
@@ -248,9 +257,14 @@ function emergencyFix(code, fileName) {
     fixed = fixed.replace(
       /res\.send\s*\(([^)]*\+[^)]*)\)/g,
       (m, inner) => {
-        // استخرج المتغيرات فقط وأضف toString
-        const vars = inner.trim().match(/\b([a-zA-Z_]\w*)\b/g) || [];
-        const safeVars = vars.filter(v => !/^['"\`<>]/.test(v) && v !== 'h1' && v.length > 1);
+        // استخرج المتغيرات - تجاهل HTML tags والـ strings
+        const noStrings = inner.trim().replace(/['"\`][^'"\`]*['"\`]/g, '');
+        const noHTML = noStrings.replace(/<\/?\w+>/g, '');
+        const vars = noHTML.match(/\b([a-zA-Z_]\w*)\b/g) || [];
+        const safeVars = vars.filter(v => 
+          !['div','span','h1','h2','p','a','br','html','body','true','false'].includes(v) &&
+          v.length > 1
+        );
         if (safeVars.length > 0) {
           return `res.json({ message: String(${safeVars[safeVars.length-1]}).replace(/[<>]/g, '') })`;
         }
