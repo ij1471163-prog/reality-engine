@@ -124,7 +124,8 @@ function emergencyFix(code, fileName) {
         if (parts2 && parts2.length > 1) {
           const joined2 = parts2.map(p => p.slice(1,-1)).join('');
           if (/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(joined2)) {
-            fLines[i] = `${indent2}${varM2[1]} = "${joined2}";`;
+            const cleanQ2 = joined2.replace(/='\?'/g, '=?').replace(/'\?'/g, '?');
+            fLines[i] = `${indent2}${varM2[1]} = "${cleanQ2}";`;
             repairs.push({ fix: 'SQL fragments → clean' });
             fChanged = true;
           }
