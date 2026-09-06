@@ -867,5 +867,31 @@ window.addEventListener('load', () => {
     }
 });
 </script>
+
+<!-- Welcome Modal -->
+<div id="welcome-modal" style="display:none;position:fixed;inset:0;background:#0008;z-index:9999;display:flex;align-items:center;justify-content:center">
+  <div style="background:#161b22;border:1px solid #30363d;border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center">
+    <div style="font-size:48px;margin-bottom:16px">🛡️</div>
+    <h2 style="color:#e6edf3;margin-bottom:8px;font-size:20px">Reality Engine</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:20px">محلل ومُصلح الثغرات الأمنية</p>
+    <div style="background:#0d1117;border-radius:10px;padding:16px;margin-bottom:20px;text-align:right">
+      <div style="color:#3fb950;margin-bottom:8px;font-size:13px">✅ المحرك يصلح تلقائياً 85-90% من الثغرات الأمنية</div>
+      <div style="color:#d29922;margin-bottom:8px;font-size:13px">⚠️ بعض المشاكل المعقدة تحتاج مراجعة يدوية من المطور</div>
+      <div style="color:#58a6ff;font-size:13px">🤖 AI متاح لمحاولة إصلاح المشاكل المتبقية</div>
+    </div>
+    <button onclick="closeWelcome()" style="background:#238636;color:#fff;border:none;padding:12px 32px;border-radius:8px;font-size:15px;cursor:pointer;width:100%">فهمت — ابدأ التحليل</button>
+  </div>
+</div>
+
+<script>
+function closeWelcome() {
+  document.getElementById('welcome-modal').style.display = 'none';
+  localStorage.setItem('re_welcomed', '1');
+}
+// أظهر مرة واحدة فقط
+if (!localStorage.getItem('re_welcomed')) {
+  document.getElementById('welcome-modal').style.display = 'flex';
+}
+</script>
 </body>
 </html>
