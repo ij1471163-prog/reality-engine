@@ -188,7 +188,11 @@ function analyzeJava(code, fileName) {
   // dedup — نفس السطر ونفس النوع
   const seen = new Set();
   const deduped = issues.filter(issue => {
-    const key = (issue.line||0) + ':' + (issue.type||'') + ':' + (issue.title||'').substring(0,25);
+    // dedup بـ line + نوع الثغرة الرئيسي
+    const mainType = (issue.type||issue.cAct||'').toLowerCase()
+      .replace(/sql.*/,'sql').replace(/xss.*/,'xss').replace(/jwt.*/,'jwt')
+      .replace(/secret.*/,'secret').replace(/cmd.*/,'cmd').replace(/code.*/,'code');
+    const key = (issue.line||0) + ':' + mainType;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
