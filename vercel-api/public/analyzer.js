@@ -438,17 +438,6 @@ function analyzeCode(code, fileName) {
         });
     }
 
-    // db.query بدون params
-    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
-        code.split('\n').forEach((line, i) => {
-            if (/db\.query\s*\(\s*\w+\s*,\s*function/.test(line) && !/\[/.test(line)) {
-                issues.push({ type:'js', sev:'h', line:i+1, ev:line.trim(),
-                    title:'🟠 db.query ناقص params array',
-                    fix: line.replace(/db\.query\s*\((\w+)\s*,\s*function/, 'db.query($1, [/* params */], function').trim(),
-                    conf:85, cIcon:'🟠', cAct:'SQL Missing Params' });
-            }
-        });
-    }
 
     // XSS في res.send
     if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
