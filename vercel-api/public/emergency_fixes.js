@@ -469,6 +469,14 @@ function emergencyFix(code, fileName) {
   fixed = fixed.replace(/"([^"]*LIKE\s*)'%\?%'([^"]*)"/g, '"$1?$2"');
   fixed = fixed.replace(/"([^"]*LIKE\s*)%\?%([^"]*)"/g, '"$1?$2"');
 
+  // صلح db.query params بعد LIKE - [term] → ['%' + term + '%']
+  if (/LIKE \?/.test(fixed)) {
+    fixed = fixed.replace(
+      /\.query\s*\((\w+)\s*,\s*\[(\w+)\]\s*,\s*function/g,
+      `.query($1, ['%' + $2 + '%'], function`
+    );
+  }
+
   return { fixed, repairs };
 }
 
