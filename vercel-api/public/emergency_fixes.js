@@ -469,12 +469,35 @@ function emergencyFix(code, fileName) {
   fixed = fixed.replace(/"([^"]*LIKE\s*)'%\?%'([^"]*)"/g, '"$1?$2"');
   fixed = fixed.replace(/"([^"]*LIKE\s*)%\?%([^"]*)"/g, '"$1?$2"');
 
-  // صلح db.query params بعد LIKE - [term] → ['%' + term + '%']
+  // صلح db.query params بعد LIKE - يربط query variable بـ params
   if (/LIKE \?/.test(fixed)) {
-    fixed = fixed.replace(
-      /\.query\s*\((\w+)\s*,\s*\[(\w+)\]\s*,\s*function/g,
-      `.query($1, ['%' + $2 + '%'], function`
-    );
+    const likeLines2 = fixed.split('\n');
+    // ابحث عن LIKE query variables
+    const likeVars = new Map();
+    likeLines2.forEach((line, i) => {
+      if (/LIKE \?/.test(line)) {
+        const varM = line.match(/(\w+)\s*=/);
+        if (varM) {
+          // ابحث عن المتغيرات في الـ LIKE block
+          const blockCode = likeLines2.slice(Math.max(0,i-5), i+1).join('\n');
+          // ابحث عن المتغير المعرّف مو اسم الـ property
+          const varDef = blockCode.match(/(?:let|var|const)\s+(\w+)\s*=\s*req\.(?:query|body|params)/g) || [];
+          const lastVarDef = varDef.length ? varDef[varDef.length-1].match(/(?:let|var|const)\s+(\w+)/)?.[1] : null;
+          if (lastVarDef) likeVars.set(varM[1], lastVarDef);
+        }
+      }
+    });
+    likeLines2.forEach((line, i) => {
+      likeVars.forEach((termVar, sqlVar) => {
+        if (new RegExp('\.query\\s*\\(' + sqlVar).test(line)) {
+          likeLines2[i] = line.replace(
+            /\.query\s*\((\w+)\s*,\s*\[[^\]]+\]\s*,\s*function/,
+            `.query($1, ['%' + ${termVar} + '%'], function`
+          );
+        }
+      });
+    });
+    fixed = likeLines2.join('\n');
   }
 
   return { fixed, repairs };
