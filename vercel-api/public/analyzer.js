@@ -770,11 +770,18 @@ function analyzeJS(code, fileName, ext, issues) {
 
 /** تحقق من وجود return داخل forEach body */
 function checkForEachReturn(lines, startIdx) {
-    let depth = 0;
+    const startLine = lines[startIdx] || '';
+    // لو الـ forEach كامل في سطر واحد - ما في return داخله
+    if (/\.forEach\s*\([^)]*\)\s*\{[^}]*\}/.test(startLine)) return false;
+    // لو الـ forEach يفتح { في نفس السطر
+    const openInStart = (startLine.match(/\{/g) ?? []).length;
+    const closeInStart = (startLine.match(/\}/g) ?? []).length;
+    let depth = openInStart - closeInStart;
+    if (depth <= 0) return false; // forEach مغلق في نفس السطر
     for (let j = startIdx + 1; j < Math.min(startIdx + 20, lines.length); j++) {
         const jt = lines[j].trim();
         depth += (lines[j].match(/\{/g) ?? []).length - (lines[j].match(/\}/g) ?? []).length;
-        if (depth < 0) break; // خرجنا من forEach
+        if (depth <= 0) break; // خرجنا من forEach
         if (/\breturn\s+\w/.test(jt)) return true;
     }
     return false;
