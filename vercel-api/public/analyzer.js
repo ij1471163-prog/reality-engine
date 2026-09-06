@@ -438,6 +438,22 @@ function analyzeCode(code, fileName) {
         });
     }
 
+    // eval() detection
+    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (/\beval\s*\(/.test(line) && !line.trim().startsWith('//')) {
+                const m = line.match(/eval\s*\(([^)]+)\)/);
+                const arg = m ? m[1].trim() : 'input';
+                issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
+                    title:'🔴 eval() خطير — تنفيذ كود مباشر',
+                    fix: /json|data|response|result/i.test(arg) ? 
+                        line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`).trim() :
+                        `// SECURITY: eval() removed — validate ${arg} before use`,
+                    conf:95, cIcon:'🔴', cAct:'CWE-94 Code Injection' });
+            }
+        });
+    }
+
     // JWT weak secret
     if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
         code.split('\n').forEach((line, i) => {
