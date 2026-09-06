@@ -438,6 +438,20 @@ function analyzeCode(code, fileName) {
         });
     }
 
+    // SQL Injection JS — يدعم quotes مضمّنة
+    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (line.trim().startsWith('//')) return;
+            // SELECT + concatenation بأي شكل
+            if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']/.test(line) && /\+\s*\w+|\w+\s*\+/.test(line)) {
+                issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
+                    title:'🔴 SQL Injection — String Concatenation في JS',
+                    fix: line.trim(),
+                    conf:90, cIcon:'🔴', cAct:'CWE-89 SQL Injection' });
+            }
+        });
+    }
+
     // eval() detection
     if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
         code.split('\n').forEach((line, i) => {
