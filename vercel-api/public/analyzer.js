@@ -494,6 +494,45 @@ function analyzeCode(code, fileName) {
         });
     }
 
+    // Python cursor.execute params mismatch
+    if (['py'].includes(fileName.split('.').pop().toLowerCase())) {
+        let lastQuery = null;
+        code.split('\n').forEach((line, i) => {
+            // تتبع query = "SELECT...?"
+            const qM = line.match(/\b(\w+)\s*=\s*["']([^"']*)["']\s*$/);
+            if (qM && /(?:SELECT|INSERT|UPDATE|DELETE)/i.test(qM[2])) {
+                const qCount = (qM[2].match(/\?/g) || []).length;
+                lastQuery = { varName: qM[1], count: qCount, line: i };
+            }
+            // تحقق cursor.execute(query, (params,))
+            const exM = line.match(/cursor\.execute\s*\(\s*(\w+)\s*,\s*\(([^)]+)\)\s*\)/);
+            if (exM && lastQuery && exM[1] === lastQuery.varName) {
+                const params = exM[2].split(',').filter(p => p.trim()).length;
+                if (params !== lastQuery.count) {
+                    issues.push({ type:'py', sev:'c', line:i+1, ev:line.trim(),
+                        title:`🔴 SQL params mismatch: query فيه ${lastQuery.count} ? لكن execute يمرر ${params}`,
+                        fix: line.trim(), conf:90, cIcon:'🔴', cAct:'SQL Params Mismatch' });
+                }
+            }
+        });
+    }
+
+    // db.query("SELECT...?") بدون params array
+    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (!/db\.query|pool\.query|conn\.query/.test(line)) return;
+            const hasQuestion = /\?/.test(line);
+            const hasArray = /\[/.test(line);
+            const hasCallback = /function|=>/.test(line);
+            if (hasQuestion && !hasArray && hasCallback) {
+                issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
+                    title:'🔴 db.query فيه ? بدون params array',
+                    fix: line.replace(/\.query\s*\((".*"),\s*function/, '.query($1, [/* params */], function').trim(),
+                    conf:88, cIcon:'🔴', cAct:'SQL Missing Params' });
+            }
+        });
+    }
+
     // JWT weak secret
     if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
         code.split('\n').forEach((line, i) => {
