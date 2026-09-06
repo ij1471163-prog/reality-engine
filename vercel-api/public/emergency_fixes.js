@@ -51,7 +51,7 @@ function emergencyFix(code, fileName) {
         if (!q.includes('?')) q += '?';
         lines[i] = `${indent}${varName} = "${q}"`;
         let j = i + 1;
-        while (j < lines.length && /cursor.*conn\.execute|conn\.execute/.test(lines[j])) lines.splice(j, 1);
+        while (j < lines.length && /cursor.*conn\.execute|conn\.execute|return cursor/.test(lines[j])) lines.splice(j, 1);
         lines.splice(i + 1, 0, `${indent}cursor = conn.cursor()`);
         lines.splice(i + 2, 0, `${indent}cursor.execute(${varName}, (${params.join(', ')},))`);
         lines.splice(i + 3, 0, `${indent}return cursor.fetchall()`);
