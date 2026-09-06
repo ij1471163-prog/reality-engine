@@ -259,11 +259,35 @@ var LearningEngine = (() => {
   }
 
   // ─── Export ───────────────────────────────────────
+  // ─── Get Confidence Boosts ─────────────────────────
+  // يرجع map من type → confidence boost
+  function getBoosts() {
+    const db = loadPatterns();
+    const boosts = new Map();
+    db.patterns.forEach(p => {
+      const type = p.type?.toLowerCase() || '';
+      // map pattern type → analyzer type
+      const analyzerType = 
+        type.includes('sql') ? 'SQL_INJECTION' :
+        type.includes('xss') ? 'XSS' :
+        type.includes('accum') || type.includes('bug') ? 'ACCUMULATION' :
+        type.includes('secret') || type.includes('crypto') ? 'HARDCODED_SECRET' :
+        type.includes('cmd') ? 'CMD_INJECTION' :
+        type.includes('eval') || type.includes('code') ? 'CODE_INJECTION' :
+        null;
+      if (!analyzerType) return;
+      const current = boosts.get(analyzerType) || 0;
+      boosts.set(analyzerType, Math.max(current, p.confidence));
+    });
+    return boosts;
+  }
+
   return {
     learn,
     applyLearned,
     markResult,
     getStats,
+    getBoosts,
     reset,
     PATTERN_TYPES,
   };

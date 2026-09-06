@@ -197,6 +197,22 @@ function analyzeJava(code, fileName) {
     } catch(e) {}
   }
 
+  // تطبيق Learning Boosts — يرفع confidence
+  if (typeof LearningEngine !== 'undefined') {
+    try {
+      const boosts = LearningEngine.getBoosts();
+      if (boosts.size > 0) {
+        issues.forEach(issue => {
+          const boost = boosts.get(issue.type || issue.cAct || '');
+          if (boost && boost > 0.7) {
+            issue.conf = Math.min(99, Math.round((issue.conf || 80) * (1 + boost * 0.1)));
+            issue.learned = true; // علّم إنه تعلمه
+          }
+        });
+      }
+    } catch(e) {}
+  }
+
   // dedup — نفس السطر ونفس النوع
   const seen = new Set();
   const deduped = issues.filter(issue => {
