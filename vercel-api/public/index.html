@@ -544,7 +544,7 @@ function fixAllEngine() {
         if (em.totalFixed > 0) totalFixed += em.totalFixed;
     }
     // Learning — يتعلم من الإصلاحات
-    if (typeof LearningEngine !== 'undefined' && totalFixed > 0) {
+    if (typeof LearningEngine !== 'undefined') {
         Object.keys(F).forEach(fn => {
             if (R[fn]?.issues?.length > 0) {
                 LearningEngine.learn(origF[fn] || F[fn], F[fn], R[fn].issues, fn);
