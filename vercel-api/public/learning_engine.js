@@ -141,7 +141,10 @@ var LearningEngine = (() => {
     const db = loadPatterns();
     let learned = 0;
 
+    // حدود - لا يتعلم أبداً من هذه الأنواع
+    const NEVER_LEARN_TYPES = ['eval', 'exec', 'CODE_INJECTION', 'CMD_INJECTION'];
     issues.forEach(issue => {
+      if (NEVER_LEARN_TYPES.some(t => (issue.type||'').includes(t))) return;
       const newPattern = extractPattern(codeBefore, codeAfter, issue);
       if (!newPattern) return;
 
@@ -153,19 +156,22 @@ var LearningEngine = (() => {
       );
 
       if (existing) {
-        // حدّث الـ pattern الموجود
+        // حدّث الـ pattern الموجود فقط
         existing.samples++;
         existing.successes++;
         existing.confidence = Math.min(0.99, existing.successes / existing.samples);
         existing.lastUsed = Date.now();
-        // احفظ أحسن مثال
-        if (existing.confidence > 0.8) {
-          existing.example = newPattern.example;
-        }
+        if (existing.confidence > 0.8) existing.example = newPattern.example;
       } else {
-        // أضف pattern جديد
-        db.patterns.push(newPattern);
-        learned++;
+        // تحقق إن ما تعلمناه قبل
+        const alreadyLearned = db.patterns.some(p =>
+          p.example.before === newPattern.example.before &&
+          p.example.after === newPattern.example.after
+        );
+        if (!alreadyLearned) {
+          db.patterns.push(newPattern);
+          learned++;
+        }
       }
     });
 
