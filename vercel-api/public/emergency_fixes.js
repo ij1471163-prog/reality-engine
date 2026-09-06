@@ -116,6 +116,29 @@ function emergencyFix(code, fileName) {
       fixed = 'import os\n' + fixed;
     }
 
+    // Python params mismatch → صلح عدد ?
+    {
+      const pyLines = fixed.split('\n');
+      let lastQuery = null;
+      let pyChanged = false;
+      pyLines.forEach((line, i) => {
+        const qM = line.match(/(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
+        if (qM) lastQuery = { varName: qM[1], count: (qM[2].match(/\?/g)||[]).length };
+        const exM = line.match(/cursor\.execute\s*\(\s*(\w+)\s*,\s*\(([^)]+)\)\s*\)/);
+        if (exM && lastQuery && exM[1] === lastQuery.varName) {
+          const params = exM[2].split(',').filter(p => p.trim()).length;
+          if (params !== lastQuery.count) {
+            const paramList = exM[2].split(',').map(p => p.trim()).filter(Boolean);
+            const correct = paramList.slice(0, lastQuery.count).join(', ');
+            pyLines[i] = `    cursor.execute(${lastQuery.varName}, (${correct},))`;
+            pyChanged = true;
+            repairs.push({ fix: 'Python SQL params mismatch fixed' });
+          }
+        }
+      });
+      if (pyChanged) fixed = pyLines.join('\n');
+    }
+
     // accumulation = → +=
     fixed = fixed.replace(
       /^(\s+)(total|sum|count|revenue)\s*=\s*(?!\s*0\b)(\w+\[)/gm,
@@ -233,31 +256,6 @@ function emergencyFix(code, fileName) {
         return `res.json({ message: 'OK' })`;
       }
     );
-
-    // Python params mismatch → صلح عدد ?
-    {
-      const pyLines = fixed.split('\n');
-      let lastQuery = null;
-      let changed = false;
-      pyLines.forEach((line, i) => {
-        const qM = line.match(/(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
-        if (qM) {
-          lastQuery = { varName: qM[1], count: (qM[2].match(/\?/g)||[]).length, line: i };
-        }
-        const exM = line.match(/(cursor\.execute\s*\(\s*\w+\s*,\s*\()([^)]+)(\)\s*\))/);
-        if (exM && lastQuery) {
-          const params = exM[2].split(',').filter(p => p.trim()).length;
-          if (params !== lastQuery.count) {
-            const paramList = exM[2].split(',').map(p => p.trim()).filter(Boolean);
-            const correct = paramList.slice(0, lastQuery.count).join(', ');
-            pyLines[i] = line.replace(exM[0], `cursor.execute(${lastQuery.varName}, (${correct},))`);
-            changed = true;
-            repairs.push({ fix: 'Python SQL params mismatch fixed' });
-          }
-        }
-      });
-      if (changed) fixed = pyLines.join('\n');
-    }
 
     // JS db.query با ? بدون array
     fixed = fixed.replace(
