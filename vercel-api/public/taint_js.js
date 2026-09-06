@@ -103,7 +103,9 @@ function analyzeTaintJS(code, fileName) {
         const vars = expr.match(/\b([a-zA-Z_]\w*)\b/g) || [];
         const taintedVars = vars.filter(v => engine.isTainted(v));
 
-        if (taintedVars.length > 0 && !isSanitized(expr, 'js')) {
+        // تجاهل لو الـ query parameterized (فيه ? وarray params)
+        const isParameterized = /[?]/.test(expr) && /\[/.test(line);
+        if (taintedVars.length > 0 && !isSanitized(expr, 'js') && !isParameterized) {
           taintedVars.forEach(v => {
             engine.addIssue(type, sev, ln, v, sink, fix(v));
             issues.push({
