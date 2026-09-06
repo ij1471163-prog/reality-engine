@@ -148,7 +148,8 @@ var LearningEngine = (() => {
       // ابحث عن pattern مشابه موجود
       const existing = db.patterns.find(p =>
         p.type === newPattern.type &&
-        matchPattern(newPattern.example.before, p.pattern)
+        (p.example.before === newPattern.example.before ||
+         matchPattern(newPattern.example.before, p.pattern))
       );
 
       if (existing) {
