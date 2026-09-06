@@ -130,11 +130,31 @@ function emergencyFix(code, fileName) {
       fixed = lines.join('\n');
     }
 
-    // db.query بدون params → أضف params array
-    fixed = fixed.replace(
-      /\.query\s*\((\w+)\s*,\s*function/g,
-      '.query($1, [/* params */], function'
-    );
+    // db.query بدون params → نظف fragments وأضف params
+    {
+      const qLines = fixed.split('\n');
+      let qChanged = false;
+      qLines.forEach((line, i) => {
+        // نظف SQL fragments أولاً
+        if (/\.query\s*\(/.test(line) && /[?]["']\s*\+/.test(line)) {
+          const parts = line.match(/"([^"]*)"/g);
+          if (parts && parts.length > 1) {
+            const joined = parts.map(p => p.slice(1,-1)).join('');
+            if (/SELECT|INSERT|UPDATE|DELETE/i.test(joined)) {
+              const clean = joined.replace(/='\?'/g,'=?').replace(/'\?'/g,'?');
+              qLines[i] = line.replace(/["'].*["']\s*(\+\s*["'][^"']*["'])*/, `"${clean}"`);
+              qChanged = true;
+            }
+          }
+        }
+        // أضف params لـ db.query بدون array
+        if (/\.query\s*\(\w+\s*,\s*function/.test(qLines[i]) && !/\[/.test(qLines[i])) {
+          qLines[i] = qLines[i].replace(/\.query\s*\((\w+)\s*,\s*function/, '.query($1, [/* params */], function');
+          qChanged = true;
+        }
+      });
+      if (qChanged) fixed = qLines.join('\n');
+    }
 
     // XSS في res.send → res.json
     fixed = fixed.replace(
