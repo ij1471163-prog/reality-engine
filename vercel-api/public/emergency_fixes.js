@@ -199,13 +199,21 @@ function emergencyFix(code, fileName) {
           const varM = line.match(/\.query\s*\((\w+)/);
           const qVar = varM ? varM[1] : null;
           const paramCount = qVar ? (sqlVarParams.get(qVar) || 0) : 0;
-          // ابحث عن params قبل db.query
-          const prevCode = dbLines.slice(Math.max(0,i-5), i).join('\n');
+          // ابحث عن params من req.body وreq.query
+          const prevCode = dbLines.slice(Math.max(0,i-10), i).join('\n');
           const vars = [];
-          prevCode.replace(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*req\.body/g, (_, fields) => {
-            fields.split(',').forEach(f => vars.push(f.trim()));
+          // const {username, hash} = req.body
+          prevCode.replace(/(?:const|let|var)\s*\{([^}]+)\}\s*=\s*req\.(?:body|query|params)/g, (_, fields) => {
+            fields.split(',').forEach(f => {
+              const v = f.trim().split(':')[0].trim().split('=')[0].trim();
+              if (v) vars.push(v);
+            });
           });
-          const paramsStr = vars.length > 0 ? vars.slice(0, paramCount).join(', ') : '/* params */';
+          // const username = req.body.username
+          prevCode.replace(/(?:const|let|var)\s+(\w+)\s*=\s*req\.(?:body|query|params)\.(\w+)/g, (_, v) => {
+            vars.push(v);
+          });
+          const paramsStr = vars.length > 0 ? vars.slice(0, Math.max(paramCount, vars.length)).join(', ') : '/* params */';
           dbLines[i] = line.replace(/\.query\s*\((\w+)\s*,\s*function/, `.query($1, [${paramsStr}], function`);
         }
       });
