@@ -415,8 +415,11 @@ async function fixAllWithAI() {
     try {
         const token = await getToken();
         // ✅ انتظر كل ملف بشكل متسلسل — مو داخل forEach
-        for (const fn of Object.keys(F)) {
-            if (!R[fn]?.issues?.length) continue;
+        // اجمع كل الملفات اللي فيها مشاكل
+        const filesToFix = Object.keys(F).filter(fn => R[fn]?.issues?.length > 0);
+        if (filesToFix.length === 0) { toast('✅ ما في مشاكل للإصلاح'); return; }
+        
+        for (const fn of filesToFix) {
             const issues = R[fn]?.issues?.map(i => `- ${i.title} (السطر ${i.line})`).join('\n') || '';
             const prompt = `أنت مبرمج أمان خبير. مهمتك إصلاح الثغرات الأمنية فقط.
 
