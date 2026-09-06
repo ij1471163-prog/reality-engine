@@ -173,5 +173,17 @@ function analyzeJava(code, fileName) {
     iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
   });
 
+  // SmartContext Analysis
+  if (typeof SmartContext !== 'undefined') {
+    try {
+      const scResult = SmartContext.analyzeCode(code, fileName);
+      scResult.issues.forEach(sci => {
+        if (!issues.some(x => x.line === sci.line && x.type === sci.type)) {
+          issues.push(sci);
+        }
+      });
+    } catch(e) {}
+  }
+
   return issues;
 }
