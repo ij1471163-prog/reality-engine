@@ -163,7 +163,7 @@ function fixAccumulation(code, issue, lines, ext) {
   if (!line) return null;
   const m = line.match(/(\w+)\s*=\s*(.+)/);
   if (!m) return null;
-  const fixed = line.replace(/(\w+)\s*=\s*/, '$1 += ');
+  const fixed = line.replace(/(\w+)\s*=(?!>|=|\+)\s*/, '$1 += ');
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '= → +=' };
 }
