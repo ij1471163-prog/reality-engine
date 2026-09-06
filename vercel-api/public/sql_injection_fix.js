@@ -111,6 +111,14 @@ const SQLInjectionFixer = (() => {
     );
   }
 
+  // صلح db.query(query, callback) → db.query(query, [params], callback)
+  function fixDBQuery(code) {
+    return code.replace(
+      /db\.query\s*\(\s*(\w+)\s*,\s*function/g,
+      'db.query($1, [/* add params */], function'
+    );
+  }
+
   function fix(code, fileName) {
     const ext = fileName.split('.').pop().toLowerCase();
     let fixed = code;
