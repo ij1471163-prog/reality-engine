@@ -130,7 +130,8 @@ function emergencyFix(code, fileName) {
           if (params !== lastQuery.count) {
             const paramList = exM[2].split(',').map(p => p.trim()).filter(Boolean);
             const correct = paramList.slice(0, lastQuery.count).join(', ');
-            pyLines[i] = `    cursor.execute(${lastQuery.varName}, (${correct},))`;
+            const ind = ' '.repeat(line.search(/\S/));
+            pyLines[i] = `${ind}cursor.execute(${lastQuery.varName}, (${correct},))`;
             pyChanged = true;
             repairs.push({ fix: 'Python SQL params mismatch fixed' });
           }
