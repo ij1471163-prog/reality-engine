@@ -425,7 +425,32 @@ function analyzeCode(code, fileName) {
             }
         }
 
-                return issues;
+
+    // TypeScript any detection
+    if (['ts','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (/:\s*any\b/.test(line) && !line.trim().startsWith('//')) {
+                issues.push({ type:'ts', sev:'m', line:i+1, ev:line.trim(),
+                    title:'🟡 TypeScript any — استخدم unknown أو type محدد',
+                    fix: line.replace(/:\s*any\b/g, ': unknown').trim(),
+                    conf:85, cIcon:'🟡', cAct:'TypeScript Safety' });
+            }
+        });
+    }
+
+    // JWT weak secret
+    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+        code.split('\n').forEach((line, i) => {
+            if (/(?:JWT_SECRET|jwtSecret|JWT_KEY)\s*=\s*["'][^"']{4,}["']/.test(line)) {
+                issues.push({ type:'js', sev:'h', line:i+1, ev:line.trim(),
+                    title:'🟠 JWT Secret مكشوف — استخدم process.env',
+                    fix: line.replace(/=\s*["'][^"']+["']/, '= process.env.JWT_SECRET').trim(),
+                    conf:90, cIcon:'🟠', cAct:'CWE-798 JWT' });
+            }
+        });
+    }
+
+                    return issues;
 }
 
 // ═══════════════════════════════════════════════════════
