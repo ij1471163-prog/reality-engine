@@ -318,6 +318,16 @@ function emergencyFix(code, fileName) {
       }
     );
 
+    // MD5 → SHA256 في JS
+    fixed = fixed.replace(
+      /createHash\s*\(\s*['"]md5['"]\s*\)/gi,
+      'createHash("sha256")'
+    );
+    fixed = fixed.replace(
+      /createHash\s*\(\s*['"]sha1['"]\s*\)/gi,
+      'createHash("sha256")'
+    );
+
     // XSS innerHTML → textContent
     fixed = fixed.replace(/\.innerHTML\s*=/g, '.textContent =');
 
