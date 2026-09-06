@@ -497,6 +497,11 @@ function fixAllEngine() {
         const fb = applyFallbackToAll(F, R);
         if (fb.totalFixed > 0) totalFixed += fb.totalFixed;
     }
+    // Emergency fixes — الخط الثالث
+    if (typeof applyEmergencyToAll === 'function') {
+        const em = applyEmergencyToAll(F, R);
+        if (em.totalFixed > 0) totalFixed += em.totalFixed;
+    }
     toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
