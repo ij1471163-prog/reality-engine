@@ -99,6 +99,12 @@ function emergencyFix(code, fileName) {
       fixed = 'import os\n' + fixed;
     }
 
+    // DB_URL hardcoded → env
+    fixed = fixed.replace(
+      /DB_URL\s*=\s*["'](?:postgresql|mysql|sqlite|mongodb):\/\/[^"']+["']/g,
+      "DB_URL = os.environ.get('DATABASE_URL', '')"
+    );
+
     // accumulation = → +=
     fixed = fixed.replace(
       /^(\s+)(total|sum|count|revenue)\s*=\s*(?!\s*0\b)(\w+\[)/gm,
@@ -125,7 +131,8 @@ function emergencyFix(code, fileName) {
           const joined2 = parts2.map(p => p.slice(1,-1)).join('');
           if (/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(joined2)) {
             const cleanQ2 = joined2.replace(/='\?'/g, '=?').replace(/'\?'/g, '?');
-            fLines[i] = `${indent2}${varM2[1]} = "${cleanQ2}";`;
+            const hasDecl2 = /^\s*(?:let|const|var)\s+/.test(line);
+            fLines[i] = `${indent2}${hasDecl2 ? '' : 'let '}${varM2[1]} = "${cleanQ2}";`;
             repairs.push({ fix: 'SQL fragments → clean' });
             fChanged = true;
           }
