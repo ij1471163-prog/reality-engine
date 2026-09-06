@@ -57,7 +57,7 @@ var LearningEngine = (() => {
     if (!pattern || !fix) return null;
 
     return {
-      type:       issue.type || 'unknown',
+      type:       issue.type || issue.cAct || 'unknown',
       severity:   issue.sev  || 'c',
       pattern,
       fix,
