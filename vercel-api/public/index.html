@@ -715,7 +715,7 @@ function refreshStats() {
 function exportPDF() {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
-    const date = new Date().toLocaleDateString('ar');
+    const date = new Date().toLocaleDateString('en-GB');
 
     // Header
     doc.setFillColor(13, 17, 23);
@@ -726,6 +726,7 @@ function exportPDF() {
     doc.setTextColor(139, 148, 158);
     doc.setFontSize(11);
     doc.text('Security Analysis Report', 15, 30);
+    doc.text('Powered by Reality Engine', 15, 36);
     doc.text(date, 160, 20);
 
     // Summary
@@ -739,7 +740,8 @@ function exportPDF() {
         });
     });
 
-    const score = Math.max(0, 100 - critical*20 - high*10 - medium*5 - low*2);
+    const totalIssues = critical + high + medium + low;
+    const score = totalIssues === 0 ? 100 : Math.max(0, Math.round(100 - (critical*15 + high*8 + medium*4 + low*1)));
     doc.setTextColor(63, 185, 80);
     doc.setFontSize(28);
     doc.text(score + '/100', 15, 55);
@@ -792,7 +794,11 @@ function exportPDF() {
             doc.text((issue.sev||'').toUpperCase(), 21, y + 6);
             doc.setTextColor(230, 237, 243);
             doc.setFontSize(9);
-            doc.text(String(issue.title||'').substring(0, 70), 21, y + 13);
+            const titleEn = String(issue.title||'').replace(/[\u0600-\u06FF\s]+/g, m => {
+                const map = {'حرج':'CRITICAL','عالي':'HIGH','متوسط':'MEDIUM','منخفض':'LOW','مشكلة':'Issue'};
+                return map[m.trim()] || m;
+            }).substring(0, 70);
+            doc.text(titleEn, 21, y + 13);
             doc.setTextColor(139, 148, 158);
             doc.setFontSize(7);
             doc.text('L' + issue.line + ' — ' + fn, 160, y + 6);
