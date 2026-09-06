@@ -178,6 +178,18 @@ function emergencyFix(code, fileName) {
       fixed = lines.join('\n');
     }
 
+    // db.query بدون params
+    fixed = fixed.replace(
+      /\.query\s*\((\w+)\s*,\s*function/g,
+      '.query($1, [/* params */], function'
+    );
+
+    // XSS في res.send
+    fixed = fixed.replace(
+      /res\.send\s*\(([^)]*\+[^)]*)\)/g,
+      (m, inner) => `res.json({ message: ${inner.trim()} })`
+    );
+
     // eval → JSON.parse أو comment
     if (/\beval\s*\(/.test(fixed)) {
       fixed = fixed.replace(/\beval\s*\(([^)]+)\)/g, (m, arg) => {
