@@ -110,6 +110,7 @@ function emergencyFix(code, fileName) {
 
   if (ext === 'js' || ext === 'ts') {
 
+<<<<<<< Updated upstream
     // صلح SQL string مكسور: "SELECT...?" + "' AND..."
     {
       const fLines = fixed.split('\n');
@@ -134,6 +135,31 @@ function emergencyFix(code, fileName) {
     }
 
         // SQL في JS/TS
+=======
+    // صلح SQL string مكسور: "SELECT...?" + "' AND..." 
+    if (ext === 'js' || ext === 'ts') {
+      const lines = fixed.split('\n');
+      let changed = false;
+      lines.forEach((line, i) => {
+        if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(line)) return;
+        if (!/["'].*\?["']\s*\+/.test(line)) return;
+        const varM = line.match(/(\w+)\s*=/);
+        if (!varM) return;
+        const varName = varM[1];
+        const indent = ' '.repeat(line.search(/\S/));
+        // استخرج SELECT من أول string
+        const firstStr = line.match(/["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*\?)["']/i);
+        if (firstStr) {
+          lines[i] = `${indent}${varName} = "${firstStr[1]}";`;
+          repairs.push({ fix: 'JS SQL string fragments → clean' });
+          changed = true;
+        }
+      });
+      if (changed) fixed = lines.join('\n');
+    }
+
+    // SQL في JS/TS
+>>>>>>> Stashed changes
     if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']\s*\+/.test(fixed)) {
       const lines = fixed.split('\n');
       lines.forEach((line, i) => {

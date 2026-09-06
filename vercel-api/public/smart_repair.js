@@ -150,6 +150,26 @@ var SmartRepairEngine = (() => {
           }
         }
 
+        // يصلح SQL string مكسور: "SELECT...?" + "' AND..."
+        if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*\?["']\s*\+\s*["']/.test(t)) {
+          const varM3 = t.match(/(\w+)\s*=/);
+          if (varM3) {
+            const varName3 = varM3[1];
+            const indent3 = ' '.repeat(line.search(/\S/));
+            // بناء query نظيف — اجمع كل الـ ? وانظف الـ string fragments
+            const allParts = t.match(/["']([^"']*)["']/g) || [];
+            const cleanParts = allParts.map(p => p.slice(1,-1)).join('');
+            // استخرج الـ params من sqlVars context
+            const sqlInfo3 = ctx.sqlVars.get(varName3);
+            const pList = sqlInfo3?.params || [];
+            lines[i] = `${indent3}${varName3} = "${cleanParts.replace(/='\s*\?'?\s*(\+\s*"[^"]*")*/, '=?').replace(/\?['"][^'"]*['"]/g, '?').replace(/\?+/, '?')}";`;
+            if (pList.length) {
+              repairs.push({ line: i + 1, fix: `SQL string fragments cleaned` });
+              changed = true;
+            }
+          }
+        }
+
         // يكتشف db.query(queryVar, callback) بدون params
         const dbM = t.match(/(?:db|conn|pool|client)\.query\s*\(\s*(\w+)\s*,\s*function/);
         if (dbM) {
