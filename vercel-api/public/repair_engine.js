@@ -38,7 +38,7 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
   const ext = fileName ? detectExt(code, fileName) : detectExt(code);
 
   if (ext === 'py') {
-    const m = line.match(/(\w+)\s*=\s*["']([^"']+)["'].*\+.*?(\w+)\s*\+?\s*["']?[^"']*["']?\s*;?$/);
+    const m = line.match(/(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*).*\+.*?(\w+)/i);
     if (m) {
       const indent = ' '.repeat(line.search(/\S/));
       const varName = m[1];
