@@ -173,6 +173,18 @@ function analyzeJava(code, fileName) {
     iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
   });
 
+  // DeepFlow Analysis
+  if (typeof DeepFlow !== 'undefined') {
+    try {
+      const df = DeepFlow.analyze(code, fileName);
+      df.issues.forEach(i => {
+        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
   // SmartContext Analysis
   if (typeof SmartContext !== 'undefined') {
     try {
