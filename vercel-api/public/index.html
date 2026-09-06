@@ -493,6 +493,13 @@ function fixAllEngine() {
         if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — تم الإصلاح تلقائياً');
     }
     let totalFixed = 0;
+
+    // Smart Repair — أولاً لأنه يفهم السياق
+    if (typeof SmartRepairEngine !== 'undefined') {
+        const sr = SmartRepairEngine.applySmartRepair(F, R);
+        if (sr.totalFixed > 0) totalFixed += sr.totalFixed;
+    }
+
     Object.keys(R).forEach(fn => {
         if (typeof repairCode !== 'function') return;
         for (let pass = 0; pass < 5; pass++) {
@@ -517,10 +524,6 @@ function fixAllEngine() {
         });
     }
     // Smart Repair — الخط الذكي
-    if (typeof SmartRepairEngine !== 'undefined') {
-        const sr = SmartRepairEngine.applySmartRepair(F, R);
-        if (sr.totalFixed > 0) totalFixed += sr.totalFixed;
-    }
     // Fallback — لو المحرك ما صلح كل شيء
     if (typeof applyFallbackToAll === 'function') {
         const fb = applyFallbackToAll(F, R);
