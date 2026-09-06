@@ -551,6 +551,18 @@ function fixAllEngine() {
             }
         });
     }
+    // طباعة إحصائيات التعلم في console
+    if (typeof LearningEngine !== 'undefined') {
+        const stats = LearningEngine.getStats();
+        if (stats.totalPatterns > 0) {
+            console.group('🧠 Reality Engine — Learning Stats');
+            console.log('Patterns:', stats.totalPatterns);
+            console.log('High confidence:', stats.highConfidence);
+            console.log('By type:', stats.byType);
+            console.table(stats.topPatterns);
+            console.groupEnd();
+        }
+    }
     toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
