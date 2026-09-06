@@ -178,16 +178,49 @@ function emergencyFix(code, fileName) {
       fixed = lines.join('\n');
     }
 
-    // db.query بدون params
-    fixed = fixed.replace(
-      /\.query\s*\((\w+)\s*,\s*function/g,
-      '.query($1, [/* params */], function'
-    );
+    // db.query بدون params - استخرج params من السياق
+    {
+      const dbLines = fixed.split('\n');
+      const sqlVarParams = new Map();
+      // استخرج params من SQL variables
+      dbLines.forEach((line, i) => {
+        if (/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(line) && /=\s*"/.test(line)) {
+          const varM = line.match(/(\w+)\s*=/);
+          if (varM) {
+            // عد عدد ? في الـ query
+            const qCount = (line.match(/\?/g) || []).length;
+            sqlVarParams.set(varM[1], qCount);
+          }
+        }
+      });
+      
+      dbLines.forEach((line, i) => {
+        if (/\.query\s*\(\w+\s*,\s*function/.test(line) && !/\[/.test(line)) {
+          const varM = line.match(/\.query\s*\((\w+)/);
+          const qVar = varM ? varM[1] : null;
+          const paramCount = qVar ? (sqlVarParams.get(qVar) || 0) : 0;
+          // ابحث عن params قبل db.query
+          const prevCode = dbLines.slice(Math.max(0,i-5), i).join('\n');
+          const vars = [];
+          prevCode.replace(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*req\.body/g, (_, fields) => {
+            fields.split(',').forEach(f => vars.push(f.trim()));
+          });
+          const paramsStr = vars.length > 0 ? vars.slice(0, paramCount).join(', ') : '/* params */';
+          dbLines[i] = line.replace(/\.query\s*\((\w+)\s*,\s*function/, `.query($1, [${paramsStr}], function`);
+        }
+      });
+      fixed = dbLines.join('\n');
+    }
 
     // XSS في res.send
     fixed = fixed.replace(
       /res\.send\s*\(([^)]*\+[^)]*)\)/g,
-      (m, inner) => `res.json({ message: ${inner.trim()} })`
+      (m, inner) => {
+        // استخرج المتغيرات وأضف escapeHtml
+        const escaped = inner.trim().replace(/(\w+)(?!\s*[+<>])/g, (v) => 
+          /^['"`]/.test(v) ? v : `escapeHtml(${v})`);
+        return `res.json({ message: ${escaped} })`;
+      }
     );
 
     // eval → JSON.parse أو comment
