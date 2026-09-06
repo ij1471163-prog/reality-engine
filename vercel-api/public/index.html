@@ -455,6 +455,7 @@ ${issues}
 - Hardcoded Secrets: استخدم process.env أو os.environ.get
 - XSS: استخدم textContent بدل innerHTML
 - TypeScript any: استخدم unknown أو type محدد
+- execFile/exec مع user input: أضف whitelist للأوامر المسموحة فقط
 - JWT: استخدم process.env.JWT_SECRET
 - None compare: استخدم is None بدل == None
 - Accumulation: استخدم += بدل = في loops
