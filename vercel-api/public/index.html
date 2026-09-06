@@ -723,7 +723,7 @@ function exportPDF() {
         else low++;
     }));
     const totalIssues = critical+high+medium+low;
-    const score = totalIssues===0 ? 100 : Math.max(0, Math.round(100-(critical*15+high*8+medium*4+low*1)));
+    const score = totalIssues===0 ? 100 : Math.max(0, Math.round(100 - Math.min(90, critical*10+high*5+medium*2+low*1)));
 
     // dedup
     const seen = new Set();
