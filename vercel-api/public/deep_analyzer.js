@@ -422,6 +422,65 @@ class ScopeAnalyzer {
 }
 
 // ═══════════════════════════════════════════════════════
+// 5. SQL FLOW ANALYZER — يتتبع SQL params
+// ═══════════════════════════════════════════════════════
+
+class SQLFlowAnalyzer {
+    constructor() {
+        this.queries = new Map(); // varName → {line, params}
+        this.issues = [];
+    }
+
+    analyze(code) {
+        const lines = code.split('\n');
+
+        lines.forEach((line, i) => {
+            const t = line.trim();
+            const ln = i + 1;
+            if (t.startsWith('//')) return;
+
+            // اكتشف: query = "SELECT..." + var1 + ... + var2
+            if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']/.test(t) && /\+\s*\w+/.test(t)) {
+                const varM = t.match(/(\w+)\s*=/);
+                const varName = varM ? varM[1] : 'query';
+
+                // استخرج الـ params
+                const params = [];
+                t.replace(/\+\s*(\w+)\b/g, (_, p) => {
+                    if (!/^(?:SELECT|INSERT|UPDATE|DELETE|WHERE|AND|OR|FROM|JOIN)$/i.test(p))
+                        params.push(p);
+                });
+
+                this.queries.set(varName, { line: ln, params });
+            }
+
+            // اكتشف: db.query(queryVar, callback) بدون params array
+            const dbM = t.match(/(?:db|conn|pool|client)\.query\s*\(\s*(\w+)\s*,\s*function/);
+            if (dbM) {
+                const queryVar = dbM[1];
+                if (this.queries.has(queryVar)) {
+                    const { params } = this.queries.get(queryVar);
+                    if (params.length > 0) {
+                        this.issues.push({
+                            type: 'sqlflow', sev: 'c', line: ln, ev: t,
+                            title: `🔴 SQL Flow: db.query ناقص params [${params.join(', ')}]`,
+                            fix: t.replace(
+                                /(?:db|conn|pool|client)\.query\s*\((\w+)\s*,\s*function/,
+                                `db.query($1, [${params.join(', ')}], function`
+                            ).trim(),
+                            conf: 88, cIcon: '🔴', cAct: 'SQL Injection — Missing Params',
+                            cEv: [`${queryVar} يحتوي concatenation مع: ${params.join(', ')}`]
+                        });
+                    }
+                }
+            }
+        });
+
+        return this.issues;
+    }
+}
+
+// ═══════════════════════════════════════════════════════
 // 5. MAIN DEEP ANALYZER — يجمع كل الأنظمة
 // ═══════════════════════════════════════════════════════
 
@@ -450,6 +509,11 @@ function deepAnalyze(code, fileName) {
         const sa = new ScopeAnalyzer();
         const saIssues = sa.analyze(code);
         issues.push(...saIssues);
+
+        // 5. SQL Flow
+        const sqf = new SQLFlowAnalyzer();
+        const sqfIssues = sqf.analyze(code);
+        issues.push(...sqfIssues);
 
     } catch(e) {
         console.warn('[DeepAnalyzer] Error:', e.message);
