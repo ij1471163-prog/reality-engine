@@ -72,6 +72,12 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/security_scanner.js"></script>
 <script src="/repair_engine.js"></script>
 <script src="/fallback_fixes.js"></script>
+<script src="/command_injection_fix.js"></script>
+<script src="/sql_injection_fix.js"></script>
+<script src="/jwt_fix.js"></script>
+<script src="/xss_fix.js"></script>
+<script src="/secrets_fix.js"></script>
+<script src="/fixers_orchestrator.js"></script>
 <script src="/emergency_fixes.js"></script>
 <script src="/crypto_scanner.js"></script>
 <script src="/code_intelligence.js"></script>
@@ -496,6 +502,11 @@ function fixAllEngine() {
     if (typeof applyFallbackToAll === 'function') {
         const fb = applyFallbackToAll(F, R);
         if (fb.totalFixed > 0) totalFixed += fb.totalFixed;
+    }
+    // Specialized Fixers — الخط الرابع
+    if (typeof applySpecializedFixers === 'function') {
+        const sf = applySpecializedFixers(F, R);
+        if (sf.totalFixed > 0) totalFixed += sf.totalFixed;
     }
     // Emergency fixes — الخط الثالث
     if (typeof applyEmergencyToAll === 'function') {
