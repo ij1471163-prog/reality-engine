@@ -467,11 +467,9 @@ ${F[fn]}
             const fixed  = result.match(/```(?:\w+)?\n([\s\S]*?)```/)?.[1]?.trim();
             if (!fixed) continue;
 
-            await new Promise(resolve => showDiff(fn, F[fn], fixed, () => {
-                F[fn] = fixed;
-                R[fn] = { code: fixed, issues: analyzeCode(fixed, fn) };
-                resolve();
-            }, resolve)); // ✅ resolve يُمرَّر للرفض أيضاً
+            // تطبيق مباشر بدون diff
+            F[fn] = fixed;
+            R[fn] = { code: fixed, issues: analyzeCode(fixed, fn) };
         }
         refreshStats();
         document.getElementById('btn-dl').style.display = 'inline-block';
