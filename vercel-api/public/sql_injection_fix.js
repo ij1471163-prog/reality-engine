@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════
 "use strict";
 
-const SQLInjectionFixer = (() => {
+var SQLInjectionFixer = (() => {
 
   function fixPython(code) {
     const lines = code.split('\n');

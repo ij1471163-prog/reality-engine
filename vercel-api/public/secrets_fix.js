@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════
 "use strict";
 
-const SecretsFixer = (() => {
+var SecretsFixer = (() => {
 
   const SECRET_PATTERN = /KEY|SECRET|TOKEN|PASSWORD|PASS|PWD|STRIPE|TWILIO|SENDGRID|AWS|GITHUB/i;
   const SQL_VARS = /\bquery\s*=|\bsql\s*=/i;

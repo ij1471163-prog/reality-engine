@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════
 "use strict";
 
-const JWTFixer = (() => {
+var JWTFixer = (() => {
 
   function fixJS(code) {
     let fixed = code;

@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════
 "use strict";
 
-const XSSFixer = (() => {
+var XSSFixer = (() => {
 
   function fixJS(code) {
     return code

@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════
 "use strict";
 
-const CommandInjectionFixer = (() => {
+var CommandInjectionFixer = (() => {
 
   const DANGEROUS = /\bos\.system\s*\(|\bsubprocess\.call\s*\(.*shell\s*=\s*True|\bsubprocess\.Popen\s*\(.*shell\s*=\s*True/;
   const PHP_DANGER = /\b(?:exec|system|passthru|shell_exec)\s*\(\s*.*\$_(GET|POST|REQUEST)/;
