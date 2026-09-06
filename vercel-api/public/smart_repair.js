@@ -131,14 +131,22 @@ var SmartRepairEngine = (() => {
         // يكتشف SQL + concatenation
         if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']/.test(t) && /\+\s*\w+/.test(t)) {
           const params = [];
-          const fixedLine = t.replace(/"([^"]*)"\s*\+\s*(\w+)/g, (_, q, p) => {
-            params.push(p); return `"${q}?"`;
+          const params2 = [];
+          t.replace(/\+\s*(\w+)\b/g, (_, p) => {
+            if (!/^(?:SELECT|INSERT|UPDATE|DELETE|WHERE|AND|OR|FROM|JOIN|SET)$/i.test(p)) params2.push(p);
           });
-          if (fixedLine !== t && params.length) {
-            const indent = ' '.repeat(line.search(/\S/));
-            lines[i] = indent + fixedLine;
-            repairs.push({ line: i + 1, fix: `JS SQL → parameterized [${params.join(', ')}]` });
-            changed = true;
+          if (params2.length) {
+            const varM2 = t.match(/(\w+)\s*=/);
+            const varName2 = varM2 ? varM2[1] : 'query';
+            const indent2 = ' '.repeat(line.search(/\S/));
+            const qM2 = t.match(/["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
+            if (qM2) {
+              let q2 = qM2[1].replace(/='\s*$/, '=?').replace(/'\s*$/, '').trim();
+              if (!q2.endsWith('?')) q2 += '?';
+              lines[i] = `${indent2}${varName2} = "${q2}";`;
+              repairs.push({ line: i + 1, fix: `JS SQL → parameterized [${params2.join(', ')}]` });
+              changed = true;
+            }
           }
         }
 
@@ -375,3 +383,4 @@ var SmartRepairEngine = (() => {
 
   return { repair, applySmartRepair };
 })();
+
