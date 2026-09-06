@@ -126,6 +126,7 @@ function fallbackFixSQL(code, ext) {
       if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(line)) continue;
       if (!/["'].*\+|\+.*["']/.test(line)) continue;
       if (/cursor|execute|prepare/.test(line)) continue;
+      if (/LIKE/i.test(line)) continue; // LIKE يتولاه emergency_fixes
 
       const varM = line.match(/(\w+)\s*=/);
       if (!varM) continue;

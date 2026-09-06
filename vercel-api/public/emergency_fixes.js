@@ -215,6 +215,37 @@ function emergencyFix(code, fileName) {
       if (fChanged) fixed = fLines.join('\n');
     }
 
+    // صلح LIKE '%?%' → LIKE ? مع ['%' + var + '%']
+    {
+      const likeFixLines = fixed.split('\n');
+      let likeFixed = false;
+      likeFixLines.forEach((line, i) => {
+        if (!/%\?%/.test(line) || !/LIKE/i.test(line)) return;
+        const varM = line.match(/(?:let|var|const)\s+(\w+)/);
+        if (!varM) return;
+        const indent = ' '.repeat(line.search(/\S/));
+        const likeQ = line.match(/"([^"]+)"/)?.[1] || '';
+        const cleanLike = likeQ.replace(/'%[?]%'/g, '?').replace(/%[?]%/g, '?').replace(/'[?]'/g, '?');
+        likeFixLines[i] = `${indent}let ${varM[1]} = "${cleanLike}";`;
+        // صلح db.query params
+        for (let j = i+1; j < Math.min(i+5, likeFixLines.length); j++) {
+          if (/\.query\s*\(/.test(likeFixLines[j])) {
+            likeFixLines[j] = likeFixLines[j].replace(
+              /\.query\s*\((\w+)\s*,\s*\[([^\]]+)\]\s*,\s*function/,
+              (m, q, params) => {
+                const vars = params.split(',').map(v => v.trim());
+                return `.query(${q}, ['%' + ${vars[0]} + '%'], function`;
+              }
+            );
+            break;
+          }
+        }
+        repairs.push({ fix: 'LIKE %?% → LIKE ?' });
+        likeFixed = true;
+      });
+      if (likeFixed) fixed = likeFixLines.join('\n');
+    }
+
     // أضف let لو ناقص في SQL variables
     fixed = fixed.replace(
       /^(\s*)(?<!(?:let|const|var)\s)(\w+)\s*=\s*("SELECT[^"]*");/gm,

@@ -129,7 +129,7 @@ var SmartRepairEngine = (() => {
       // ─── JS/TS ─────────────────────────────────────
       if (ctx.ext === 'js' || ctx.ext === 'ts') {
         // يكتشف SQL + concatenation
-        if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']/.test(t) && /\+\s*\w+/.test(t) && !/LIKE/i.test(t)) {
+        if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']/.test(t) && /\+\s*\w+/.test(t) && !/LIKE/i.test(t) && !/%\?%/.test(t)) {
           const params = [];
           const params2 = [];
           t.replace(/\+\s*(\w+)\b/g, (_, p) => {
