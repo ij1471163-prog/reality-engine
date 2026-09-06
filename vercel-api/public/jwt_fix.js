@@ -16,8 +16,14 @@ var JWTFixer = (() => {
     );
 
     // jwt.sign بـ hardcoded secret بدون expiry
+    // jwt.sign بـ hardcoded string secret
     fixed = fixed.replace(
-      /jwt\.sign\s*\(([^,]+),\s*["'][^"']+["']\s*\)/g,
+      /jwt\.sign\s*\((\{[^}]+\}|[^,]+),\s*["'][^"']+["']\s*\)/g,
+      "jwt.sign($1, process.env.JWT_SECRET, { expiresIn: '1h' })"
+    );
+    // jwt.sign بـ variable secret بدون quotes
+    fixed = fixed.replace(
+      /jwt\.sign\s*\((\{[^}]+\}|[^,]+),\s*(JWT_SECRET|jwtSecret|JWT_KEY|secret)\s*\)/g,
       "jwt.sign($1, process.env.JWT_SECRET, { expiresIn: '1h' })"
     );
 
