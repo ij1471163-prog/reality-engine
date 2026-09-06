@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>Admin</title>
+<style>
+body{background:#0d1117;color:#e6edf3;font-family:sans-serif;padding:20px;direction:rtl}
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin:10px 0}
+h1{color:#a371f7}
+</style>
+</head>
+<body>
+<h1>🧠 Reality Engine — Admin</h1>
+<div class="card" id="stats">جاري التحميل...</div>
+<button onclick="reset()" style="background:#f85149;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer">🗑️ Reset Learning</button>
+
+<script>
+// حماية بسيطة
+const pass = prompt('Password:');
+if (pass !== 'naif2024') { document.body.innerHTML = '❌'; }
+
+// تحميل stats من localStorage
+function loadStats() {
+    const data = localStorage.getItem('re_learned_patterns');
+    if (!data) { document.getElementById('stats').innerHTML = 'ما في تعلم بعد'; return; }
+    const db = JSON.parse(data);
+    document.getElementById('stats').innerHTML = `
+        <p>📊 Patterns: <b>${db.patterns.length}</b></p>
+        <p>✅ High confidence: <b>${db.patterns.filter(p=>p.confidence>=0.8).length}</b></p>
+        <hr>
+        ${db.patterns.map(p => `
+            <div style="margin:8px 0;padding:8px;background:#0d1117;border-radius:6px">
+                <b style="color:#a371f7">${p.type}</b> — 
+                confidence: <b style="color:#3fb950">${p.confidence?.toFixed(2)}</b> 
+                (${p.samples} samples)<br>
+                <small style="color:#8b949e">${p.example?.before?.slice(0,60)||''}</small>
+            </div>
+        `).join('')}
+    `;
+}
+
+function reset() {
+    if (confirm('تأكيد الحذف؟')) {
+        localStorage.removeItem('re_learned_patterns');
+        loadStats();
+    }
+}
+
+loadStats();
+</script>
+</body>
+</html>
