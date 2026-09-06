@@ -506,7 +506,25 @@ function analyzeCode(code, fileName) {
         });
     }
 
-                    return issues;
+        // Taint Analysis
+    const ext3 = fileName.split('.').pop().toLowerCase();
+    if ((ext3 === 'js' || ext3 === 'ts') && typeof analyzeTaintJS === 'function') {
+        analyzeTaintJS(code, fileName).forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+        });
+    }
+    if (ext3 === 'py' && typeof analyzeTaintPY === 'function') {
+        analyzeTaintPY(code, fileName).forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+        });
+    }
+    if (ext3 === 'php' && typeof analyzeTaintPHP === 'function') {
+        analyzeTaintPHP(code, fileName).forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+        });
+    }
+
+                return issues;
 }
 
 // ═══════════════════════════════════════════════════════
