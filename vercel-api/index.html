@@ -71,6 +71,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/secret_detector.js"></script>
 <script src="/security_scanner.js"></script>
 <script src="/repair_engine.js"></script>
+<script src="/fallback_fixes.js"></script>
 <script src="/crypto_scanner.js"></script>
 <script src="/code_intelligence.js"></script>
 <script src="/typescript_analyzer.js"></script>
@@ -490,6 +491,11 @@ function fixAllEngine() {
         }
         R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
     });
+    // Fallback — لو المحرك ما صلح كل شيء
+    if (typeof applyFallbackToAll === 'function') {
+        const fb = applyFallbackToAll(F, R);
+        if (fb.totalFixed > 0) totalFixed += fb.totalFixed;
+    }
     toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
