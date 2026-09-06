@@ -101,20 +101,20 @@ function extractImports(lines, ext) {
 }
 
 function extractExports(lines, ext) {
-  const exports = [];
+  const moduleExports = []; // ✅ بدل exports — يتعارض مع Node.js built-in
   lines.forEach((line, i) => {
     const t = line.trim();
     const m = t.match(/^export\s+(?:default\s+)?(?:function|class|const|let|var)?\s+(\w+)/);
-    if (m) exports.push({ name: m[1], line: i + 1 });
+    if (m) moduleExports.push({ name: m[1], line: i + 1 });
     const m2 = t.match(/module\.exports\s*=\s*\{([^}]+)\}/);
     if (m2) {
       m2[1].split(',').forEach(name => {
         const n = name.trim();
-        if (n) exports.push({ name: n, line: i + 1 });
+        if (n) moduleExports.push({ name: n, line: i + 1 });
       });
     }
   });
-  return exports;
+  return moduleExports;
 }
 
 function extractFunctions(lines, ext) {
@@ -306,12 +306,15 @@ function buildEvidenceChain(taintIssues, callGraph, fileInfo, framework, endpoin
 // 6. Context Pack Builder — للـ AI
 // ═══════════════════════════════════════════════════════
 
-function buildContextPack(code, fileName, taintIssues) {
-  const fileInfo  = parseFile(code, fileName);
-  const framework = detectFramework(code, fileName);
-  const endpoints = mapAPIEndpoints(code, framework);
-  const callGraph = buildCallGraph(fileInfo);
-  const evidence  = buildEvidenceChain(taintIssues || [], callGraph, fileInfo, framework, endpoints);
+// ✅ يقبل القيم المُحسبة مسبقاً — بدل إعادة parseFile
+function buildContextPack(code, fileName, taintIssues, fileInfo, framework, endpoints, callGraph) {
+  // لو استُدعيت مستقلة — احسب القيم
+  if (!fileInfo)  fileInfo  = parseFile(code, fileName);
+  if (!framework) framework = detectFramework(code, fileName);
+  if (!endpoints) endpoints = mapAPIEndpoints(code, framework);
+  if (!callGraph) callGraph = buildCallGraph(fileInfo);
+
+  const evidence = buildEvidenceChain(taintIssues || [], callGraph, fileInfo, framework, endpoints);
 
   const contextPack = {
     file:       fileName,
@@ -329,7 +332,10 @@ function buildContextPack(code, fileName, taintIssues) {
       name:   f.name,
       params: f.params,
       line:   f.line,
-      calls:  callGraph.get(f.name)?.calls || [],
+      // ✅ null safety على callGraph.get
+      calls:  callGraph instanceof Map
+        ? (callGraph.get(f.name)?.calls || [])
+        : (callGraph[f.name]?.calls || []),
     })),
     imports: fileInfo.imports,
     aiPromptHint: buildAIPrompt(evidence, framework, endpoints),
@@ -361,11 +367,12 @@ function buildAIPrompt(evidence, framework, endpoints) {
 // ═══════════════════════════════════════════════════════
 
 function analyzeProject(code, fileName, taintIssues) {
-  const fileInfo   = parseFile(code, fileName);
-  const framework  = detectFramework(code, fileName);
-  const endpoints  = mapAPIEndpoints(code, framework);
-  const callGraph  = buildCallGraph(fileInfo);
-  const contextPack = buildContextPack(code, fileName, taintIssues || []);
+  const fileInfo    = parseFile(code, fileName);
+  const framework   = detectFramework(code, fileName);
+  const endpoints   = mapAPIEndpoints(code, framework);
+  const callGraph   = buildCallGraph(fileInfo);
+  // ✅ مرر fileInfo مباشرة — بدل ما تُعاد الحسبة داخل buildContextPack
+  const contextPack = buildContextPack(code, fileName, taintIssues || [], fileInfo, framework, endpoints, callGraph);
 
   return {
     fileInfo,
@@ -419,21 +426,29 @@ function analyzeMultipleFiles(files) {
   // ─── 3. Cross-file Taint ─────────────────────────────
   if (typeof analyzeWithIntelligence === 'function') {
     files.forEach(file => {
-      const taint = analyzeWithIntelligence(file.code, file.name);
-      taint.taintIssues.forEach(issue => {
-        crossFileIssues.push({ ...issue, sourceFile: file.name });
-      });
+      try {
+        const taint = analyzeWithIntelligence(file.code, file.name);
+        // ✅ تحقق من وجود taintIssues قبل الاستخدام
+        const taintIssues = Array.isArray(taint?.taintIssues) ? taint.taintIssues : [];
+        taintIssues.forEach(issue => {
+          crossFileIssues.push({ ...issue, sourceFile: file.name });
+        });
+      } catch (e) {
+        // تجاهل أخطاء تحليل ملف واحد
+      }
     });
   }
 
   // ─── 4. Framework من أكثر ملف ────────────────────────
   const frameworks = fileResults.map(r => r.result.framework).filter(Boolean);
   const dominantFramework = frameworks.reduce((acc, fw) => {
-    if (!fw) return acc;
+    // ✅ تحقق من fw و fw.name قبل الاستخدام
+    if (!fw || !fw.name) return acc;
     acc[fw.name] = (acc[fw.name] || 0) + 1;
     return acc;
   }, {});
-  const topFramework = Object.entries(dominantFramework).sort((a,b) => b[1]-a[1])[0];
+  const topFrameworkEntry = Object.entries(dominantFramework).sort((a, b) => b[1] - a[1])[0];
+  const topFramework = topFrameworkEntry ? topFrameworkEntry[0] : null;
 
   // ─── 5. API Endpoints من كل الملفات ──────────────────
   const allEndpoints = [];
@@ -445,7 +460,7 @@ function analyzeMultipleFiles(files) {
 
   // ─── 6. Context Pack للـ AI ───────────────────────────
   const contextPack = {
-    framework:   topFramework ? topFramework[0] : 'Unknown',
+    framework:   topFramework || 'Unknown',
     files:       files.map(f => f.name),
     endpoints:   allEndpoints,
     crossFileIssues: crossFileIssues.slice(0, 10),
@@ -460,7 +475,7 @@ function analyzeMultipleFiles(files) {
 
   return {
     files:          fileResults.length,
-    framework:      topFramework ? topFramework[0] : 'Unknown',
+    framework:      topFramework || 'Unknown',
     totalEndpoints: allEndpoints.length,
     endpoints:      allEndpoints,
     crossFileIssues,
@@ -469,9 +484,10 @@ function analyzeMultipleFiles(files) {
     summary: {
       filesAnalyzed:  files.length,
       totalIssues:    crossFileIssues.length,
-      critical:       crossFileIssues.filter(i => i.sev === 'c').length,
+      // ✅ توحيد severity field — سواء sev أو severity
+      critical:       crossFileIssues.filter(i => i.sev === 'c' || i.severity === 'CRITICAL').length,
       endpoints:      allEndpoints.length,
-      framework:      topFramework ? topFramework[0] : 'Unknown',
+      framework:      topFramework || 'Unknown',
     },
   };
 }
@@ -503,3 +519,4 @@ function buildProjectGraph(fileResults, importMap) {
 
   return { nodes: graph, edges };
 }
+
