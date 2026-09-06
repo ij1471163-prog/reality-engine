@@ -110,7 +110,30 @@ function emergencyFix(code, fileName) {
 
   if (ext === 'js' || ext === 'ts') {
 
-    // SQL في JS/TS
+    // صلح SQL string مكسور: "SELECT...?" + "' AND..."
+    {
+      const fLines = fixed.split('\n');
+      let fChanged = false;
+      fLines.forEach((line, i) => {
+        if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(line)) return;
+        if (!line.includes('?') || !line.includes('" +')) return;
+        const varM2 = line.match(/(\w+)\s*=/);
+        if (!varM2) return;
+        const indent2 = ' '.repeat(line.search(/\S/));
+        const parts2 = line.match(/"([^"]*)"/g);
+        if (parts2 && parts2.length > 1) {
+          const joined2 = parts2.map(p => p.slice(1,-1)).join('');
+          if (/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(joined2)) {
+            fLines[i] = `${indent2}${varM2[1]} = "${joined2}";`;
+            repairs.push({ fix: 'SQL fragments → clean' });
+            fChanged = true;
+          }
+        }
+      });
+      if (fChanged) fixed = fLines.join('\n');
+    }
+
+        // SQL في JS/TS
     if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']\s*\+/.test(fixed)) {
       const lines = fixed.split('\n');
       lines.forEach((line, i) => {
@@ -257,3 +280,4 @@ function applyEmergencyToAll(F, R) {
 
   return { totalFixed, results };
 }
+
