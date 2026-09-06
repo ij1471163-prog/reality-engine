@@ -465,6 +465,10 @@ function emergencyFix(code, fileName) {
     );
   }
 
+  // cleanup نهائي - LIKE '%?%' → LIKE ?
+  fixed = fixed.replace(/"([^"]*LIKE\s*)'%\?%'([^"]*)"/g, '"$1?$2"');
+  fixed = fixed.replace(/"([^"]*LIKE\s*)%\?%([^"]*)"/g, '"$1?$2"');
+
   return { fixed, repairs };
 }
 
