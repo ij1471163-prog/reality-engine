@@ -96,9 +96,8 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
   }
 
   if (line.trim().startsWith('//') || line.trim().startsWith('#')) return null;
-  lines[ln] = (ext === 'py' ? '# ' : '// ') + 'SECURITY: SQL Injection — use parameterized queries\n' +
-              (ext === 'py' ? '# ' : '// ') + line.trim();
-  return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — use parameterized queries' };
+  // لا تعلّق الكود — اترك للمطور
+  return null;
 }
 
 // ─── eval() ───────────────────────────────────────────
@@ -117,11 +116,11 @@ function fixEval(code, issue) {
   const arg = argMatch ? argMatch[1] : 'data';
 
   if (ext === 'js' || ext === 'ts') {
-    // استبدل eval بـ JSON.parse لو كان JSON
     if (/json|data|response|result/i.test(arg)) {
       lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
     } else {
-      lines[ln] = line.replace(/eval\s*\([^)]+\)/, `new Function('return ' + ${arg})()`);
+      // eval على user input خطير — احذفه واترك تحذير
+      lines[ln] = `${indent}// SECURITY: eval() is dangerous — removed. Validate ${arg} before use`;
     }
   } else if (ext === 'py') {
     // استبدل eval بـ ast.literal_eval
