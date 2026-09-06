@@ -4,6 +4,13 @@
 // ═══════════════════════════════════════════════════════
 
 const STRATEGIES = {
+  SQL_INJECTION:    { fn: (code, issue, lines, ext, fn) => typeof SQLInjectionFixer !== 'undefined' ? SQLInjectionFixer.fix(code, fn) : null, autoFix: true, confidence: 0.85 },
+  CMD_INJECTION:    { fn: (code, issue, lines, ext, fn) => typeof CommandInjectionFixer !== 'undefined' ? CommandInjectionFixer.fix(code, fn) : null, autoFix: true, confidence: 0.85 },
+  CMD_INJECTION_PY: { fn: (code, issue, lines, ext, fn) => typeof CommandInjectionFixer !== 'undefined' ? CommandInjectionFixer.fix(code, fn) : null, autoFix: true, confidence: 0.85 },
+  XSS_INNER_HTML:   { fn: (code, issue, lines, ext, fn) => typeof XSSFixer !== 'undefined' ? XSSFixer.fix(code, fn) : null, autoFix: true, confidence: 0.95 },
+  HARDCODED_SECRET: { fn: (code, issue, lines, ext, fn) => typeof SecretsFixer !== 'undefined' ? SecretsFixer.fix(code, fn) : null, autoFix: true, confidence: 0.85 },
+  HARDCODED_PASS:   { fn: (code, issue, lines, ext, fn) => typeof SecretsFixer !== 'undefined' ? SecretsFixer.fix(code, fn) : null, autoFix: true, confidence: 0.82 },
+  API_KEY:          { fn: (code, issue, lines, ext, fn) => typeof SecretsFixer !== 'undefined' ? SecretsFixer.fix(code, fn) : null, autoFix: true, confidence: 0.90 },
   HTTP_USAGE:       { fn: fixHTTP,              autoFix: true,  confidence: 0.98 },
   VAR_USAGE:        { fn: fixVar,               autoFix: true,  confidence: 0.95 },
   LOOSE_EQUALITY:   { fn: fixEquality,          autoFix: true,  confidence: 0.90 },
