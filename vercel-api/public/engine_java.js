@@ -185,5 +185,14 @@ function analyzeJava(code, fileName) {
     } catch(e) {}
   }
 
-  return issues;
+  // dedup — نفس السطر ونفس النوع
+  const seen = new Set();
+  const deduped = issues.filter(issue => {
+    const key = (issue.line||0) + ':' + (issue.type||'') + ':' + (issue.title||'').substring(0,25);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return deduped;
 }
