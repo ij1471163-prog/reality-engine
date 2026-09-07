@@ -332,6 +332,14 @@ function replaceLineInCode(code, lineNum, newLine) {
 // ─── Main repairCode ──────────────────────────────────
 
 function repairCode(code, issues, fileName) {
+  // LearnedFixer — يطبق ما تعلمه المحرك
+  if (typeof LearnedFixer !== 'undefined') {
+    try {
+      const lf = LearnedFixer.smartApply(code, fileName);
+      if (lf.applied > 0) code = lf.code;
+    } catch(e) {}
+  }
+
   // BabelRepair — إصلاح ذكي بـ AST أولاً
   if (typeof BabelRepair !== 'undefined') {
     try {
