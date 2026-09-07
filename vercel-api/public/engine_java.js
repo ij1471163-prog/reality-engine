@@ -173,6 +173,25 @@ function analyzeJava(code, fileName) {
     iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
   });
 
+  // UnifiedEngine — يجمع كل الـ layers
+  if (typeof UnifiedEngine !== 'undefined') {
+    try {
+      const ue = UnifiedEngine.analyze(code, fileName);
+      // دعم async و sync
+      if (ue && typeof ue.then === 'function') {
+        ue.then(r => {
+          r.issues.forEach(i => {
+            if (!issues.some(x => x.line===i.line && x.type===i.type)) issues.push(i);
+          });
+        }).catch(() => {});
+      } else if (ue && ue.issues) {
+        ue.issues.forEach(i => {
+          if (!issues.some(x => x.line===i.line && x.type===i.type)) issues.push(i);
+        });
+      }
+    } catch(e) {}
+  }
+
   // DeepFlow Analysis
   if (typeof DeepFlow !== 'undefined') {
     try {
