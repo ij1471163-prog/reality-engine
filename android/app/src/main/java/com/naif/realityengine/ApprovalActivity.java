@@ -106,6 +106,7 @@ public class ApprovalActivity extends AppCompatActivity {
 
     // ── Show current stub ─────────────────────────────────
     private void showCurrent() {
+        try {
         if (currentIndex >= stubs.size()) {
             saveFiles();
             return;
@@ -128,6 +129,9 @@ public class ApprovalActivity extends AppCompatActivity {
         } else {
             tvAfter.setTextColor(0xFF3FB950);
             btnApprove.setEnabled(true);
+        }
+        } catch (Exception e) {
+            showError("خطأ: " + e.getMessage());
         }
     }
 
