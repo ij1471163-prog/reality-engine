@@ -874,7 +874,7 @@ window.addEventListener('load', () => {
     const isApp = ua.includes('RealityEngine') || ua.includes('reality-engine');
     const isDev = location.hostname === 'localhost' || location.search.includes('dev=1');
     if (!isApp && !isDev) {
-        document.body.innerHTML = `
+        const _msg = `
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif;padding:24px;text-align:center">
               <div style="font-size:48px;margin-bottom:16px">⚡</div>
               <div style="font-size:24px;font-weight:700;color:#a371f7;margin-bottom:8px">Reality Engine</div>
@@ -889,6 +889,7 @@ window.addEventListener('load', () => {
               </div>
               <div style="color:#30363d;font-size:12px">Reality Engine v2.0</div>
             </div>`;
+        document.open(); document.write(_msg); document.close();
     }
 });
 </script>
