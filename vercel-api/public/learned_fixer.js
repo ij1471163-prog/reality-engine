@@ -29,8 +29,12 @@ var LearnedFixer = (() => {
     // secret: const X = "value" → const X = process.env.X
     secret: {
       detect: /(?:const|let|var)\s+(\w+)\s*=\s*["'][^"']{6,}["']/,
-      fix: (line, m) => line.replace(/=\s*["'][^"']+["']/, `= process.env.${m[1]}`),
-      validate: (before, after) => after.includes('process.env'),
+      fix: (line, m) => {
+        // تحقق إن المتغير secret حقيقي
+        if (!/KEY|SECRET|TOKEN|PASSWORD|PASS|API/i.test(m[1])) return line;
+        return line.replace(/=\s*["'][^"']+["']/, `= process.env.${m[1]}`);
+      },
+      validate: (before, after) => after.includes('process.env') && before !== after,
     },
 
     // crypto: md5/sha1 → sha256
