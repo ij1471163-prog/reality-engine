@@ -893,5 +893,20 @@ if (!localStorage.getItem('re_welcomed')) {
 }
 </script>
 <script src="/learned_fixer.js"></script>
+
+<script>
+window.addEventListener('load', function() {
+  var ua = navigator.userAgent || '';
+  var isApp = ua.includes('RealityEngine') || ua.includes('reality-engine');
+  var isDev = location.hostname === 'localhost' || location.search.includes('dev=1');
+  if (!isApp && !isDev) {
+    document.body.style.display = 'none';
+    var div = document.createElement('div');
+    div.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#0d1117;color:#e6edf3;font-family:Arial;text-align:center;padding:24px';
+    div.innerHTML = '<div style="font-size:48px">⚡</div><div style="font-size:24px;color:#a371f7;margin:16px 0">Reality Engine</div><div style="color:#8b949e;margin-bottom:24px">محلل المشاريع البرمجية الذكي</div><div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:360px">🔒 هذا الموقع مخصص لمستخدمي التطبيق<br><br><a href="https://play.google.com/store/apps/details?id=com.naif.realityengine" style="display:block;background:#6e40c9;color:#fff;padding:14px;border-radius:8px;text-decoration:none;margin-top:16px">📱 تحميل التطبيق</a></div>';
+    document.body.parentNode.replaceChild(div, document.body);
+  }
+});
+</script>
 </body>
 </html>
