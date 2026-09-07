@@ -54,6 +54,7 @@ public class AIEngine {
     private static final String MODEL = "gemini-3.6-flash";
 
     private static final String PROXY_URL = "https://reality-engine-api-livid.vercel.app/api/chat";
+    private static final String ANALYZE_URL = "https://reality-engine-api-livid.vercel.app/api/analyze";
     private static String API_URL = PROXY_URL;
 
     private static final int MAX_TOKENS = 8000;
@@ -208,6 +209,43 @@ public class AIEngine {
     // ═══════════════════════════════════════════════════════════
     // الواجهة القديمة المتوافقة
     // ═══════════════════════════════════════════════════════════
+    // ── Full Engine Analysis via API ─────────────────
+    public static void analyzeWithEngine(String code, String fileName, Callback callback) {
+        new Thread(() -> {
+            try {
+                org.json.JSONObject body = new org.json.JSONObject();
+                body.put("code", code);
+                body.put("fileName", fileName);
+                body.put("fix", false);
+
+                java.net.URL url = new java.net.URL(ANALYZE_URL);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
+
+                try (java.io.OutputStream os = conn.getOutputStream()) {
+                    os.write(body.toString().getBytes("UTF-8"));
+                }
+
+                int code2 = conn.getResponseCode();
+                java.io.InputStream is = code2 == 200 ? conn.getInputStream() : conn.getErrorStream();
+                java.util.Scanner sc = new java.util.Scanner(is).useDelimiter("\A");
+                String response = sc.hasNext() ? sc.next() : "";
+
+                if (code2 == 200) {
+                    callback.onSuccess(response);
+                } else {
+                    callback.onError("API Error: " + code2);
+                }
+            } catch (Exception e) {
+                callback.onError(e.getMessage());
+            }
+        }).start();
+    }
+
     public static void analyze(String code, String fileName, Callback callback) {
         StubDetector.StubResult result = StubDetector.detect(code);
         List<StubDetector.Candidate> candidates = StubDetector.toCandidates(code, result);
