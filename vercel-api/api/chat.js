@@ -1,12 +1,7 @@
 const chatLimits = new Map();
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
-  const prompt = (req.body?.prompt || req.body?.message || '').toLowerCase();
-  const BLOCKED = ['كيف استغل','كيف اخترق','attack exploit','steal data','سرقة بيانات','اختراق موقع'];
-  if (BLOCKED.some(w => prompt.includes(w))) {
-    return res.status(200).json({ result: '❌ Reality Engine مخصص لإصلاح الكود فقط.' });
-  }
 
   const auth = req.headers['authorization'] || '';
   const token = auth.replace('Bearer ', '').trim();
