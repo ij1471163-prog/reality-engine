@@ -8,11 +8,11 @@ const BLOCKED = [
 ];
 
 export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).end();
   const prompt = (req.body?.prompt || req.body?.message || '').toLowerCase();
   if (BLOCKED.some(w => prompt.includes(w.toLowerCase()))) {
     return res.status(200).json({ result: '❌ Reality Engine مخصص لإصلاح الكود فقط — ليس للهجوم.' });
   }
-  if (req.method !== 'POST') return res.status(405).end();
 
   const auth = req.headers['authorization'] || '';
   const token = auth.replace('Bearer ', '').trim();
