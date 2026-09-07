@@ -865,33 +865,7 @@ function toast(msg, t = 's') {
     _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3000);
 }
 
-// ═══════════════════════════════════════════════════════
-// Access Guard
-// ═══════════════════════════════════════════════════════
 
-window.addEventListener('load', () => {
-    const ua    = navigator.userAgent || '';
-    const isApp = ua.includes('RealityEngine') || ua.includes('reality-engine');
-    const isDev = location.hostname === 'localhost' || location.search.includes('dev=1');
-    if (!isApp && !isDev) {
-        const _msg = `
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif;padding:24px;text-align:center">
-              <div style="font-size:48px;margin-bottom:16px">⚡</div>
-              <div style="font-size:24px;font-weight:700;color:#a371f7;margin-bottom:8px">Reality Engine</div>
-              <div style="color:#8b949e;font-size:15px;margin-bottom:32px">محلل المشاريع البرمجية الذكي</div>
-              <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:360px;width:100%;margin-bottom:24px">
-                <div style="font-size:15px;margin-bottom:16px">🔒 هذا الموقع مخصص لمستخدمي التطبيق</div>
-                <div style="color:#8b949e;font-size:13px;margin-bottom:20px">حمّل التطبيق للوصول لجميع الميزات</div>
-                <a href="https://play.google.com/store/apps/details?id=com.naif.realityengine"
-                   style="display:block;background:#6e40c9;color:#fff;padding:14px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
-                  📱 تحميل التطبيق
-                </a>
-              </div>
-              <div style="color:#30363d;font-size:12px">Reality Engine v2.0</div>
-            </div>`;
-        document.open(); document.write(_msg); document.close();
-    }
-});
 </script>
 
 <!-- Welcome Modal -->
