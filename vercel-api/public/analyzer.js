@@ -575,6 +575,18 @@ function analyzeCode(code, fileName) {
     } catch(e) {}
   }
 
+  // ExtendedPatterns Analysis
+  if (typeof ExtendedPatterns !== 'undefined') {
+    try {
+      const ep = ExtendedPatterns.analyze(code, fileName);
+      ep.forEach(i => {
+        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
   // CVEPatterns Analysis
   if (typeof CVEPatterns !== 'undefined') {
     try {
