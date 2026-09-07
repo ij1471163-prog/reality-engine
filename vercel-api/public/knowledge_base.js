@@ -61,6 +61,8 @@ var KnowledgeBase = (() => {
       { lang: 'js', pattern: /res\.send\s*\(\s*['"`].*\+\s*\w+/i, conf: 0.90 },
       { lang: 'js', pattern: /res\.send\s*\(\s*\w+\s*\)/i, conf: 0.85 },
       { lang: 'js', pattern: /insertAdjacentHTML\s*\(/i, conf: 0.88 },
+      { lang: 'js', pattern: /\.innerHTML\s*=\s*['"`].*<script/i, conf: 0.99 },
+      { lang: 'js', pattern: /document\.innerHTML\s*=/i, conf: 0.95 },
       { lang: 'js', pattern: /eval\s*\(\s*\w+/i, conf: 0.95 },
       { lang: 'js', pattern: /setTimeout\s*\(\s*\w+/i, conf: 0.80 },
       { lang: 'js', pattern: /setInterval\s*\(\s*\w+/i, conf: 0.80 },
@@ -129,6 +131,15 @@ var KnowledgeBase = (() => {
       { lang: 'php',  pattern: /exec\s*\(\s*\$_(GET|POST)/i, conf: 0.95 },
       { lang: 'php',  pattern: /system\s*\(\s*\$_(GET|POST)/i, conf: 0.95 },
       { lang: 'php',  pattern: /shell_exec\s*\(\s*\$\w+/i, conf: 0.90 },
+      // Keylogger
+      { lang: 'js', pattern: /onkeypress\s*=.*fetch\s*\(/i, conf: 0.95 },
+      { lang: 'js', pattern: /onkeydown\s*=.*fetch\s*\(/i, conf: 0.95 },
+      // Data exfiltration
+      { lang: 'js', pattern: /fetch\s*\(\s*['"]http.*\+.*cookie/i, conf: 0.95 },
+      { lang: 'js', pattern: /document\.cookie.*fetch/i, conf: 0.95 },
+      // Dangerous commands
+      { lang: 'js', pattern: /exec\s*\(\s*['"]rm\s+-rf/i, conf: 0.99 },
+      { lang: 'js', pattern: /exec\s*\(\s*['"]format/i, conf: 0.99 },
       { lang: 'java', pattern: /Runtime\.exec\s*\(\s*\w+\s*\+/i, conf: 0.95 },
     ],
     safe: [
