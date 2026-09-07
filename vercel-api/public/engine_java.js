@@ -173,6 +173,18 @@ function analyzeJava(code, fileName) {
     iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
   });
 
+  // KnowledgeBase Analysis
+  if (typeof KnowledgeBase !== 'undefined') {
+    try {
+      const kb = KnowledgeBase.analyze(code, fileName);
+      kb.forEach(i => {
+        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
   // UnifiedEngine — يجمع كل الـ layers
   if (typeof UnifiedEngine !== 'undefined') {
     try {
