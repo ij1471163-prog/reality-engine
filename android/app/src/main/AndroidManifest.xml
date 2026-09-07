@@ -46,6 +46,7 @@
         <activity android:name=".GitHubScanActivity" android:theme="@style/Theme.AppCompat.NoActionBar"/>
         <activity android:name=".WebViewActivity" android:theme="@style/Theme.AppCompat.NoActionBar"/>
         <activity android:name=".SubscriptionActivity" android:theme="@style/Theme.AppCompat.NoActionBar"/>
+            <activity android:name=".WebEngineActivity" android:theme="@style/Theme.RealityEngine"/>
     </application>
 
 </manifest>

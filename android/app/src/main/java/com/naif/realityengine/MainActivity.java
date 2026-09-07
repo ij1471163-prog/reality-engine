@@ -318,8 +318,27 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void openAnalysis(Uri uri) {
-        Intent intent = new Intent(this, AnalysisActivity.class);
-        intent.setData(uri);
-        startActivity(intent);
+        try {
+            // قرأ الكود
+            java.io.InputStream is = getContentResolver().openInputStream(uri);
+            java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(is));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line).append("\n");
+            br.close();
+            String code = sb.toString();
+            String fileName = uri.getLastPathSegment();
+            if (fileName == null) fileName = "code.js";
+            // افتح WebEngineActivity
+            Intent intent = new Intent(this, WebEngineActivity.class);
+            intent.putExtra("code", code);
+            intent.putExtra("fileName", fileName);
+            startActivity(intent);
+        } catch (Exception e) {
+            // fallback للقديم
+            Intent intent = new Intent(this, AnalysisActivity.class);
+            intent.setData(uri);
+            startActivity(intent);
+        }
     }
 }
