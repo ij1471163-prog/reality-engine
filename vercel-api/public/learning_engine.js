@@ -74,8 +74,27 @@ var LearningEngine = (() => {
   // ─── Pattern Generalizer ──────────────────────────
   function generalizePattern(line, type) {
     let g = line;
+    const t = (type || '').toLowerCase();
+
+    // تعميم عام لكل اللغات
+    g = g
+      .replace(/["'][^"']{8,}["']/g, '"SECRET_VALUE"')  // hardcoded strings
+      .replace(/\d{4,}/g, 'NUMBER')                  // أرقام كبيرة
+      .replace(/0x[0-9a-fA-F]+/g, 'HEX');                // hex values
 
     switch(type) {
+      // Python
+      case 'sql_injection':
+      case 'SQL_INJECTION':
+        if (g.includes('cursor') || g.includes('execute')) {
+          g = g.replace(/\w+(?=\s*=\s*["'].*SELECT)/i, 'QUERY_VAR')
+               .replace(/execute\s*\([^)]+\)/, 'execute(QUERY)');
+        }
+        break;
+      case 'CMD_INJECTION':
+        g = g.replace(/os\.system\s*\([^)]+\)/, 'os.system(CMD)')
+             .replace(/subprocess\.\w+\s*\([^)]+shell=True[^)]*\)/, 'subprocess.call(CMD, shell=True)');
+        break;
       case PATTERN_TYPES.SQL_INJECTION:
       case 'SQL_INJECTION':
       case 'sql':
