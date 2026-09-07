@@ -338,8 +338,51 @@ var LearningEngine = (() => {
     return boosts;
   }
 
+  // ─── Learn Safe Patterns ───────────────────────────
+  function learnSafe(code, fileName) {
+    const db = loadPatterns();
+    const lines = code.split('\n');
+    const SAFE_PATTERNS = [
+      { regex: /\.query\s*\([^,]+,\s*\[/, type: 'SQL_SAFE', label: 'parameterized SQL' },
+      { regex: /bcrypt|argon2|scrypt/, type: 'HASH_SAFE', label: 'secure hash' },
+      { regex: /process\.env\.\w+/, type: 'ENV_SAFE', label: 'environment variable' },
+      { regex: /\.textContent\s*=/, type: 'XSS_SAFE', label: 'safe output' },
+      { regex: /htmlspecialchars|DOMPurify/, type: 'XSS_SAFE', label: 'sanitized output' },
+    ];
+
+    let learned = 0;
+    lines.forEach((line, i) => {
+      const t = line.trim();
+      if (!t || t.startsWith('//')) return;
+
+      SAFE_PATTERNS.forEach(({ regex, type, label }) => {
+        if (!regex.test(t)) return;
+        const key = type + ':' + t.substring(0, 40);
+        const existing = db.patterns.find(p => p.type === type && p.pattern === t.substring(0, 80));
+        if (existing) {
+          existing.samples++;
+          existing.confidence = Math.min(0.99, existing.successes / existing.samples);
+        } else {
+          db.patterns.push({
+            type, pattern: t.substring(0, 80),
+            fix: '// safe pattern: ' + label,
+            example: { before: t, after: t },
+            confidence: 0.5, samples: 1, successes: 1, failures: 0,
+            isSafe: true,
+            created: Date.now(), lastUsed: Date.now(),
+          });
+          learned++;
+        }
+      });
+    });
+
+    if (learned > 0) savePatterns(db);
+    return learned;
+  }
+
   return {
     learn,
+    learnSafe,
     applyLearned,
     markResult,
     getStats,
