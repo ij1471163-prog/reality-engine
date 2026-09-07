@@ -563,7 +563,32 @@ function analyzeCode(code, fileName) {
         });
     }
 
-                return issues;
+                // CVEPatterns Analysis
+  if (typeof CVEPatterns !== 'undefined') {
+    try {
+      const cve = CVEPatterns.analyze(code, fileName);
+      cve.forEach(i => {
+        const key = `${i.line}:${i.cwe||i.type}`;
+        if (!issues.some(x => `${x.line}:${x.cwe||x.type}` === key)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
+  // KnowledgeBase Analysis
+  if (typeof KnowledgeBase !== 'undefined') {
+    try {
+      const kb = KnowledgeBase.analyze(code, fileName);
+      kb.forEach(i => {
+        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
+  return issues;
 }
 
 // ═══════════════════════════════════════════════════════
