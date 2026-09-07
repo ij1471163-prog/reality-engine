@@ -178,7 +178,8 @@ function analyzeJava(code, fileName) {
     try {
       const cve = CVEPatterns.analyze(code, fileName);
       cve.forEach(i => {
-        if (!issues.some(x => x.line === i.line && x.cwe === i.cwe)) {
+        const key = `${i.line}:${i.cwe||i.type}`;
+        if (!issues.some(x => `${x.line}:${x.cwe||x.type}` === key)) {
           issues.push(i);
         }
       });
@@ -260,7 +261,7 @@ function analyzeJava(code, fileName) {
   const seen = new Set();
   const deduped = issues.filter(issue => {
     // dedup بـ line + نوع الثغرة الرئيسي
-    const mainType = (issue.type||issue.cAct||'').toLowerCase()
+    const mainType = (issue.cwe || issue.type || issue.cAct || '').toLowerCase()
       .replace(/sql.*/,'sql').replace(/xss.*/,'xss').replace(/jwt.*/,'jwt')
       .replace(/secret.*/,'secret').replace(/cmd.*/,'cmd').replace(/code.*/,'code');
     const key = (issue.line||0) + ':' + mainType;
