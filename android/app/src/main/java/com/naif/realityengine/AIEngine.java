@@ -236,7 +236,7 @@ public class AIEngine {
                 String response = sc.hasNext() ? sc.next() : "";
 
                 if (code2 == 200) {
-                    callback.onSuccess(response);
+                    callback.onResult(response);
                 } else {
                     callback.onError("API Error: " + code2);
                 }
