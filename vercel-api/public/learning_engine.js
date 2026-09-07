@@ -48,13 +48,14 @@ var LearningEngine = (() => {
     const beforeLine = lines_before[line]?.trim() || '';
     const afterLine  = lines_after[line]?.trim()  || beforeLine;
 
-    if (!beforeLine || beforeLine === afterLine) return null;
+    if (!beforeLine) return null;
+    const noFix = beforeLine === afterLine;
 
     // استخرج الـ pattern العام
     const pattern = generalizePattern(beforeLine, issue.type);
-    const fix     = generalizePattern(afterLine,  issue.type);
+    const fix = noFix ? '// known issue: ' + issue.type : generalizePattern(afterLine, issue.type);
 
-    if (!pattern || !fix) return null;
+    if (!pattern) return null;
 
     return {
       type:       issue.type || issue.cAct || 'unknown',
