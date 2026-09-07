@@ -232,7 +232,7 @@ public class AIEngine {
 
                 int code2 = conn.getResponseCode();
                 java.io.InputStream is = code2 == 200 ? conn.getInputStream() : conn.getErrorStream();
-                java.util.Scanner sc = new java.util.Scanner(is).useDelimiter("\A");
+                java.util.Scanner sc = new java.util.Scanner(is).useDelimiter("\\A");
                 String response = sc.hasNext() ? sc.next() : "";
 
                 if (code2 == 200) {
