@@ -563,7 +563,19 @@ function analyzeCode(code, fileName) {
         });
     }
 
-                // CVEPatterns Analysis
+                // DeepAnalyzer - Call Graph + Type Inference + SQL Flow
+  if (typeof deepAnalyze !== 'undefined') {
+    try {
+      const deep = deepAnalyze(code, fileName);
+      deep.forEach(i => {
+        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
+  // CVEPatterns Analysis
   if (typeof CVEPatterns !== 'undefined') {
     try {
       const cve = CVEPatterns.analyze(code, fileName);
