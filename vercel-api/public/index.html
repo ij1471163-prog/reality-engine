@@ -545,6 +545,17 @@ function fixAllEngine() {
         const em = applyEmergencyToAll(F, R);
         if (em.totalFixed > 0) totalFixed += em.totalFixed;
     }
+    // learnSafe — يتعلم من الكود الآمن
+    if (typeof LearningEngine !== 'undefined') {
+        Object.keys(F).forEach(fn => {
+            const issues = R[fn]?.issues || [];
+            if (issues.length === 0) {
+                // كود نظيف → يتعلم منه
+                LearningEngine.learnSafe(F[fn], fn);
+            }
+        });
+    }
+
     // Learning — يتعلم من الإصلاحات
     if (typeof LearningEngine !== 'undefined') {
         Object.keys(F).forEach(fn => {
