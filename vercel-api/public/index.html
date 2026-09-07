@@ -548,10 +548,19 @@ function fixAllEngine() {
     // Learning — يتعلم من الإصلاحات
     if (typeof LearningEngine !== 'undefined') {
         Object.keys(F).forEach(fn => {
-            // يتعلم لو الكود تغير
-            if (origF[fn] && origF[fn] !== F[fn]) {
-                const origIssues = analyzeCode(origF[fn], fn);
-                LearningEngine.learn(origF[fn], F[fn], origIssues, fn);
+            // يتعلم من الكود قبل وبعد
+            const orig = origF[fn] || F[fn];
+            const fixed = F[fn];
+            if (orig !== fixed) {
+                const origIssues = analyzeCode(orig, fn);
+                LearningEngine.learn(orig, fixed, origIssues, fn);
+            }
+            // يتعلم من الكود الأصلي حتى لو ما تغير
+            else {
+                const issues = analyzeCode(orig, fn);
+                if (issues.length > 0) {
+                    LearningEngine.learn(orig, orig, issues, fn);
+                }
             }
         });
     }
