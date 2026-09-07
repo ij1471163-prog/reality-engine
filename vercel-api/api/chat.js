@@ -1,6 +1,6 @@
 const chatLimits = new Map();
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
   const prompt = (req.body?.prompt || req.body?.message || '').toLowerCase();
   const BLOCKED = ['كيف استغل','كيف اخترق','attack exploit','steal data','سرقة بيانات','اختراق موقع'];
