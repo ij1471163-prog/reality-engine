@@ -156,7 +156,7 @@ var LearningEngine = (() => {
   // ─── Learn from Fix ───────────────────────────────
   // يتعلم من كل إصلاح
   function learn(codeBefore, codeAfter, issues, fileName) {
-    if (!codeBefore || !codeAfter || codeBefore === codeAfter) return;
+    if (!codeBefore || !codeAfter || codeBefore === codeAfter) {} // no early return
 
     const db = loadPatterns();
     let learned = 0;
@@ -165,6 +165,42 @@ var LearningEngine = (() => {
     const NEVER_LEARN_TYPES = ['eval', 'exec', 'CODE_INJECTION', 'CMD_INJECTION'];
     issues.forEach(issue => {
       if (NEVER_LEARN_TYPES.some(t => (issue.type||'').includes(t))) return;
+
+      // تعلم من الـ issue مباشرة لو before = after
+      if (codeBefore === codeAfter) {
+        const lines = codeBefore.split('\n');
+        const issueLine = (lines[issue.line - 1] || '').trim();
+        if (!issueLine) return;
+        const pattern = generalizePattern(issueLine, issue.type);
+        if (!pattern) return;
+        
+        const existing = db.patterns.find(p =>
+          p.type === (issue.type || 'unknown') &&
+          p.pattern === pattern
+        );
+        if (existing) {
+          existing.samples++;
+          existing.successes++;
+          existing.confidence = Math.min(0.99, existing.successes / existing.samples);
+          existing.lastUsed = Date.now();
+        } else {
+          db.patterns.push({
+            type: issue.type || 'unknown',
+            severity: issue.sev || 'c',
+            pattern,
+            fix: '// known issue',
+            example: { before: issueLine, after: issueLine },
+            confidence: 0.5,
+            samples: 1,
+            successes: 1,
+            failures: 0,
+            created: Date.now(),
+            lastUsed: Date.now(),
+          });
+          learned++;
+        }
+        return;
+      }
       const newPattern = extractPattern(codeBefore, codeAfter, issue);
       if (!newPattern) return;
 
