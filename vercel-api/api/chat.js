@@ -1,17 +1,11 @@
 const chatLimits = new Map();
 
-// كلمات ممنوعة
-const BLOCKED = [
-  'كيف أستغل', 'كيف اخترق', 'attack', 'exploit',
-  'bypass', 'injection attack', 'كيف أهاجم', 'steal',
-  'سرقة بيانات', 'اختراق موقع'
-];
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
   const prompt = (req.body?.prompt || req.body?.message || '').toLowerCase();
-  if (BLOCKED.some(w => prompt.includes(w.toLowerCase()))) {
-    return res.status(200).json({ result: '❌ Reality Engine مخصص لإصلاح الكود فقط — ليس للهجوم.' });
+  const BLOCKED = ['كيف استغل','كيف اخترق','attack exploit','steal data','سرقة بيانات','اختراق موقع'];
+  if (BLOCKED.some(w => prompt.includes(w))) {
+    return res.status(200).json({ result: '❌ Reality Engine مخصص لإصلاح الكود فقط.' });
   }
 
   const auth = req.headers['authorization'] || '';
