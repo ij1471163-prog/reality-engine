@@ -575,6 +575,20 @@ function analyzeCode(code, fileName) {
     } catch(e) {}
   }
 
+  // ProjectIntelligence — فهم السياق الكامل
+  if (typeof analyzeProject !== 'undefined') {
+    try {
+      const pi = analyzeProject(code, fileName, issues);
+      if (pi && pi.issues) {
+        pi.issues.forEach(i => {
+          if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+            issues.push(i);
+          }
+        });
+      }
+    } catch(e) {}
+  }
+
   // ExtendedPatterns Analysis
   if (typeof ExtendedPatterns !== 'undefined') {
     try {
