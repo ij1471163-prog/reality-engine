@@ -612,7 +612,20 @@ function analyzeCode(code, fileName) {
     } catch(e) {}
   }
 
-  return issues;
+  // Final dedup - يأخذ أعلى confidence
+  const dedupMap = new Map();
+  issues.forEach(issue => {
+    const t = (issue.type||issue.cAct||issue.cwe||'').toLowerCase()
+      .replace(/sql.*/,'sql').replace(/xss.*/,'xss')
+      .replace(/secret|credential|hardcoded/,'secret')
+      .replace(/cmd|command/,'cmd').replace(/eval|code.injection/,'code');
+    const key = (issue.line||0) + ':' + t;
+    const existing = dedupMap.get(key);
+    if (!existing || (issue.conf||0) > (existing.conf||0)) {
+      dedupMap.set(key, issue);
+    }
+  });
+  return Array.from(dedupMap.values());
 }
 
 // ═══════════════════════════════════════════════════════
