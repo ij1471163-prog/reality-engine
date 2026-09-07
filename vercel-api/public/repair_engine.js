@@ -332,6 +332,18 @@ function replaceLineInCode(code, lineNum, newLine) {
 // ─── Main repairCode ──────────────────────────────────
 
 function repairCode(code, issues, fileName) {
+  // BabelRepair — إصلاح ذكي بـ AST أولاً
+  if (typeof BabelRepair !== 'undefined') {
+    try {
+      const br = BabelRepair.repair(code, fileName);
+      if (br.repairs.length > 0) {
+        code = br.code;
+        br.repairs.forEach(r => {
+          issues = issues.filter(i => i.line !== r.line);
+        });
+      }
+    } catch(e) {}
+  }
   const ext = fileName.split('.').pop().toLowerCase();
   const repairs  = [];
   const aiNeeded = [];
