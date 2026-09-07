@@ -60,7 +60,7 @@ public class AnalysisActivity extends AppCompatActivity {
         // Full Engine API - محركات الموقع القوية
         AIEngine.analyzeWithEngine(fileCode, fileName, new AIEngine.Callback() {
             @Override
-            public void onSuccess(String result) {
+            public void onResult(String result) {
                 try {
                     org.json.JSONObject json = new org.json.JSONObject(result);
                     int apiScore = json.optInt("score", 0);
