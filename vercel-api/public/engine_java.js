@@ -173,6 +173,18 @@ function analyzeJava(code, fileName) {
     iss.conf = c.score; iss.cIcon = c.icon; iss.cAct = c.action; iss.cEv = c.ev;
   });
 
+  // CVEPatterns Analysis
+  if (typeof CVEPatterns !== 'undefined') {
+    try {
+      const cve = CVEPatterns.analyze(code, fileName);
+      cve.forEach(i => {
+        if (!issues.some(x => x.line === i.line && x.cwe === i.cwe)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
   // KnowledgeBase Analysis
   if (typeof KnowledgeBase !== 'undefined') {
     try {
