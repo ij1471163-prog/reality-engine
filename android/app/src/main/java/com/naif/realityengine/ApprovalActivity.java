@@ -19,6 +19,7 @@ public class ApprovalActivity extends AppCompatActivity {
     private String originalCode = "";
     private List<StubDetector.StubFunction> stubs;
     private int    currentIndex = 0;
+    private String webEngineResult = null;
     private int    approved     = 0;
     private ApprovalWorkflow.WorkflowItem currentItem = null;
     private int    rejected     = 0;
@@ -192,9 +193,26 @@ public class ApprovalActivity extends AppCompatActivity {
     private static final int SAVE_FILE = 99;
 
     private void saveFiles() {
+        // استدعاء Web Engine
+        AIEngine.analyzeWithEngine(code, fileName, new AIEngine.Callback() {
+            @Override public void onResult(String r) {
+                try {
+                    org.json.JSONObject j = new org.json.JSONObject(r);
+                    webEngineResult = "🌐 Score: " + j.optInt("score",0) + " | مشاكل: " + j.optJSONObject("stats").optInt("total",0);
+                } catch(Exception e) { webEngineResult = null; }
+                runOnUiThread(() -> showSaveDialog());
+            }
+            @Override public void onError(String e) { runOnUiThread(() -> showSaveDialog()); }
+        });
+    }
+
+    private void showSaveDialog() {
         android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
         builder.setTitle("✅ تم الإصلاح");
-        builder.setMessage("موافق: " + approved + " | مرفوض: " + rejected);
+        String msg = "موافق: " + approved + " | مرفوض: " + rejected;
+        if (webEngineResult != null) msg += "
+" + webEngineResult;
+        builder.setMessage(msg);
         builder.setCancelable(false);
 
         android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
