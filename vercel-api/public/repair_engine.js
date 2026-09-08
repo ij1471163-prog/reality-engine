@@ -333,6 +333,14 @@ function fixAccumulation(code, issue, lines, ext) {
   if (!line) return null;
   const m = line.match(/(\w+)\s*=\s*(.+)/);
   if (!m) return null;
+  // صلح forEach arrow: total = x.y → total += x.y
+  if (/=>/.test(line)) {
+    const fm = line.match(/forEach.*=>.*\{[^}]*(\w+)\s*=\s*(\w+\.\w+)/);
+    if (!fm) return null;
+    const fixed2 = line.replace(`${fm[1]} = ${fm[2]}`, `${fm[1]} += ${fm[2]}`);
+    if (fixed2 === line) return null;
+    return { fixed: replaceLineInCode(code, issue.line, fixed2), patch: fixed2.trim(), reason: `${fm[1]} = → ${fm[1]} +=` };
+  }
   const fixed = line.replace(/(\w+)\s*=\s*/, '$1 += ');
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '= → +=' };
@@ -530,9 +538,19 @@ function fixAccumulationAdvanced(code, issue) {
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
 
-  // x = y.prop → x += y.prop
+  // x = y.prop → x += y.prop داخل forEach أو عادي
+  // صلح forEach arrow: total = x.y → total += x.y
+  const forEachM = line.match(/forEach.*=>.*\{[^}]*(\w+)\s*=\s*(\w+\.\w+)[^}]*\}/);
+  if (forEachM) {
+    const fixed2 = line.replace(`${forEachM[1]} = ${forEachM[2]}`, `${forEachM[1]} += ${forEachM[2]}`);
+    if (fixed2 !== line) {
+      lines[ln] = fixed2;
+      return { fixed: lines.join('\n'), patch: fixed2.trim(), reason: `Accumulation: ${forEachM[1]} = → ${forEachM[1]} +=` };
+    }
+  }
   const m = line.match(/(\s*)(\w+)\s*=\s*(\w+\.\w+)/);
   if (!m) return null;
+  if (/=>/.test(line)) return null;
 
   const [, indent, varName, value] = m;
   lines[ln] = `${indent}${varName} += ${value};`;

@@ -194,6 +194,7 @@ var KnowledgeBase = (() => {
     ],
     safe: [
       { lang: 'any', pattern: /\w+\s*\+=\s*\w+\.\w+/i, conf: 0.99 },
+      { lang: 'js',  pattern: /forEach.*=>.*\{[^}]*\+=[^}]*\}/i, conf: 0.99 },
     ],
     fixes: {
       any: 'total += item.value // use += not ='
