@@ -278,6 +278,7 @@ function fixCallbackHell(code, issue) {
         ? `${indent}    const ${f.param} = await ${f.name}();`
         : `${indent}    await ${f.name}();`
     ),
+    `${indent}    startGame(${funcParams.filter(f=>f.param).map(f=>f.param).join(', ')});`,
     `${indent}  } catch (error) {`,
     `${indent}    console.error('Error:', error);`,
     `${indent}  }`,
