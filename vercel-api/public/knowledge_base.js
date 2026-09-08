@@ -13,6 +13,8 @@ var KnowledgeBase = (() => {
       { lang: 'js', pattern: /["'`].*(?:SELECT|INSERT|UPDATE|DELETE).*["'`]\s*\+\s*\w+/i, conf: 0.95 },
       { lang: 'js', pattern: /\.query\s*\(\s*["'`].*\$\{/i, conf: 0.95 },
       { lang: 'js', pattern: /\.query\s*\(\s*\w+\s*\+/i, conf: 0.90 },
+      { lang: 'js', pattern: /["\`].*(?:WHERE|FROM|SELECT).*["\`]\s*\+\s*\w+/i, conf: 0.93 },
+      { lang: 'js', pattern: /["\`].*(?:WHERE|FROM|SELECT).*'\s*"\s*\+/i, conf: 0.95 },
       { lang: 'js', pattern: /execute\s*\(\s*["'`].*\+/i, conf: 0.90 },
       { lang: 'js', pattern: /`SELECT.*\$\{.*\}`/i, conf: 0.95 },
       { lang: 'js', pattern: /`INSERT.*\$\{.*\}`/i, conf: 0.95 },

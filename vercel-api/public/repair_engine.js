@@ -64,7 +64,10 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection fixed with parameterized query' };
     }
   } else if (ext === 'js' || ext === 'ts') {
-    const fixedLine = line.replace(/"([^"]*)" \+ (\w+)/g, '"$1?"');
+    // صلح SQL: "...'" + var + "'" أو "..." + var
+    let fixedLine = line
+      .replace(/"([^"]*)'"\s*\+\s*\w+\s*\+\s*"'([^"]*)"/g, '"$1?$2"')
+      .replace(/"([^"]*)"\s*\+\s*(\w+)/g, '"$1?"');
     if (fixedLine !== line) {
       lines[ln] = fixedLine + ' // use: db.query(sql, [param])';
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — use parameterized queries' };
