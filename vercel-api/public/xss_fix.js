@@ -9,6 +9,35 @@ var XSSFixer = (() => {
   function fixJS(code) {
     const lines = code.split('\n');
     const fixed = lines.map(line => {
+      const t = line.trim();
+
+      // innerHTML += any → createElement
+      if (/\.innerHTML\s*\+=/.test(line)) {
+        const vMatch = line.match(/\+\s*(\w+)[^;]*;/);
+        const v = vMatch ? vMatch[1] : 'value';
+        const ind = line.match(/^\s*/)[0];
+        return `${ind}const _p = document.createElement('span'); _p.textContent = String(${v}).replace(/[<>]/g, ''); document.body.appendChild(_p);`;
+      }
+
+      // innerHTML += '<tag>' + var → createElement + textContent
+      if (/\.innerHTML\s*\+=/.test(line)) {
+        const m = line.match(/(\w+(?:\.\w+)*)\s*\.innerHTML\s*\+=\s*['"`][^'"`]*['"`]\s*\+\s*(\w+)[^;]*;/);
+        if (m) {
+          const [, el, v] = m;
+          const ind = line.match(/^\s*/)[0];
+          return `${ind}const _el = document.createElement('p'); _el.textContent = String(${v}).replace(/[<>]/g, ''); ${el}.appendChild(_el);`;
+        }
+      }
+
+      // calcOutput.innerHTML = 'النتيجة: ' + result
+      if (/(\.innerHTML\s*=)/.test(line) && !/(textContent)/.test(line)) {
+        const m = line.match(/(\w+(?:\.\w+)*)\s*\.innerHTML\s*=\s*['"`][^'"`]*['"`]\s*\+\s*(\w+)/);
+        if (m) {
+          const [, el, v] = m;
+          const ind = line.match(/^\s*/)[0];
+          return `${ind}${el}.textContent = String(${v}).replace(/[<>]/g, '');`;
+        }
+      }
       // innerHTML = 'string' + var → textContent = sanitized
       if (/\.innerHTML\s*=/.test(line) && !/\.textContent/.test(line)) {
         // استخرج الـ user variable
