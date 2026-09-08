@@ -261,12 +261,23 @@ function fixCallbackHell(code, issue) {
 
   if (cbStart === -1 || funcNames.length < 2) return null;
 
-  // بناء async/await
+  // استخرج الـ parameters من كل callback
+  const funcParams = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/(\w+)\s*\(\s*function\s*\(([^)]*)\)/);
+    if (m) funcParams.push({ name: m[1], param: m[2].trim() });
+  }
+
+  // بناء async/await مع الـ parameters
   const indent = ' '.repeat((lines[cbStart].match(/^(\s*)/)||['',''])[1].length);
   const asyncCode = [
     `${indent}async function processAll() {`,
     `${indent}  try {`,
-    ...funcNames.map(n => `${indent}    const ${n}Result = await ${n}();`),
+    ...funcParams.map(f => 
+      f.param 
+        ? `${indent}    const ${f.param} = await ${f.name}();`
+        : `${indent}    await ${f.name}();`
+    ),
     `${indent}  } catch (error) {`,
     `${indent}    console.error('Error:', error);`,
     `${indent}  }`,
