@@ -55,9 +55,7 @@ var HTMLRepair = (() => {
       const vMatch = line.match(/\+\s*(\w+)[^;]*;/);
       const v = vMatch ? vMatch[1] : 'value';
       const ind = line.match(/^\s*/)[0];
-      const elMatch = line.match(/([\w.$]+(?:\.[\w$]+|\('[^']*'\)|\("[^"]*"\)|\([^)]*\))*)\.innerHTML/);
-      const el = elMatch ? elMatch[1] : 'document.body';
-      return `${ind}const _p = document.createElement('span'); _p.textContent = String(${v}).replace(/[<>]/g, ''); ${el}.appendChild(_p);`;
+      return `${ind}const _p = document.createElement('span'); _p.textContent = String(${v}).replace(/[<>]/g, ''); document.body.appendChild(_p);`;
     }
 
     // innerHTML = anything (حتى بدون +)
@@ -104,9 +102,9 @@ var HTMLRepair = (() => {
   // ─── Footer Secrets Fix ────────────────────────────
   function fixFooterSecrets(code) {
     return code.replace(
-      /(<p[^>]*>)([^<]*(?:JWT_SECRET|JWT|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY|PASSWORD)=[^|<]+)([^<]*<\/p>)/gi,
+      /(<p[^>]*>)([^<]*(?:JWT_SECRET|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY)=[^|<]+)([^<]*<\/p>)/gi,
       (m, open, content, close) => {
-        const cleaned = content.replace(/\s*\|?\s*(?:JWT_SECRET|JWT|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY|PASSWORD)=[^|<]*/gi, '');
+        const cleaned = content.replace(/\s*\|?\s*(?:JWT_SECRET|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY)=[^|<]*/gi, '');
         return open + cleaned + close;
       }
     );
@@ -143,12 +141,6 @@ var HTMLRepair = (() => {
       line = fixXSS(line);
       line = fixHTTP(line);
       line = fixSQL(line);
-      if (/createHash\s*\(\s*['"](?:md5|sha1)['"]/i.test(line.trim()))
-        line = line.replace(/['"](?:md5|sha1)['"]/i, '"sha256"');
-      { const _m = line.match(/(\w+)\s*=(?!=|>|\+|-)\s*(\w+\.\w+)/);
-        if (_m && !/(const|let|var)\s/.test(line) && !new RegExp(`\\b${_m[1]}\\b\\s*=>`).test(line)
-            && !/textContent|innerHTML|className|style/.test(line))
-          line = line.replace(new RegExp(`\\b${_m[1]}\\b\\s*=(?!=|>|\\+|-)\\s*`), `${_m[1]} += `); }
 
       if (line !== orig) repairs.push({ line: i + 1, fix: line.trim().slice(0, 50) });
       return line;
