@@ -70,7 +70,7 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
       return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — use parameterized queries' };
     }
     const pyComment = ext === 'py' ? '# ' : '// ';
-    lines[ln] = line.trimEnd() + ' // TODO: SQL Injection — use parameterized query';
+    if (!line.includes('// use:') && !line.includes('// TODO:')) lines[ln] = line.trimEnd() + ' // TODO: SQL Injection — use parameterized query';
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection marked for fix' };
   } else if (ext === 'php') {
     const phpM = line.match(/\$(\w+)\s*=\s*["']([^"']+)["']\s*\.\s*\$(\w+)/);
