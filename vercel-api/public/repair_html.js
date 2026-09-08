@@ -35,7 +35,7 @@ var HTMLRepair = (() => {
     }
 
     // KEY|SECRET|TOKEN|PASSWORD = "..."
-    const secretMatch = line.match(/(const|let|var)\s+(\w*(?:KEY|SECRET|TOKEN|PASSWORD|PASS)\w*)\s*=\s*["'][^"']{6,}["']/i);
+    const secretMatch = line.match(/(const|let|var)\s+(\w*(?:KEY|SECRET|TOKEN|PASSWORD|PASS|JWT)\w*)\s*=\s*["'][^"']{6,}["']/i);
     if (secretMatch) {
       const [full, decl, name] = secretMatch;
       return line.replace(full, `${decl} ${name} = process.env.${name.toUpperCase()}`);

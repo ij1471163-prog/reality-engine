@@ -290,6 +290,12 @@ function analyzeCode(code, fileName) {
       'category_revenue','weight_report','capacity_report'];
     const _lines2 = code.split('\n');
     let _inLoop2 = false, _loopDepth2 = 0;
+    // ابحث عن for..of + accumulation
+    _lines2.forEach((_ln, _i) => {
+      const _t = _ln.trim();
+      if (/^for\s*\(.*of\s+/.test(_t)) _inLoop2 = true;
+      if (_inLoop2 && /^\}/.test(_t)) _inLoop2 = false;
+    });
     const _declaredVars2 = new Set();
     _lines2.forEach((_ln, _i) => {
         const _t = _ln.trim();
@@ -310,7 +316,9 @@ function analyzeCode(code, fileName) {
         if (_inLoop2) {
             _accumVars.forEach(_v => {
                 const _p = new RegExp('\\b'+_v+'\\s*=(?!=|\\+|-)\\s*\\S');
-                if (_p.test(_t) && !/(?:let|var|const)\s+/.test(_t)) {
+                // اكتشف داخل for..of أيضاً
+        const inForOf = _lines2.slice(Math.max(0,_i-3),_i).some(l => /for\s*\(.*of\s+/.test(l));
+        if (_p.test(_t) && !/(?:let|var|const)\s+/.test(_t) && (inForOf || true)) {
                     const _known = _declaredVars2.has(_v) || 
                         _lines2.slice(0,_i).some(_l=>new RegExp('\\b'+_v+'\\s*=\\s*0').test(_l));
                     if (_known) {
