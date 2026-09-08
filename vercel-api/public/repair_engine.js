@@ -655,6 +655,11 @@ function repairCode(code, issues, fileName) {
     } catch(e) {}
   }
 
+  // Self Fix — يصلح أخطاء المحرك
+  if (typeof GhostMode !== 'undefined' && GhostMode.selfFix) {
+    repairedCode = GhostMode.selfFix(repairedCode);
+  }
+
   // Ghost Mode — يتحقق ويصلح بصمت
   if (typeof GhostMode !== 'undefined') {
     try {

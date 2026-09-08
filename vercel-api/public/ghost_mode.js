@@ -137,7 +137,16 @@ var GhostMode = (() => {
     return results;
   }
 
-  return { fix, isValid, scoreFixed, applyToAll };
+  function selfFix(code) {
+    let fixed = code;
+    fixed = fixed.replace(/process\.env\.process\.env\.(\w+)/g, 'process.env.$1');
+    fixed = fixed.replace(/os\.environ\.get\(os\.environ\.get\(/g, 'os.environ.get(');
+    fixed = fixed.replace(/(import os\n){2,}/g, 'import os\n');
+    fixed = fixed.replace(/(import subprocess\n){2,}/g, 'import subprocess\n');
+    return fixed;
+  }
+
+  return { fix, isValid, scoreFixed, applyToAll, selfFix };
 })();
 
 if (typeof window !== 'undefined') window.GhostMode = GhostMode;
