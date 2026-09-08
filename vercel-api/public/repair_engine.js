@@ -603,6 +603,15 @@ function repairCode(code, issues, fileName) {
   let reAnalysis = null;
   // reAnalysis disabled to avoid recursive call issues
 
+  // Ghost Mode — يتحقق ويصلح بصمت
+  if (typeof GhostMode !== 'undefined') {
+    try {
+      const ghost = GhostMode.fix(code, repairedCode, fileName,
+        typeof analyzeCode !== 'undefined' ? analyzeCode : null);
+      if (ghost.code !== repairedCode) repairedCode = ghost.code;
+    } catch(e) {}
+  }
+
   return {
     original: code, repaired: repairedCode,
     repairs, aiNeeded, reAnalysis,
