@@ -141,6 +141,11 @@ var HTMLRepair = (() => {
       line = fixXSS(line);
       line = fixHTTP(line);
       line = fixSQL(line);
+      if (/createHash\s*\(\s*['"](?:md5|sha1)['"]/i.test(line.trim()))
+        line = line.replace(/['"](?:md5|sha1)['"]/i, '"sha256"');
+      { const _m = line.match(/(\w+)\s*=(?!=|>|\+|-)\s*(\w+\.\w+)/);
+        if (_m && !/(const|let|var)\s/.test(line) && !new RegExp(`\\b${_m[1]}\\b\\s*=>`).test(line))
+          line = line.replace(new RegExp(`\\b${_m[1]}\\b\\s*=(?!=|>|\\+|-)\\s*`), `${_m[1]} += `); }
 
       if (line !== orig) repairs.push({ line: i + 1, fix: line.trim().slice(0, 50) });
       return line;
