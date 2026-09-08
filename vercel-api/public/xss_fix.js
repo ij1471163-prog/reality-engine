@@ -12,6 +12,14 @@ var XSSFixer = (() => {
       const t = line.trim();
 
       // innerHTML += any → createElement
+      // eval في HTML
+      if (/\beval\s*\(/.test(line) && !/SECURITY/.test(line) && !line.trim().startsWith('//')) {
+        const ind = line.match(/^\s*/)[0];
+        const vMatch = line.match(/eval\s*\(([^)]+)\)/);
+        const v = vMatch ? vMatch[1].trim() : 'input';
+        return `${ind}// SECURITY: eval() removed — use JSON.parse or safe alternative for: ${v}`;
+      }
+
       if (/\.innerHTML\s*\+=/.test(line)) {
         const vMatch = line.match(/\+\s*(\w+)[^;]*;/);
         const v = vMatch ? vMatch[1] : 'value';
@@ -20,6 +28,14 @@ var XSSFixer = (() => {
       }
 
       // innerHTML += '<tag>' + var → createElement + textContent
+      // eval في HTML
+      if (/\beval\s*\(/.test(line) && !/SECURITY/.test(line) && !line.trim().startsWith('//')) {
+        const ind = line.match(/^\s*/)[0];
+        const vMatch = line.match(/eval\s*\(([^)]+)\)/);
+        const v = vMatch ? vMatch[1].trim() : 'input';
+        return `${ind}// SECURITY: eval() removed — use JSON.parse or safe alternative for: ${v}`;
+      }
+
       if (/\.innerHTML\s*\+=/.test(line)) {
         const m = line.match(/(\w+(?:\.\w+)*)\s*\.innerHTML\s*\+=\s*['"`][^'"`]*['"`]\s*\+\s*(\w+)[^;]*;/);
         if (m) {
