@@ -14,6 +14,7 @@ const STRATEGIES = {
   EMPTY_CATCH:      { fn: fixEmptyCatch,        autoFix: true,  confidence: 0.80 },
   EMPTY_FUNCTION:   { fn: fixEmptyFunction,     autoFix: true,  confidence: 0.70 },
   CALLBACK_HELL:    { fn: fixCallbackHell,      autoFix: true,  confidence: 0.75 },
+  MISSING_AUTH:     { fn: fixMissingAuth,       autoFix: true,  confidence: 0.70 },
   API_KEY:          { fn: fixApiKeyAdvanced,     autoFix: true,  confidence: 0.90 },
   SQL_INJECTION:    { fn: fixSQLInjection,      autoFix: true,  confidence: 0.75 },
   EVAL_USAGE:       { fn: fixEval,              autoFix: true,  confidence: 0.85 },
@@ -405,6 +406,19 @@ function fixEmptyFunction(code, issue, lines, ext) {
 
 
 // ─── Callback Hell → async/await ─────────────────────
+function fixMissingAuth(code, issue, lines) {
+  const ln = (issue.line || 1) - 1;
+  const line = lines[ln];
+  if (!line) return null;
+  if (/req\.user|auth|middleware/i.test(line)) return null;
+  // لا تصلح لو مو function
+  if (!/function\s+\w+/.test(line)) return null;
+  const ind = ' '.repeat(line.search(/\S/));
+  const newLines = [...lines];
+  newLines.splice(ln + 1, 0, `${ind}  if (!req || !req.user) return res.status(401).json({ error: 'Unauthorized' });`);
+  return { fixed: newLines.join('\n'), patch: 'Auth check added', reason: 'Missing auth middleware' };
+}
+
 function fixCallbackHell(code, issue) {
   const lines = code.split('\n');
 
@@ -646,6 +660,7 @@ function detectStrategy(issue) {
   if (t.includes('none') || t.includes('is none'))               return 'NONE_COMPARE';
   if (t.includes('nameerror') || t.includes('غير معرّف'))        return 'NAMEERROR';
   if (t.includes('callback'))                                     return 'CALLBACK_HELL';
+  if (t.includes('auth') || t.includes('middleware'))             return 'MISSING_AUTH';
   return null;
 }
 function getAIReason(strategy) {
