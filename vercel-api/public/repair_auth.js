@@ -46,6 +46,18 @@ var AuthRepair = (() => {
 
     while (i < lines.length) {
       const line = lines[i];
+      const routeM = line.match(/app\.(get|post|put|delete|patch)\s*\(/);
+      if (routeM && !line.includes("req.user") && !line.includes("auth")) {
+        for (let j = i; j < Math.min(i+3, lines.length); j++) {
+          if (lines[j].includes("{")) {
+            lines.splice(j+1, 0, '  if (!req.user) return res.status(401).json({ error: "Unauthorized" });');
+            repairs.push({ fix: "Auth check added to route" });
+            i = j + 2;
+            break;
+          }
+        }
+        continue;
+      }
       const funcMatch = line.match(/(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/);
 
       if (funcMatch) {
