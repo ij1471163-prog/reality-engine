@@ -332,6 +332,9 @@ function replaceLineInCode(code, lineNum, newLine) {
 // ─── Main repairCode ──────────────────────────────────
 
 function repairCode(code, issues, fileName) {
+  // FixVerifier — تحقق من الإصلاح بعده
+  const _origCode = code;
+
   // LearnedFixer — يطبق ما تعلمه المحرك
   if (typeof LearnedFixer !== 'undefined') {
     try {

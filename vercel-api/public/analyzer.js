@@ -575,6 +575,18 @@ function analyzeCode(code, fileName) {
     } catch(e) {}
   }
 
+  // SemanticLayer — فهم النية والسياق
+  if (typeof SemanticLayer !== 'undefined') {
+    try {
+      const sl = SemanticLayer.analyze(code, fileName);
+      sl.issues.forEach(i => {
+        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+          issues.push(i);
+        }
+      });
+    } catch(e) {}
+  }
+
   // ProjectIntelligence — فهم السياق الكامل
   if (typeof analyzeProject !== 'undefined') {
     try {
