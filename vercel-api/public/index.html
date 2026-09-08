@@ -522,6 +522,11 @@ function fixAllEngine() {
               result = { repaired: hr.fixed, repairs: hr.repairs };
             } else {
               result = repairCode(F[fn], issues, fn);
+              // AdvancedRepair — JWT، Promise، CMD
+              if (typeof AdvancedRepair !== 'undefined') {
+                const ar = AdvancedRepair.fix(result.repaired || F[fn], fn);
+                if (ar.changed) result = { repaired: ar.fixed, repairs: ar.repairs };
+              }
             }
             if (!result || result.repaired === F[fn] || !result.repairs.length) break;
             F[fn] = result.repaired;
