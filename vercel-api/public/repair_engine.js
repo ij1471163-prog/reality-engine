@@ -14,7 +14,7 @@ const STRATEGIES = {
   EMPTY_CATCH:      { fn: fixEmptyCatch,        autoFix: true,  confidence: 0.80 },
   EMPTY_FUNCTION:   { fn: fixEmptyFunction,     autoFix: true,  confidence: 0.70 },
   CALLBACK_HELL:    { fn: fixCallbackHell,      autoFix: true,  confidence: 0.75 },
-  MISSING_AUTH:     { fn: fixMissingAuth,       autoFix: true,  confidence: 0.70 },
+  MISSING_AUTH:     { fn: null,                 autoFix: false, confidence: 0.70 }, // handled by AuthRepair
   API_KEY:          { fn: fixApiKeyAdvanced,     autoFix: true,  confidence: 0.90 },
   SQL_INJECTION:    { fn: fixSQLInjection,      autoFix: true,  confidence: 0.75 },
   EVAL_USAGE:       { fn: fixEval,              autoFix: true,  confidence: 0.85 },
@@ -406,18 +406,6 @@ function fixEmptyFunction(code, issue, lines, ext) {
 
 
 // ─── Callback Hell → async/await ─────────────────────
-function fixMissingAuth(code, issue, lines) {
-  const ln = (issue.line || 1) - 1;
-  const line = lines[ln];
-  if (!line) return null;
-  if (/req\.user|auth|middleware/i.test(line)) return null;
-  // لا تصلح لو مو function
-  if (!/function\s+\w+/.test(line)) return null;
-  const ind = ' '.repeat(line.search(/\S/));
-  const newLines = [...lines];
-  newLines.splice(ln + 1, 0, `${ind}  if (!req || !req.user) return res.status(401).json({ error: 'Unauthorized' });`);
-  return { fixed: newLines.join('\n'), patch: 'Auth check added', reason: 'Missing auth middleware' };
-}
 
 function fixCallbackHell(code, issue) {
   const lines = code.split('\n');
@@ -615,6 +603,14 @@ function repairCode(code, issues, fileName) {
 
   let reAnalysis = null;
   // reAnalysis disabled to avoid recursive call issues
+
+  // AuthRepair — يصلح Auth Middleware للدوال الحساسة
+  if (typeof AuthRepair !== 'undefined') {
+    try {
+      const ar = AuthRepair.fix(repairedCode, fileName);
+      if (ar.changed) repairedCode = ar.fixed;
+    } catch(e) {}
+  }
 
   // Ghost Mode — يتحقق ويصلح بصمت
   if (typeof GhostMode !== 'undefined') {
