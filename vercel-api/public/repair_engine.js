@@ -313,23 +313,14 @@ function fixEquality(code, issue, lines, ext) {
 function fixAccumulation(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  // ابحث عن: var = obj.prop (بدون => قبله)
-  const m = line.match(/(\w+)\s*=(?!=|>|\+|-)\s*(\w+\.\w+)/);
+  const m = line.match(/(\w+)\s*=\s*(.+)/);
   if (!m) return null;
-  const varName = m[1];
-  // تأكد إن varName ليس arrow param
-  if (new RegExp(`\\b${varName}\\b\\s*=>`).test(line)) return null;
-  // صلح = → +=
-  const fixed = line.replace(
-    new RegExp(`\\b${varName}\\b\\s*=(?!=|>|\\+|-)\\s*`),
-    `${varName} += `
-  );
+  const fixed = line.replace(/(\w+)\s*=\s*/, '$1 += ');
   if (fixed === line) return null;
-  // صلح في الكود مباشرة
-  const newCode = code.replace(line, fixed);
-  if (newCode === code) return null;
-  return { fixed: newCode, patch: fixed.trim(), reason: '= → +=' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '= → +=' };
 }
+
+// ─── Hardcoded Secret ─────────────────────────────────
 function fixHardcodedSecret(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
@@ -619,16 +610,8 @@ function repairCode(code, issues, fileName) {
   let reAnalysis = null;
   // reAnalysis disabled to avoid recursive call issues
 
-  // HTMLRepair + XSSFixer — فقط لملفات HTML
-  const _isHTML = /\.html?$/i.test(fileName || '');
-  if (_isHTML && typeof HTMLRepair !== 'undefined') {
-    try {
-      const hr = HTMLRepair.fix(code, fileName);
-      if (hr.changed) code = hr.fixed;
-    } catch(e) {}
-  }
-
-  if (_isHTML && typeof XSSFixer !== 'undefined') {
+  // XSSFixer — يصلح HTML + Footer secrets
+  if (typeof XSSFixer !== 'undefined') {
     try {
       const xr = XSSFixer.fix(repairedCode, fileName);
       if (xr.fixed !== repairedCode) {
