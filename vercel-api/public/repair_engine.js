@@ -619,16 +619,16 @@ function repairCode(code, issues, fileName) {
   let reAnalysis = null;
   // reAnalysis disabled to avoid recursive call issues
 
-  // HTMLRepair — إصلاح HTML مستقل
-  if (typeof HTMLRepair !== 'undefined') {
+  // HTMLRepair + XSSFixer — فقط لملفات HTML
+  const _isHTML = /\.html?$/i.test(fileName || '');
+  if (_isHTML && typeof HTMLRepair !== 'undefined') {
     try {
       const hr = HTMLRepair.fix(code, fileName);
       if (hr.changed) code = hr.fixed;
     } catch(e) {}
   }
 
-  // XSSFixer — يصلح HTML + Footer secrets
-  if (typeof XSSFixer !== 'undefined') {
+  if (_isHTML && typeof XSSFixer !== 'undefined') {
     try {
       const xr = XSSFixer.fix(repairedCode, fileName);
       if (xr.fixed !== repairedCode) {
