@@ -790,10 +790,16 @@ function reCheck() {
     if (issues.length > 0) {
       hasIssues = true;
       // أصلح مرة ثانية
-      const result = repairCode(F[fn], issues, fn);
-      if (result.repaired !== F[fn]) {
-        F[fn] = result.repaired;
+      const _isHTML = /\.html?$/i.test(fn);
+      let newCode = F[fn];
+      if (_isHTML && typeof HTMLRepair !== 'undefined') {
+        const hr = HTMLRepair.fix(F[fn], fn);
+        if (hr.changed) newCode = hr.fixed;
+      } else {
+        const result = repairCode(F[fn], issues, fn);
+        if (result.repaired !== F[fn]) newCode = result.repaired;
       }
+      if (newCode !== F[fn]) F[fn] = newCode;
     }
   });
   
