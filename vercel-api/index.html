@@ -511,7 +511,7 @@ function fixAllEngine() {
     let totalFixed = 0;
     Object.keys(R).forEach(fn => {
         if (typeof repairCode !== 'function') return;
-        for (let pass = 0; pass < 5; pass++) {
+        for (let pass = 0; pass < 2; pass++) {
             const issues = analyzeCode(F[fn], fn);
             if (!issues.length) break;
             // استخدم HTMLRepair للـ HTML و repairCode للباقي
