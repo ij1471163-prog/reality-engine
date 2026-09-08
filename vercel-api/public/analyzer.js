@@ -575,6 +575,21 @@ function analyzeCode(code, fileName) {
     } catch(e) {}
   }
 
+  // SmartContext — يدرس الكود قبل التحليل
+  let smartCtx = null;
+  if (typeof SmartContext !== 'undefined') {
+    try {
+      smartCtx = SmartContext.analyze(code, fileName);
+      if (smartCtx && smartCtx.issues) {
+        smartCtx.issues.forEach(i => {
+          if (!issues.some(x => x.line === i.line && x.type === i.type)) {
+            issues.push(i);
+          }
+        });
+      }
+    } catch(e) {}
+  }
+
   // SemanticLayer — فهم النية والسياق
   if (typeof SemanticLayer !== 'undefined') {
     try {
