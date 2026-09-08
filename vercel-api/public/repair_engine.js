@@ -610,6 +610,14 @@ function repairCode(code, issues, fileName) {
   let reAnalysis = null;
   // reAnalysis disabled to avoid recursive call issues
 
+  // HTMLRepair — إصلاح HTML مستقل
+  if (typeof HTMLRepair !== 'undefined') {
+    try {
+      const hr = HTMLRepair.fix(code, fileName);
+      if (hr.changed) code = hr.fixed;
+    } catch(e) {}
+  }
+
   // XSSFixer — يصلح HTML + Footer secrets
   if (typeof XSSFixer !== 'undefined') {
     try {
