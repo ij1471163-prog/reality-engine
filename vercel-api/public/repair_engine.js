@@ -119,7 +119,9 @@ function fixEval(code, issue) {
   if (ext === 'js' || ext === 'ts') {
     if (/json|data|response|result/i.test(arg)) {
       lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
-    } else {
+    } else if (ext === 'php') {
+    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
+  } else {
       // eval على user input خطير — احذفه واترك تحذير
       lines[ln] = `${indent}// SECURITY: eval() is dangerous — removed. Validate ${arg} before use`;
     }
@@ -168,6 +170,8 @@ function fixHardcodedPassword(code, issue) {
       /(["\'])[^"\']+(["\'])/,
       `Environment.GetEnvironmentVariable("${varName}")`
     );
+  } else if (ext === 'php') {
+    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
   } else {
     lines[ln] = line.replace(
       /(["\'])[^"\']+(["\'])/,
@@ -330,6 +334,8 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   let fixed = line;
   if (ext === 'py') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
+  } else if (ext === 'php') {
+    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
   } else {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   }
@@ -359,6 +365,8 @@ function fixEmptyCatch(code, issue, lines, ext) {
     fixed = line + '\n' + ' '.repeat(line.search(/\S/) + 4) + 'logging.error("Exception: %s", str(e))';
   } else if (ext === 'cs') {
     fixed = line.replace(/catch\s*(\([^)]*\))?\s*\{\s*\}/, 'catch (Exception ex) { Debug.LogError("Error: " + ex.Message); }');
+  } else if (ext === 'php') {
+    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
   } else {
     fixed = line.replace(/catch\s*\(([^)]+)\)\s*\{\s*\}/, 'catch ($1) { console.error("Error:", $1); }');
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ console.error("unexpected error"); }');
@@ -391,6 +399,8 @@ function fixEmptyFunction(code, issue, lines, ext) {
   } else if (/is|has|check|valid/i.test(funcName)) {
     body = ext === 'py' ? `${indent}return False  # TODO: implement validation` :
            `${indent}return false; // TODO: implement validation`;
+  } else if (ext === 'php') {
+    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
   } else {
     body = ext === 'py' ? `${indent}pass  # TODO: implement` :
            `${indent}// TODO: implement`;
