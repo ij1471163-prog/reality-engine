@@ -141,6 +141,22 @@ var HTMLRepair = (() => {
       line = fixXSS(line);
       line = fixHTTP(line);
       line = fixSQL(line);
+      // MD5 → sha256
+      if (/createHash\s*\(\s*['"](?:md5|sha1)['"]/i.test(line.trim())) {
+        line = line.replace(/['"](?:md5|sha1)['"]/i, '"sha256"');
+      }
+      // accumulation fix - حتى داخل forEach
+      const accM = line.match(/(\w+)\s*=(?!=|>|\+|-)\s*(\w+\.\w+)/);
+      if (accM) {
+        const varN = accM[1];
+        // تأكد varN مو arrow param ومو declaration
+        if (!new RegExp(`\\b${varN}\\b\\s*=>`).test(line) && !/(const|let|var)\s+/.test(line.trim())) {
+          line = line.replace(
+            new RegExp(`\\b${varN}\\b\\s*=(?!=|>|\\+|-)\\s*`),
+            `${varN} += `
+          );
+        }
+      }
 
       if (line !== orig) repairs.push({ line: i + 1, fix: line.trim().slice(0, 50) });
       return line;
