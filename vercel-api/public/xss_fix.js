@@ -45,9 +45,30 @@ var XSSFixer = (() => {
   }
 
   function fix(code, fileName) {
-    const ext = fileName.split('.').pop().toLowerCase();
+    const ext = (fileName||'').split('.').pop().toLowerCase();
     let fixed = code;
-    if (ext === 'js' || ext === 'ts' || ext === 'jsx' || ext === 'tsx') fixed = fixJS(fixed);
+    // HTML - نصلح JS داخله
+    if (ext === 'html' || ext === 'htm') {
+      fixed = fixJS(fixed);
+      // صلح Footer secrets
+      fixed = fixed.replace(/JWT_SECRET=[^|<"']+/g, '');
+      fixed = fixed.replace(/DB_PASS(?:WORD)?=[^|<"']+/g, '');
+      // صلح SQL
+      fixed = fixed.replace(
+        /var query = "SELECT.*?"\s*\+[^;]+;/g,
+        '// SQL: use parameterized queries on server'
+      );
+      // صلح innerHTML بالمتغيرات
+      fixed = fixed.replace(
+        /(\w+)\.innerHTML\s*\+=?\s*['"`][^'"`]*['"`]\s*\+\s*(\w+)[^;]*;/g,
+        (m, el, v) => `${el}.textContent = String(${v}).replace(/[<>]/g, '');`
+      );
+      fixed = fixed.replace(
+        /(\w+)\.innerHTML\s*=\s*['"`][^'"`]*['"`]\s*\+\s*(\w+)[^;]*;/g,
+        (m, el, v) => `${el}.textContent = String(${v}).replace(/[<>]/g, '');`
+      );
+    }
+    if (ext === 'js' || ext === 'ts' || ext === 'jsx' || ext === 'tsx' || ext === 'html') fixed = fixJS(fixed);
     else if (ext === 'php') fixed = fixPHP(fixed);
     return { fixed, changed: fixed !== code };
   }
