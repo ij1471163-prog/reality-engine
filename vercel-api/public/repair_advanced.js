@@ -174,7 +174,7 @@ var AdvancedRepair = (() => {
     if (lang === 'py') {
       // SECRET_KEY = "..." → os.environ.get
       code = code.replace(
-        /^(\s*)(SECRET_KEY|DB_URL|AWS_KEY|API_KEY|DB_PASSWORD)\s*=\s*["'][^"']+["']/gm,
+        /^(\s*)(SECRET_KEY|SECRET|DB_URL|AWS_KEY|API_KEY|DB_PASSWORD|DB_PASS)\s*=\s*["'][^"']+["']/gm,
         (m, ind, name) => `${ind}${name} = os.environ.get('${name}', '')`
       );
       if (/os\.environ\.get/.test(code) && !/import os/.test(code)) {

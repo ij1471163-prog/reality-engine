@@ -102,9 +102,9 @@ var HTMLRepair = (() => {
   // ─── Footer Secrets Fix ────────────────────────────
   function fixFooterSecrets(code) {
     return code.replace(
-      /(<p[^>]*>)([^<]*(?:JWT_SECRET|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY)=[^|<]+)([^<]*<\/p>)/gi,
+      /(<p[^>]*>)([^<]*(?:JWT_SECRET|JWT|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY|PASSWORD)=[^|<]+)([^<]*<\/p>)/gi,
       (m, open, content, close) => {
-        const cleaned = content.replace(/\s*\|?\s*(?:JWT_SECRET|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY)=[^|<]*/gi, '');
+        const cleaned = content.replace(/\s*\|?\s*(?:JWT_SECRET|JWT|DB_PASS(?:WORD)?|API_KEY|SECRET|STRIPE_KEY|PASSWORD)=[^|<]*/gi, '');
         return open + cleaned + close;
       }
     );
