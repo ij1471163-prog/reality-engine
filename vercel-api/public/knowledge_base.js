@@ -98,6 +98,7 @@ var KnowledgeBase = (() => {
       { lang: 'any', pattern: /(?:JWT_SECRET|jwt_secret)\s*=\s*["'][^"']{8,}["']/i, conf: 0.95 },
       { lang: 'any', pattern: /(?:API_KEY|api_key)\s*=\s*["'][^"']{8,}["']/i, conf: 0.95 },
       { lang: 'any', pattern: /(?:PASSWORD|password)\s*=\s*["'][^"']{4,}["']/i, conf: 0.90 },
+      { lang: 'any', pattern: /(?:DB_PASS|DB_PASSWORD|PASS)\s*=\s*["'][^"']{4,}["']/i, conf: 0.90 },
       { lang: 'any', pattern: /(?:SECRET|secret)\s*=\s*["'][^"']{8,}["']/i, conf: 0.90 },
       { lang: 'any', pattern: /sk_live_[a-zA-Z0-9]{20,}/i, conf: 0.99 },
       { lang: 'any', pattern: /sk_test_[a-zA-Z0-9]{20,}/i, conf: 0.95 },
