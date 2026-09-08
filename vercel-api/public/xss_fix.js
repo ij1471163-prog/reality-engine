@@ -70,7 +70,15 @@ var XSSFixer = (() => {
       if (/document\.write\s*\(/.test(line)) return line.replace(/document\.write\s*\(/, '// SECURITY: document.write removed — use DOM methods (');
       return line;
     });
-    return fixed.join('\n');
+    // صلح Footer secrets في HTML
+    const result = fixed.join('\n');
+    return result.replace(
+      /(<p[^>]*>)([^<]*(?:JWT_SECRET|DB_PASS(?:WORD)?|API_KEY|SECRET)=[^|<]+)([^<]*<\/p>)/gi,
+      (m, open, content2, close) => {
+        const cleaned = content2.replace(/\s*\|?\s*(?:JWT_SECRET|DB_PASS(?:WORD)?|API_KEY|SECRET)=[^|<]*/gi, '');
+        return open + cleaned + close;
+      }
+    );
   }
 
   function fixPHP(code) {
