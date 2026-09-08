@@ -510,7 +510,15 @@ function fixAllEngine() {
         for (let pass = 0; pass < 5; pass++) {
             const issues = analyzeCode(F[fn], fn);
             if (!issues.length) break;
-            const result = repairCode(F[fn], issues, fn);
+            // استخدم HTMLRepair للـ HTML و repairCode للباقي
+            let result;
+            const _isHTMLFile = /\.html?$/i.test(fn);
+            if (_isHTMLFile && typeof HTMLRepair !== 'undefined') {
+              const hr = HTMLRepair.fix(F[fn], fn);
+              result = { repaired: hr.fixed, repairs: hr.repairs };
+            } else {
+              result = repairCode(F[fn], issues, fn);
+            }
             if (!result || result.repaired === F[fn] || !result.repairs.length) break;
             F[fn] = result.repaired;
             totalFixed += result.repairs.length;
