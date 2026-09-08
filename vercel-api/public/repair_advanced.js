@@ -18,35 +18,26 @@ var AdvancedRepair = (() => {
   // ─── Promise .catch() Fix ─────────────────────────
   function fixPromise(code, lang) {
     if (lang !== 'js') return code;
+    // لو الكود ما فيه .catch أصلاً نضيفه
+    if (code.includes('.catch(')) return code;
+    // ابحث عن آخر .then chain وأضف .catch
     const lines = code.split('\n');
-    const result = [];
-    
+    let lastThen = -1;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const t = line.trim();
-      
-      // .then() بدون .catch()
-      if (/\.then\s*\(/.test(t) && !/\.catch\s*\(/.test(t)) {
-        // شوف الأسطر التالية
-        let hasCatch = false;
-        for (let j = i+1; j < Math.min(i+5, lines.length); j++) {
-          if (/\.catch\s*\(/.test(lines[j])) { hasCatch = true; break; }
-        }
-        if (!hasCatch) {
-          result.push(line);
-          // أضف .catch() بعد نهاية الـ chain
-          const ind = ' '.repeat(line.search(/\S/));
-          if (t.endsWith(');')) {
-            result[result.length-1] = line.replace(/\)\s*;$/, ')');
-            result.push(`${ind}  .catch(err => console.error('Error:', err));`);
-            continue;
-          }
-        }
+      if (/\.then\s*\(/.test(lines[i]) && !lines[i].includes('.catch')) {
+        lastThen = i;
       }
-      result.push(line);
     }
-    return result.join('\n');
+    if (lastThen < 0) return code;
+    const lastLine = lines[lastThen];
+    if (lastLine.trim().endsWith(');')) {
+      const ind = ' '.repeat(lastLine.search(/\S/));
+      lines[lastThen] = lastLine.replace(/\);\s*$/, ')');
+      lines.splice(lastThen + 1, 0, ind + "  .catch(err => console.error('Error:', err));");
+    }
+    return lines.join('\n');
   }
+
 
   // ─── Command Injection Fix ────────────────────────
   function fixCommandInjection(code, lang) {
@@ -175,9 +166,9 @@ var AdvancedRepair = (() => {
       // SECRET_KEY = "..." → os.environ.get
       code = code.replace(
         /^(\s*)(SECRET_KEY|SECRET|DB_URL|AWS_KEY|API_KEY|DB_PASSWORD|DB_PASS)\s*=\s*["'][^"']+["']/gm,
-        (m, ind, name) => `${ind}${name} = os.environ.get('${name}', '')`
+        (m, ind, name) => m.includes('os.environ.get') ? m : `${ind}${name} = os.environ.get('${name}', '')`
       );
-      if (/os\.environ\.get/.test(code) && !/import os/.test(code)) {
+      if (/os\.environ\.get/.test(code) && !/import os/.test(code) && !code.startsWith('import os')) {
         code = 'import os\n' + code;
       }
     } else if (lang === 'php') {
