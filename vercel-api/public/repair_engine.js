@@ -324,6 +324,8 @@ function fixAccumulation(code, issue, lines, ext) {
 function fixHardcodedSecret(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
+  // لا تصلح HTML attributes (style, class, etc)
+  if (/^\s*</.test(line) && !/(const|let|var)\s+\w+/.test(line)) return null;
   const varMatch = line.match(/(\w+)\s*[:=]/);
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
   let fixed = line;
@@ -332,8 +334,14 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   } else {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   }
-  if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Secret moved to env variable' };
+  // صلح كل secrets في الملف
+  let newCode = code
+    .replace(/(const|let|var)\s+(\w+)\s*=\s*["']sk_live_[^"']+["']/g, (m,d,n) => `${d} ${n} = process.env.${n.toUpperCase()}`)
+    .replace(/(const|let|var)\s+(\w+)\s*=\s*["']sk_test_[^"']+["']/g, (m,d,n) => `${d} ${n} = process.env.${n.toUpperCase()}`)
+    .replace(/(const|let|var)\s+(\w*(?:KEY|SECRET|TOKEN|PASSWORD|PASS)\w*)\s*=\s*["'][^"']{6,}["']/gi, (m,d,n) => `${d} ${n} = process.env.${n.toUpperCase()}`);
+  if (fixed !== line) newCode = replaceLineInCode(newCode, issue.line, fixed);
+  if (newCode === code) return null;
+  return { fixed: newCode, patch: fixed.trim(), reason: 'Secret moved to env variable' };
 }
 
 // ─── Log Secret ───────────────────────────────────────
@@ -635,7 +643,8 @@ function detectStrategy(issue) {
   if (t.includes('command') || t.includes('os.system'))          return 'CMD_INJECTION_PY';
   if (t.includes('eval'))                                         return 'EVAL_USAGE';
   if (t.includes('مرور') || t.includes('password'))              return 'HARDCODED_PASS';
-  if (t.includes('secret') || t.includes('مكشوف'))               return 'HARDCODED_SECRET';
+  if (t.includes('secret') || t.includes('مكشوف') || t.includes('credential') || t.includes('cwe-798')) return 'HARDCODED_SECRET';
+  if (t.includes('stripe') || t.includes('sk_live')) return 'HARDCODED_SECRET';
   if (t.includes('api key') || t.includes('google') || t.includes('stripe')) return 'API_KEY';
   if (t.includes('تراكم') || t.includes('+='))                   return 'ACCUMULATION';
   if (t.includes('مقارنة') || t.includes('string'))              return 'LOOSE_EQUALITY';
