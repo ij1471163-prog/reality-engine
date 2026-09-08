@@ -602,6 +602,17 @@ function repairCode(code, issues, fileName) {
   let reAnalysis = null;
   // reAnalysis disabled to avoid recursive call issues
 
+  // XSSFixer — يصلح HTML + Footer secrets
+  if (typeof XSSFixer !== 'undefined') {
+    try {
+      const xr = XSSFixer.fix(repairedCode, fileName);
+      if (xr.fixed !== repairedCode) {
+        repairedCode = xr.fixed;
+        repairs.push({ fix: 'XSSFixer HTML' });
+      }
+    } catch(e) {}
+  }
+
   return {
     original: code, repaired: repairedCode,
     repairs, aiNeeded, reAnalysis,
