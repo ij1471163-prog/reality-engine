@@ -313,14 +313,23 @@ function fixEquality(code, issue, lines, ext) {
 function fixAccumulation(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const m = line.match(/(\w+)\s*=\s*(.+)/);
+  // ابحث عن: var = obj.prop (بدون => قبله)
+  const m = line.match(/(\w+)\s*=(?!=|>|\+|-)\s*(\w+\.\w+)/);
   if (!m) return null;
-  const fixed = line.replace(/(\w+)\s*=\s*/, '$1 += ');
+  const varName = m[1];
+  // تأكد إن varName ليس arrow param
+  if (new RegExp(`\\b${varName}\\b\\s*=>`).test(line)) return null;
+  // صلح = → +=
+  const fixed = line.replace(
+    new RegExp(`\\b${varName}\\b\\s*=(?!=|>|\\+|-)\\s*`),
+    `${varName} += `
+  );
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '= → +=' };
+  // صلح في الكود مباشرة
+  const newCode = code.replace(line, fixed);
+  if (newCode === code) return null;
+  return { fixed: newCode, patch: fixed.trim(), reason: '= → +=' };
 }
-
-// ─── Hardcoded Secret ─────────────────────────────────
 function fixHardcodedSecret(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;

@@ -284,6 +284,7 @@ function analyzeCode(code, fileName) {
     // Accumulation detection - inline
     const _accumVars = ['total','sum','count','revenue','sales','discount',
       'value','amount','price','cost','profit','balance','score','qty',
+      'playerScore','points','bonus','commission','rating','views','clicks',
       'quantity','inventory','totalRevenue','totalItems','totalDiscount',
       'totalValue','totalSales','total_value','total_cost','total_weight',
       'category_revenue','weight_report','capacity_report'];
