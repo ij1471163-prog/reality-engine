@@ -604,6 +604,14 @@ function repairCode(code, issues, fileName) {
   let reAnalysis = null;
   // reAnalysis disabled to avoid recursive call issues
 
+  // AdvancedRepair — يصلح Promise، JWT، Command Injection
+  if (typeof AdvancedRepair !== 'undefined') {
+    try {
+      const ar = AdvancedRepair.fix(repairedCode, fileName);
+      if (ar.changed) repairedCode = ar.fixed;
+    } catch(e) {}
+  }
+
   // AuthRepair — يصلح Auth Middleware للدوال الحساسة
   if (typeof AuthRepair !== 'undefined') {
     try {
