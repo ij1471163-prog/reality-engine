@@ -99,9 +99,13 @@ var XSSFixer = (() => {
 
   function fix(code, fileName) {
     const ext = (fileName||'').split('.').pop().toLowerCase();
+    const isHTML = ext === 'html' || ext === 'htm';
+    const isJS   = ['js','ts','jsx','tsx'].includes(ext);
+    const isPHP  = ext === 'php';
+    const isPY   = ext === 'py';
     let fixed = code;
     // HTML - نصلح JS داخله
-    if (ext === 'html' || ext === 'htm') {
+    if (isHTML) {
       fixed = fixJS(fixed);
       // صلح Footer secrets
       fixed = fixed.replace(/JWT_SECRET=[^|<"']+/g, '');
@@ -121,8 +125,8 @@ var XSSFixer = (() => {
         (m, el, v) => `${el}.textContent = String(${v}).replace(/[<>]/g, '');`
       );
     }
-    if (ext === 'js' || ext === 'ts' || ext === 'jsx' || ext === 'tsx' || ext === 'html') fixed = fixJS(fixed);
-    else if (ext === 'php') fixed = fixPHP(fixed);
+    if (isJS || isHTML) fixed = fixJS(fixed);
+    else if (isPHP) fixed = fixPHP(fixed);
     return { fixed, changed: fixed !== code };
   }
 
