@@ -58,6 +58,7 @@ var KnowledgeBase = (() => {
     dangerous: [
       // JavaScript
       { lang: 'js', pattern: /\.innerHTML\s*=\s*(?!['"`])/i, conf: 0.92 },
+      { lang: 'js', pattern: /\.innerHTML\s*\+=\s*/i, conf: 0.92 },
       { lang: 'js', pattern: /\.outerHTML\s*=\s*(?!['"`])/i, conf: 0.92 },
       { lang: 'js', pattern: /document\.write\s*\(\s*\w+/i, conf: 0.90 },
       { lang: 'js', pattern: /res\.send\s*\(\s*['"`].*\+\s*\w+/i, conf: 0.90 },

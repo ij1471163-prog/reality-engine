@@ -55,7 +55,8 @@ var HTMLRepair = (() => {
       const vMatch = line.match(/\+\s*(\w+)[^;]*;/);
       const v = vMatch ? vMatch[1] : 'value';
       const ind = line.match(/^\s*/)[0];
-      return `${ind}const _p = document.createElement('span'); _p.textContent = String(${v}).replace(/[<>]/g, ''); document.body.appendChild(_p);`;
+      const el = line.match(/([\w.$]+(?:\.[\w$]+|\('[^']*'\)|\("[^"]*"\)|\([^)]*\))*)\.innerHTML/)?.[1] || document.body;
+      return `${ind}const _p = document.createElement('span'); _p.textContent = String(${v}).replace(/[<>]/g, ''); ${el}.appendChild(_p);`;
     }
 
     // innerHTML = anything (حتى بدون +)
@@ -144,7 +145,7 @@ var HTMLRepair = (() => {
       if (/createHash\s*\(\s*['"](?:md5|sha1)['"]/i.test(line.trim()))
         line = line.replace(/['"](?:md5|sha1)['"]/i, '"sha256"');
       { const _m = line.match(/(\w+)\s*=(?!=|>|\+|-)\s*(\w+\.\w+)/);
-        if (_m && !/(const|let|var)\s/.test(line) && !new RegExp(`\\b${_m[1]}\\b\\s*=>`).test(line))
+        if (_m && !/(const|let|var)\s/.test(line) && !new RegExp(`\\b${_m[1]}\\b\\s*=>`).test(line) && !/textContent|innerHTML|className|style/.test(line))
           line = line.replace(new RegExp(`\\b${_m[1]}\\b\\s*=(?!=|>|\\+|-)\\s*`), `${_m[1]} += `); }
 
       if (line !== orig) repairs.push({ line: i + 1, fix: line.trim().slice(0, 50) });
