@@ -284,8 +284,17 @@ function fixXSS(code, issue, lines, ext) {
   if (!line) return null;
   let fixed = line.replace(/\.innerHTML\s*=/, '.textContent =');
   if (fixed === line) fixed = line.replace(/\.outerHTML\s*=/, '.textContent =');
+  // res.send XSS → res.json sanitized
+  if (fixed === line && /res\.send\s*\(/.test(line)) {
+    const m = line.match(/res\.send\s*\(['"`]([^'"\`]*?)['"\`]\s*\+\s*(\w+)/);
+    if (m) {
+      fixed = line.replace(/res\.send\s*\([^)]+\)/, `res.json({ message: String(${m[2]}).replace(/[<>]/g, '') })`);
+    } else {
+      fixed = line.replace(/res\.send\s*\(/, 'res.json({ message: String(').replace(/\)\s*;$/, ').replace(/[<>]/g, "") });');
+    }
+  }
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'XSS: innerHTML → textContent' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'XSS: res.send → res.json sanitized' };
 }
 
 // ─── HTTP → HTTPS ─────────────────────────────────────
