@@ -522,13 +522,15 @@ function fixAllEngine() {
               result = { repaired: hr.fixed, repairs: hr.repairs };
             } else {
               result = repairCode(F[fn], issues, fn);
-              // AdvancedRepair — JWT، Promise، CMD
+              // AdvancedRepair — يصلح حتى لو ما في issues
               if (typeof AdvancedRepair !== 'undefined') {
                 const ar = AdvancedRepair.fix(result.repaired || F[fn], fn);
-                if (ar.changed) result = { repaired: ar.fixed, repairs: ar.repairs };
+                if (ar.changed) {
+                  result = { repaired: ar.fixed, repairs: [...(result.repairs||[]), ...ar.repairs] };
+                }
               }
             }
-            if (!result || result.repaired === F[fn] || !result.repairs.length) break;
+            if (!result || result.repaired === F[fn]) break;
             F[fn] = result.repaired;
             totalFixed += result.repairs.length;
         }
