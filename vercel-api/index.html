@@ -142,6 +142,7 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
       <button class="btn btn-p" id="btn-aiall" onclick="fixAllWithAI()">🤖 إصلاح الكل بـ AI</button>
       <button class="btn btn-ok" id="btn-dl" onclick="_fromZip ? dlAsZip() : dlAll()" style="display:none">⬇️ تنزيل</button>
       <button class="btn btn-s" id="btn-pdf" onclick="exportPDF()" style="display:none">📄 PDF</button>
+      <button class="btn btn-s" id="btn-recheck" onclick="reCheck()" style="display:none">🔄 إعادة فحص</button>
       <button class="btn btn-p" id="btn-fixall" onclick="fixAllEngine()" style="display:none">⚡ إصلاح الكل بالمحرك</button>
       <div class="tb-r" id="ri"></div>
     </div>
@@ -298,6 +299,7 @@ function renderResults(tot, st, bg) {
         <div class="st"><div class="sn">${bg}</div><div class="sl">أخطاء</div></div>`;
     document.getElementById('ri').textContent = tot + ' مشكلة في ' + fc + ' ملف';
     document.getElementById('btn-dl').style.display      = 'inline-block';
+    document.getElementById('btn-recheck').style.display = 'inline-block';
     document.getElementById('btn-pdf').style.display     = 'inline-block';
     document.getElementById('btn-fixall').style.display  = 'inline-block';
 
@@ -774,6 +776,36 @@ function refreshStats() {
 // ═══════════════════════════════════════════════════════
 // Utilities
 // ═══════════════════════════════════════════════════════
+
+function reCheck() {
+  // إعادة تحليل وإصلاح كل الملفات
+  const files = Object.keys(F);
+  if (!files.length) return;
+  
+  toast('🔄 جاري إعادة الفحص...');
+  
+  let hasIssues = false;
+  files.forEach(fn => {
+    const issues = analyzeCode(F[fn], fn);
+    if (issues.length > 0) {
+      hasIssues = true;
+      // أصلح مرة ثانية
+      const result = repairCode(F[fn], issues, fn);
+      if (result.repaired !== F[fn]) {
+        F[fn] = result.repaired;
+      }
+    }
+  });
+  
+  // أعد التحليل
+  analyzeAll();
+  
+  if (!hasIssues) {
+    toast('✅ لا مشاكل — الكود نظيف!', 's');
+  } else {
+    toast('✅ تم إعادة الفحص والإصلاح', 's');
+  }
+}
 
 function exportPDF() {
     const date = new Date().toLocaleDateString('ar-SA', {day:'numeric', month:'numeric', year:'numeric'});
