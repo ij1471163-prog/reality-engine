@@ -15,7 +15,7 @@ var HTMLRepair = (() => {
     if (t.startsWith('*') || t.startsWith('/*')) return 'comment';
     if (/^\s*(const|let|var|function|class|import|export|if|for|while|return)/.test(t)) return 'js';
     if (/[{};]$/.test(t) && !/</.test(t)) return 'js';
-    if (/<[a-z]/.test(t) && !/(const|let|var)\s/.test(t)) return 'html';
+    if (/<[a-z]/.test(t) && !/(const|let|var|function|if|for)\s/.test(t) && !/\.innerHTML/.test(t)) return 'html';
     return 'js'; // default
   }
 
@@ -58,7 +58,7 @@ var HTMLRepair = (() => {
       return `${ind}const _p = document.createElement('span'); _p.textContent = String(${v}).replace(/[<>]/g, ''); document.body.appendChild(_p);`;
     }
 
-    // innerHTML = 'string' + var
+    // innerHTML = anything (حتى بدون +)
     if (/\.innerHTML\s*=/.test(line) && !/textContent/.test(line)) {
       const m = line.match(/\.innerHTML\s*=\s*['"`][^'"`]*['"`]\s*\+\s*(\w+)/);
       if (m) {
