@@ -156,7 +156,8 @@ var LearningEngine = (() => {
   // ─── Learn from Fix ───────────────────────────────
   // يتعلم من كل إصلاح
   function learn(codeBefore, codeAfter, issues, fileName) {
-    if (!codeBefore || !codeAfter || codeBefore === codeAfter) {} // no early return
+    // لا تتعلم لو ما في فرق بين قبل وبعد
+    if (!codeBefore || !codeAfter || codeBefore === codeAfter) return 0;
 
     const db = loadPatterns();
     let learned = 0;
@@ -166,8 +167,8 @@ var LearningEngine = (() => {
     issues.forEach(issue => {
       if (NEVER_LEARN_TYPES.some(t => (issue.type||'').includes(t))) return;
 
-      // تعلم من الـ issue مباشرة لو before = after
-      if (codeBefore === codeAfter) {
+      // هذا الكود لن يُنفذ لأننا أضفنا early return
+      if (false) {
         const lines = codeBefore.split('\n');
         const issueLine = (lines[issue.line - 1] || '').trim();
         if (!issueLine) return;
