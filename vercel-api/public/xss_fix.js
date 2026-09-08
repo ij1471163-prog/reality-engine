@@ -7,10 +7,25 @@
 var XSSFixer = (() => {
 
   function fixJS(code) {
-    return code
-      .replace(/\.innerHTML\s*=/g, '.textContent =')
-      .replace(/\.outerHTML\s*=/g, '.textContent =')
-      .replace(/document\.write\s*\(/g, '// SECURITY: document.write removed — use DOM methods (');
+    const lines = code.split('\n');
+    const fixed = lines.map(line => {
+      // innerHTML = 'string' + var → textContent = sanitized
+      if (/\.innerHTML\s*=/.test(line) && !/\.textContent/.test(line)) {
+        // استخرج الـ user variable
+        const varMatch = line.match(/\.innerHTML\s*=\s*.*?\+\s*(\w+)/);
+        if (varMatch) {
+          const v = varMatch[1];
+          return line
+            .replace(/\.innerHTML\s*=\s*['"`][^'"\`]*['"\`]\s*\+\s*\w+\s*\+\s*['"\`][^'"\`]*['"\`]/, `.textContent = String(${v}).replace(/[<>]/g, '')`)
+            .replace(/\.innerHTML\s*=/, '.textContent =');
+        }
+        return line.replace(/\.innerHTML\s*=/, '.textContent =');
+      }
+      if (/\.outerHTML\s*=/.test(line)) return line.replace(/\.outerHTML\s*=/, '.textContent =');
+      if (/document\.write\s*\(/.test(line)) return line.replace(/document\.write\s*\(/, '// SECURITY: document.write removed — use DOM methods (');
+      return line;
+    });
+    return fixed.join('\n');
   }
 
   function fixPHP(code) {
