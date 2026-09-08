@@ -109,6 +109,8 @@ var KnowledgeBase = (() => {
     ],
     safe: [
       { lang: 'js',  pattern: /process\.env\.\w+/i, conf: 0.99 },
+      { lang: 'js',  pattern: /jwt\.sign\s*\([^)]+expiresIn/i, conf: 0.99 },
+      { lang: 'js',  pattern: /jwt\.sign\s*\([^)]+process\.env[^)]+expiresIn/i, conf: 0.99 },
       { lang: 'py',  pattern: /os\.environ(?:\.get)?\s*\(/i, conf: 0.99 },
       { lang: 'php', pattern: /getenv\s*\(/i, conf: 0.99 },
       { lang: 'java', pattern: /System\.getenv\s*\(/i, conf: 0.99 },
@@ -167,7 +169,7 @@ var KnowledgeBase = (() => {
       { lang: 'any', pattern: /md5\s*\(\s*\$\w+/i, conf: 0.95 },
       { lang: 'any', pattern: /Math\.random\(\).*(?:token|key|secret|id)/i, conf: 0.90 },
       { lang: 'any', pattern: /DES|3DES|RC4|RC2/i, conf: 0.90 },
-      { lang: 'js',  pattern: /jwt\.sign\s*\([^)]+\)\s*(?!,\s*\{)/i, conf: 0.85 },
+      { lang: 'js',  pattern: /jwt\.sign\s*\((?![^)]*expiresIn)[^)]+\)\s*(?!,\s*\{)/i, conf: 0.85 },
     ],
     safe: [
       { lang: 'any', pattern: /createHash\s*\(\s*['"]sha256['"]\s*\)/i, conf: 0.99 },
@@ -263,7 +265,7 @@ var KnowledgeBase = (() => {
   const AUTH_PATTERNS = {
     dangerous: [
       { lang: 'js',  pattern: /jwt\.verify\s*\([^)]+,\s*['"][^'"]+['"]\s*\)/i, conf: 0.90 },
-      { lang: 'js',  pattern: /jwt\.sign\s*\([^,]+,\s*['"][^'"]+['"]\s*\)/i, conf: 0.90 },
+      { lang: 'js',  pattern: /jwt\.sign\s*\([^,]+,\s*['"][^'"]+['"]\s*\)(?!.*process\.env)/i, conf: 0.90 },
       { lang: 'any', pattern: /password\s*===?\s*['"][^'"]+['"]/i, conf: 0.90 },
       { lang: 'any', pattern: /if\s*\(\s*password\s*==\s*/i, conf: 0.85 },
       { lang: 'py',  pattern: /check_password\s*==\s*/i, conf: 0.85 },

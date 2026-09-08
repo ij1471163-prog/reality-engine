@@ -74,7 +74,7 @@ var CVEPatterns = (() => {
     // A07: Auth Failures
     A07: [
       { id: 'CWE-287', lang: 'js',  pattern: /jwt\.verify\s*\([^)]+,\s*['"][^'"]{1,20}['"]\s*\)/i, conf: 0.90, title: '🔴 Hardcoded JWT Secret (CWE-287)' },
-      { id: 'CWE-287', lang: 'js',  pattern: /jwt\.sign\s*\([^)]+\)\s*(?!.*expiresIn)/i, conf: 0.85, title: '🟠 JWT No Expiry (CWE-287)' },
+      { id: 'CWE-287', lang: 'js',  pattern: /jwt\.sign\s*\((?![^)]*expiresIn)[^)]+\)/i, conf: 0.85, title: '🟠 JWT No Expiry (CWE-287)' },
       { id: 'CWE-306', lang: 'js',  pattern: /app\.(get|post|put|delete)\s*\(['"][^'"]+['"]\s*,\s*(?:async\s*)?\([^)]*req[^)]*\)\s*=>/i, conf: 0.60, title: '🟡 Endpoint May Lack Auth (CWE-306)' },
       { id: 'CWE-521', lang: 'any', pattern: /password.{0,20}(?:length|len)\s*[<>=]+\s*[1-5]\b/i, conf: 0.85, title: '🟠 Weak Password Policy (CWE-521)' },
       { id: 'CWE-640', lang: 'js',  pattern: /reset.*password.*email|forgot.*password/i, conf: 0.50, title: '🟡 Review Password Reset Logic (CWE-640)' },

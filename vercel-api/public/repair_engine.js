@@ -289,8 +289,9 @@ function fixXSS(code, issue, lines, ext) {
     const m = line.match(/res\.send\s*\(['"`]([^'"\`]*?)['"\`]\s*\+\s*(\w+)/);
     if (m) {
       fixed = line.replace(/res\.send\s*\([^)]+\)/, `res.json({ message: String(${m[2]}).replace(/[<>]/g, '') })`);
-    } else {
-      fixed = line.replace(/res\.send\s*\(/, 'res.json({ message: String(').replace(/\)\s*;$/, ').replace(/[<>]/g, "") });');
+    } else if (/res\.send\s*\([^)]*\+[^)]*\)/.test(line)) {
+      const v = line.match(/res\.send\s*\([^)]*\+\s*(\w+)/)?.[1] || 'data';
+      fixed = line.replace(/res\.send\s*\([^)]+\)/, `res.json({ message: String(${v}).replace(/[<>]/g, '') })`);
     }
   }
   if (fixed === line) return null;
