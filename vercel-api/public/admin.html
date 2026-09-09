@@ -45,6 +45,15 @@
   .btn-secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; }
   .actions { display: flex; gap: 10px; margin-bottom: 20px; }
   .empty { text-align: center; color: #8b949e; padding: 40px; }
+
+  @media print {
+    .login, .filter-bar, .actions, .btn-danger, .btn-secondary { display: none !important; }
+    body { background: white !important; color: black !important; padding: 10px; }
+    .pattern-card { border: 1px solid #ccc !important; background: white !important; break-inside: avoid; }
+    .stat-card { border: 1px solid #ccc !important; background: white !important; }
+    .code-line { background: #f5f5f5 !important; }
+    h1 { color: #5a3e8a !important; }
+  }
 </style>
 </head>
 <body>
@@ -67,6 +76,7 @@
   <!-- Actions -->
   <div class="actions">
     <button class="btn-secondary" onclick="loadDashboard()">🔄 تحديث</button>
+    <button class="btn-secondary" onclick="exportPDF()">📄 Export PDF</button>
     <button class="btn-danger" onclick="doReset()">🗑️ Reset Learning</button>
   </div>
 
@@ -203,6 +213,14 @@ function renderPatterns(patterns) {
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Export PDF ──────────────────────────────────────
+function exportPDF() {
+  const title = document.title;
+  document.title = 'Reality Engine - Learning Patterns';
+  window.print();
+  document.title = title;
 }
 
 // ─── Reset ────────────────────────────────────────────
