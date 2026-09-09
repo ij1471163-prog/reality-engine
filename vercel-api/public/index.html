@@ -532,7 +532,7 @@ function fixAllEngine() {
             }
             if (!result || result.repaired === F[fn]) break;
 
-            // Ghost Mode — يتحقق من الإصلاح
+            // Ghost Mode — يتحقق من الإصلاح (بعد آخر pass فقط)
             let finalCode = result.repaired;
             if (typeof GhostMode !== 'undefined') {
               const origIssues = analyzeCode(origF[fn] || F[fn], fn);
@@ -540,15 +540,15 @@ function fixAllEngine() {
               const ghostResult = GhostMode.fix(F[fn], result.repaired, fn, analyzeCode, { targetTypes });
               finalCode = ghostResult.code;
 
-              // ربط LearningEngine.verify بناءً على Ghost verdict
-              if (typeof LearningEngine !== 'undefined') {
-                const db = LearningEngine.getStats();
-                db.patterns
-                  .filter(p => !p.approved && p.observed >= 1)
-                  .forEach(p => {
-                    const success = ghostResult.verdict === 'pass';
-                    LearningEngine.verify(p.id, success);
-                  });
+              // verify مرة واحدة فقط — بعد آخر pass
+              const isLastPass = analyzeCode(finalCode, fn).filter(i=>i.sev==='c'||i.sev==='h').length === 0
+                              || pass === 1;
+              if (isLastPass && typeof LearningEngine !== 'undefined') {
+                const ghostSuccess = ghostResult.verdict === 'pass';
+                // verify فقط patterns اللي before موجود في الكود الأصلي
+                LearningEngine.getStats().patterns
+                  .filter(p => !p.approved && p.before && (origF[fn]||'').includes(p.before))
+                  .forEach(p => LearningEngine.verify(p.id, ghostSuccess));
               }
             }
 
