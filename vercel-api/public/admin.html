@@ -21,7 +21,7 @@ if (pass !== 'naif2024') { document.body.innerHTML = '❌'; }
 
 // تحميل stats من localStorage
 function loadStats() {
-    const data = localStorage.getItem('re_learned_patterns');
+    const data = localStorage.getItem('re_learned_patterns_v2');
     if (!data) { document.getElementById('stats').innerHTML = 'ما في تعلم بعد'; return; }
     const db = JSON.parse(data);
     document.getElementById('stats').innerHTML = `
@@ -41,7 +41,7 @@ function loadStats() {
 
 function reset() {
     if (confirm('تأكيد الحذف؟')) {
-        localStorage.removeItem('re_learned_patterns');
+        localStorage.removeItem('re_learned_patterns_v2');
         loadStats();
     }
 }
