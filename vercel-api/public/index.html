@@ -531,7 +531,28 @@ function fixAllEngine() {
               }
             }
             if (!result || result.repaired === F[fn]) break;
-            F[fn] = result.repaired;
+
+            // Ghost Mode — يتحقق من الإصلاح
+            let finalCode = result.repaired;
+            if (typeof GhostMode !== 'undefined') {
+              const origIssues = analyzeCode(origF[fn] || F[fn], fn);
+              const targetTypes = origIssues.map(i => i.cAct || i.type).filter(Boolean);
+              const ghostResult = GhostMode.fix(F[fn], result.repaired, fn, analyzeCode, { targetTypes });
+              finalCode = ghostResult.code;
+
+              // ربط LearningEngine.verify بناءً على Ghost verdict
+              if (typeof LearningEngine !== 'undefined') {
+                const db = LearningEngine.getStats();
+                db.patterns
+                  .filter(p => !p.approved && p.observed >= 1)
+                  .forEach(p => {
+                    const success = ghostResult.verdict === 'pass';
+                    LearningEngine.verify(p.id, success);
+                  });
+              }
+            }
+
+            F[fn] = finalCode;
             totalFixed += result.repairs.length;
         }
         R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
