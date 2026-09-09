@@ -544,7 +544,7 @@ function fixAllEngine() {
               const isLastPass = analyzeCode(finalCode, fn).filter(i=>i.sev==='c'||i.sev==='h').length === 0
                               || pass === 1;
               if (isLastPass && typeof LearningEngine !== 'undefined') {
-                const ghostSuccess = ghostResult.verdict === 'pass';
+                const ghostSuccess = ghostResult.verdict === 'pass' || ghostResult.verdict === 'partial';
                 // verify فقط patterns اللي before موجود في الكود الأصلي
                 LearningEngine.getStats().patterns
                   .filter(p => !p.approved && p.before && (origF[fn]||'').includes(p.before))
@@ -972,6 +972,7 @@ if (!localStorage.getItem('re_welcomed')) {
   document.getElementById('welcome-modal').style.display = 'flex';
 }
 </script>
+<script src="/fix_engine_pipeline.js"></script>
 <script src="/fix_verifier.js"></script>
 <script src="/ghost_mode.js"></script>
 <script src="/learned_fixer.js"></script>
