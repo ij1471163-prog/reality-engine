@@ -590,12 +590,7 @@ function fixAllEngine() {
                 LearningEngine.learn(orig, fixed, origIssues, fn);
             }
             // يتعلم من الكود الأصلي حتى لو ما تغير
-            else {
-                const issues = analyzeCode(orig, fn);
-                if (issues.length > 0) {
-                    LearningEngine.learn(orig, orig, issues, fn);
-                }
-            }
+            // else removed - was learning from unchanged code
         });
     }
     // طباعة إحصائيات التعلم في console
