@@ -9,8 +9,8 @@ var LearningEngine = (() => {
   const STORAGE_KEY = 're_learned_patterns_v2';
 
   const THRESHOLDS = {
-    MIN_VERIFIED:   3,     // أدنى تحققات قبل الموافقة
-    MIN_CONFIDENCE: 0.60,  // أدنى confidence
+    MIN_VERIFIED:   2,     // أدنى تحققات قبل الموافقة
+    MIN_CONFIDENCE: 0.20,  // أدنى confidence
     MAX_CONFIDENCE: 0.97,  // حد أقصى
     DECAY_ON_FAIL:  0.15,  // خفض confidence عند الفشل
   };
