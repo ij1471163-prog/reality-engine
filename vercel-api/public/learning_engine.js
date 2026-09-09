@@ -65,23 +65,60 @@ var LearningEngine = (() => {
     return SAFE_SIGNATURES.some(p => p.test(line));
   }
 
-  // ─── Extract Pair ───────────────────────────────────
+  // ─── Extract Pair (Diff-based) ─────────────────────
   function extractPair(codeBefore, codeAfter, issue) {
     const linesBefore = codeBefore.split('\n');
     const linesAfter  = codeAfter.split('\n');
     const ln = (issue.line || 1) - 1;
+    const beforeLine = linesBefore[ln]?.trim() || '';
 
-    const before = linesBefore[ln]?.trim() || '';
-    const after  = linesAfter[ln]?.trim()  || '';
+    if (!beforeLine || isSafe(beforeLine)) return null;
 
-    if (!before || before === after) return null;
-    if (isSafe(before)) return null; // لا تتعلم من كود صح
+    // لو نفس السطر موجود في after → ما تغير
+    if (linesAfter.some(l => l.trim() === beforeLine)) return null;
+
+    // ابحث عن الإصلاح المناسب في نفس المنطقة
+    const t = (issue.type || issue.cAct || '').toLowerCase();
+    const window = 3;
+    const start = Math.max(0, ln - window);
+    const end   = Math.min(linesAfter.length - 1, ln + window);
+
+    let afterLine = '';
+    for (let i = start; i <= end; i++) {
+      const l = linesAfter[i]?.trim() || '';
+      if (!l || l === beforeLine) continue;
+      if (/^[{}();,]$/.test(l)) continue;
+
+      // تحقق أن after مناسب لنوع الثغرة
+      const isSecretFix = /process\.env|os\.environ|getenv/.test(l);
+      const isSQLFix    = /\?|prepare|parameterized/.test(l);
+      const isXSSFix    = /textContent|htmlspecialchars|sanitize/.test(l);
+      const isCryptoFix = /sha256|bcrypt|argon/.test(l);
+      const isEvalFix   = /SECURITY.*eval|JSON\.parse/.test(l);
+
+      if (t.includes('secret') || t.includes('hardcoded') || t.includes('cwe_798')) {
+        if (!isSecretFix) continue;
+      } else if (t.includes('sql') || t.includes('cwe_89')) {
+        if (!isSQLFix) continue;
+      } else if (t.includes('xss')) {
+        if (!isXSSFix) continue;
+      } else if (t.includes('crypto') || t.includes('cwe_327')) {
+        if (!isCryptoFix) continue;
+      } else if (t.includes('eval') || t.includes('cwe_094')) {
+        if (!isEvalFix) continue;
+      }
+
+      afterLine = l;
+      break;
+    }
+
+    if (!afterLine || afterLine === beforeLine) return null;
 
     return {
       type:     issue.type || issue.cAct || 'unknown',
       severity: issue.sev  || 'c',
-      before,
-      after,
+      before:   beforeLine,
+      after:    afterLine,
     };
   }
 
