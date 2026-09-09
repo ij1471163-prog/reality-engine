@@ -98,6 +98,46 @@ var LearningEngine = (() => {
     return blocks;
   }
 
+  // ─── Language Inference ─────────────────────────────
+  function inferLanguage(fileName) {
+    const ext = (fileName || '').split('.').pop().toLowerCase();
+    const map = { js:'js', ts:'ts', py:'py', php:'php', java:'java', html:'html', css:'css', rb:'ruby', go:'go', cs:'csharp' };
+    return map[ext] || 'unknown';
+  }
+
+  // ─── Context Extraction ──────────────────────────────
+  function extractContext(code, lineIdx) {
+    const lines = code.split('\n');
+    const line = lines[lineIdx] || '';
+
+    // ابحث عن اسم الدالة المحيطة
+    let functionName = null;
+    for (let i = lineIdx; i >= 0; i--) {
+      const m = lines[i].match(/(?:function|def|public|private|async)\s+(\w+)\s*\(/);
+      if (m) { functionName = m[1]; break; }
+    }
+
+    // scope
+    const scope = line.includes('class ') ? 'class'
+      : functionName ? 'function'
+      : 'module';
+
+    return { functionName: functionName || null, scope };
+  }
+
+  // ─── Fingerprint ─────────────────────────────────────
+  function makeFingerprint(type, language, before, context) {
+    // normalize before — حذف مسافات زائدة وتوحيد
+    const norm = (before || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const scope = context ? context.scope : 'global';
+    const fn    = context ? (context.functionName || 'global') : 'global';
+    const str   = `${type}|${language}|${norm}|${scope}:${fn}`;
+    // simple hash بدون مكتبات خارجية
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+    return Math.abs(h).toString(36);
+  }
+
   // ─── Extract Pair (LCS + Fail Closed) ────────────────
   function extractPair(codeBefore, codeAfter, issue) {
     const linesBefore = codeBefore.split('\n');
@@ -181,30 +221,41 @@ var LearningEngine = (() => {
       const pair = extractPair(codeBefore, codeAfter, issue);
       if (!pair) return;
 
+      // استخرج language + context + fingerprint أولاً
+      const lang = inferLanguage(fileName);
+      const ctx  = extractContext(codeBefore, (issue.line||1)-1);
+      const fp   = makeFingerprint(pair.type, lang, pair.before, ctx);
+
+      // مطابقة existing بـ type + language + fingerprint
       const existing = db.patterns.find(p =>
-        p.type === pair.type && p.before === pair.before
+        p.type === pair.type &&
+        p.language === lang &&
+        p.fingerprint === fp
       );
 
       if (existing) {
         existing.observed = (existing.observed || 0) + 1;
         existing.lastSeen = Date.now();
-        learnedIds.push(existing.id); // أضف ID الموجود
+        learnedIds.push(existing.id);
       } else {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
         db.patterns.push({
           id,
-          type:       pair.type,
-          severity:   pair.severity,
-          before:     pair.before,
-          after:      pair.after,
-          fileName:   fileName || '',
-          observed:   1,
-          verified:   0,
-          failures:   0,
-          confidence: 0,
-          approved:   false,
-          created:    Date.now(),
-          lastSeen:   Date.now(),
+          type:        pair.type,
+          severity:    pair.severity,
+          before:      pair.before,
+          after:       pair.after,
+          language:    lang,
+          context:     { functionName: ctx.functionName, scope: ctx.scope, fileName: fileName || '' },
+          fingerprint: fp,
+          fileName:    fileName || '',
+          observed:    1,
+          verified:    0,
+          failures:    0,
+          confidence:  0,
+          approved:    false,
+          created:     Date.now(),
+          lastSeen:    Date.now(),
         });
         learnedIds.push(id); // أضف ID الجديد
       }
@@ -222,15 +273,14 @@ var LearningEngine = (() => {
     if (!p) return;
 
     if (success) {
-      p.verified  = (p.verified  || 0) + 1;
+      p.verified = (p.verified || 0) + 1;
     } else {
-      p.failures  = (p.failures  || 0) + 1;
-      // decay — فشل يخفض confidence
-      p.confidence = Math.max(0, (p.confidence || 0) - THRESHOLDS.DECAY_ON_FAIL);
+      p.failures = (p.failures || 0) + 1;
       // revoke approval لو فشل كثير
       if (p.failures >= 3) p.approved = false;
     }
 
+    // calcConfidence هو المصدر النهائي — لا manual decay
     p.confidence = calcConfidence(p.verified || 0, p.failures || 0);
 
     // موافقة تلقائية
@@ -254,10 +304,13 @@ var LearningEngine = (() => {
     const db = load();
     if (!db.patterns.length) return { fixed: code, applied: 0 };
 
+    const fileLang = inferLanguage(fileName);
     const goodPatterns = db.patterns.filter(p =>
       p.approved &&
       p.confidence >= THRESHOLDS.MIN_CONFIDENCE &&
-      p.verified   >= THRESHOLDS.MIN_VERIFIED
+      p.verified   >= THRESHOLDS.MIN_VERIFIED &&
+      // لا تطبق إذا اللغة مختلفة
+      (!p.language || p.language === fileLang)
     );
 
     if (!goodPatterns.length) return { fixed: code, applied: 0 };
@@ -311,15 +364,18 @@ var LearningEngine = (() => {
       pending:  db.patterns.filter(p => !p.approved).length,
       safe:     (db.safe || []).length,
       patterns: db.patterns.map(p => ({
-        id:         p.id,
-        type:       p.type,
-        before:     p.before?.slice(0, 60),
-        after:      p.after?.slice(0, 60),
-        observed:   p.observed,
-        verified:   p.verified,
-        failures:   p.failures,
-        confidence: p.confidence?.toFixed(2),
-        approved:   p.approved,
+        id:          p.id,
+        type:        p.type,
+        before:      p.before?.slice(0, 60),
+        after:       p.after?.slice(0, 60),
+        language:    p.language || 'unknown',
+        context:     p.context || null,
+        fingerprint: p.fingerprint || null,
+        observed:    p.observed,
+        verified:    p.verified,
+        failures:    p.failures,
+        confidence:  p.confidence?.toFixed(2),
+        approved:    p.approved,
       }))
     };
   }
