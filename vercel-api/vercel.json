@@ -31,11 +31,7 @@
   ],
   "functions": {
     "api/patterns/save.js": {
-      "includeFiles": [
-        "public/analyzer.js",
-        "public/engine_java.js",
-        "public/knowledge_base.js"
-      ]
+      "includeFiles": "public/{analyzer.js,engine_java.js,knowledge_base.js}"
     }
   }
 }
