@@ -368,13 +368,11 @@ var LearningEngine = (() => {
           existing.samples++;
           existing.confidence = Math.min(0.99, existing.successes / existing.samples);
         } else {
-          db.patterns.push({
+          db.safe = db.safe || [];
+          db.safe.push({
             type, pattern: t.substring(0, 80),
-            fix: '// safe pattern: ' + label,
-            example: { before: t, after: t },
-            confidence: 0.5, samples: 1, successes: 1, failures: 0,
             isSafe: true,
-            created: Date.now(), lastUsed: Date.now(),
+            created: Date.now(),
           });
           learned++;
         }
