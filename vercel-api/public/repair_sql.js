@@ -300,6 +300,25 @@
         }
       );
 
+      // variable = "..." + var → variable = "...?" , (var,)
+      fixed = fixed.replace(
+        /^([ \t]*)(\w+)\s*=\s*(['"])([^'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^'"]*?)\3\s*\+\s*(.+?)$/gim,
+        (match, indent, varName, quote, queryStr, concatPart) => {
+          const vars = extractVarsFromConcat(queryStr, concatPart.trim());
+          if (!vars.length) return match;
+          const placeholder = driver.placeholder;
+          const cleanQ = queryStr.replace(
+            /WHERE\s+(\w+)\s*=\s*['"]?[^'"]*['"]?/i,
+            `WHERE $1 = ${placeholder}`
+          );
+          const varTuple = vars.length === 1 ? `(${vars[0]},)` : `(${vars.join(', ')})`;
+          const result = `${indent}${varName} = "${cleanQ}"  # params: ${varTuple}`;
+          fixes.push({ original: match, fixed: result });
+          count++;
+          return result;
+        }
+      );
+
       // f-string SQL
       fixed = fixed.replace(
         /f(['"])([^'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^'"]*)\1/gi,
