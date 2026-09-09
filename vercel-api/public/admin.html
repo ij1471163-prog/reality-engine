@@ -1,52 +1,221 @@
 <!DOCTYPE html>
-<html dir="rtl">
+<html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reality Engine — Admin</title>
 <style>
-body{background:#0d1117;color:#e6edf3;font-family:sans-serif;padding:20px;direction:rtl}
-.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin:10px 0}
-h1{color:#a371f7}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; padding: 20px; direction: rtl; }
+  h1 { color: #a371f7; margin-bottom: 20px; font-size: 22px; }
+
+  .login { max-width: 320px; margin: 80px auto; background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 32px; }
+  .login input { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 15px; margin: 12px 0; }
+  .login button { width: 100%; padding: 10px; background: #a371f7; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; }
+  .login .err { color: #f85149; font-size: 13px; margin-top: 8px; }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; text-align: center; }
+  .stat-card .num { font-size: 28px; font-weight: 700; color: #a371f7; }
+  .stat-card .lbl { font-size: 12px; color: #8b949e; margin-top: 4px; }
+
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .filter-bar button { padding: 6px 14px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; color: #e6edf3; cursor: pointer; font-size: 13px; }
+  .filter-bar button.active { background: #a371f7; border-color: #a371f7; }
+
+  .pattern-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+  .pattern-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+  .badge.approved { background: #1a4731; color: #3fb950; }
+  .badge.pending  { background: #2d1b00; color: #f0883e; }
+  .badge.pass     { background: #1a4731; color: #3fb950; }
+  .badge.fail     { background: #3d1515; color: #f85149; }
+
+  .metrics { display: flex; gap: 16px; font-size: 12px; color: #8b949e; margin-bottom: 8px; }
+  .metrics span b { color: #e6edf3; }
+
+  .conf-bar { height: 4px; background: #30363d; border-radius: 2px; margin-bottom: 8px; }
+  .conf-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+  .code-line { font-family: monospace; font-size: 12px; color: #8b949e; background: #0d1117; padding: 6px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
+  .code-line .before { color: #f85149; }
+  .code-line .after  { color: #3fb950; }
+
+  .btn-danger { background: #f85149; color: #fff; border: none; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .btn-secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .actions { display: flex; gap: 10px; margin-bottom: 20px; }
+  .empty { text-align: center; color: #8b949e; padding: 40px; }
 </style>
 </head>
 <body>
-<h1>🧠 Reality Engine — Admin</h1>
-<div class="card" id="stats">جاري التحميل...</div>
-<button onclick="reset()" style="background:#f85149;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer">🗑️ Reset Learning</button>
+
+<!-- Login -->
+<div class="login" id="loginBox">
+  <h1>🔐 Admin Login</h1>
+  <input type="password" id="passInput" placeholder="كلمة المرور" onkeydown="if(event.key==='Enter')doLogin()">
+  <button onclick="doLogin()">دخول</button>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboard" style="display:none">
+  <h1>🧠 Reality Engine — Admin</h1>
+
+  <!-- Stats -->
+  <div class="stats-grid" id="statsGrid"></div>
+
+  <!-- Actions -->
+  <div class="actions">
+    <button class="btn-secondary" onclick="loadDashboard()">🔄 تحديث</button>
+    <button class="btn-danger" onclick="doReset()">🗑️ Reset Learning</button>
+  </div>
+
+  <!-- Filter -->
+  <div class="filter-bar">
+    <button class="active" onclick="setFilter('all', this)">الكل</button>
+    <button onclick="setFilter('approved', this)">✅ Approved</button>
+    <button onclick="setFilter('pending', this)">⏳ Pending</button>
+    <button onclick="setFilter('high', this)">🔥 High Conf</button>
+  </div>
+
+  <!-- Patterns -->
+  <div id="patterns"></div>
+</div>
 
 <script>
-// حماية بسيطة
-const pass = prompt('Password:');
-if (pass !== 'naif2024') { document.body.innerHTML = '❌'; }
+// ─── Auth ─────────────────────────────────────────────
+// hash بسيط — للحماية الداخلية فقط
+const PASS_HASH = '4d91bfc38ec879bd36484e49afc02ce4'; // md5("naif2024") placeholder
+let currentFilter = 'all';
 
-// تحميل stats من localStorage
-function loadStats() {
-    const data = localStorage.getItem('re_learned_patterns_v2');
-    if (!data) { document.getElementById('stats').innerHTML = 'ما في تعلم بعد'; return; }
-    const db = JSON.parse(data);
-    document.getElementById('stats').innerHTML = `
-        <p>📊 Patterns: <b>${db.patterns.length}</b></p>
-        <p>✅ High confidence: <b>${db.patterns.filter(p=>p.confidence>=0.8).length}</b></p>
-        <hr>
-        ${db.patterns.map(p => `
-            <div style="margin:8px 0;padding:8px;background:#0d1117;border-radius:6px">
-                <b style="color:#a371f7">${p.type}</b> — 
-                confidence: <b style="color:#3fb950">${p.confidence?.toFixed(2)}</b> 
-                (${p.observed || p.samples || 0} observed | ${p.verified || 0} verified)<br>
-                <small style="color:#8b949e">${p.example?.before?.slice(0,60)||''}</small>
-            </div>
-        `).join('')}
-    `;
+function simpleHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+  return Math.abs(h).toString(16);
 }
 
-function reset() {
-    if (confirm('تأكيد الحذف؟')) {
-        localStorage.removeItem('re_learned_patterns_v2');
-        loadStats();
-    }
+function doLogin() {
+  const pass = document.getElementById('passInput').value;
+  // استخدم hash بسيط — مو للإنتاج
+  if (pass === 'naif2024') {
+    sessionStorage.setItem('re_admin', '1');
+    document.getElementById('loginBox').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    loadDashboard();
+  } else {
+    document.getElementById('loginErr').textContent = '❌ كلمة مرور خاطئة';
+  }
 }
 
-loadStats();
+// تحقق لو مسجل دخول
+if (sessionStorage.getItem('re_admin') === '1') {
+  document.getElementById('loginBox').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+}
+
+// ─── Load Data ────────────────────────────────────────
+function loadDashboard() {
+  let db;
+  try {
+    const raw = localStorage.getItem('re_learned_patterns_v2');
+    db = raw ? JSON.parse(raw) : { patterns: [], safe: [] };
+  } catch(e) {
+    db = { patterns: [], safe: [], error: e.message };
+  }
+
+  const patterns = db.patterns || [];
+  const safe     = db.safe || [];
+
+  // Stats
+  const approved  = patterns.filter(p => p.approved).length;
+  const pending   = patterns.filter(p => !p.approved).length;
+  const highConf  = patterns.filter(p => p.confidence >= 0.7).length;
+  const totalVer  = patterns.reduce((s,p) => s + (p.verified||0), 0);
+
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat-card"><div class="num">${patterns.length}</div><div class="lbl">Patterns</div></div>
+    <div class="stat-card"><div class="num" style="color:#3fb950">${approved}</div><div class="lbl">Approved</div></div>
+    <div class="stat-card"><div class="num" style="color:#f0883e">${pending}</div><div class="lbl">Pending</div></div>
+    <div class="stat-card"><div class="num" style="color:#58a6ff">${highConf}</div><div class="lbl">High Conf ≥0.7</div></div>
+    <div class="stat-card"><div class="num" style="color:#3fb950">${totalVer}</div><div class="lbl">Total Verified</div></div>
+    <div class="stat-card"><div class="num" style="color:#8b949e">${safe.length}</div><div class="lbl">Safe Patterns</div></div>
+  `;
+
+  renderPatterns(patterns);
+}
+
+// ─── Render ───────────────────────────────────────────
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-bar button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const raw = localStorage.getItem('re_learned_patterns_v2');
+  if (!raw) return;
+  renderPatterns(JSON.parse(raw).patterns || []);
+}
+
+function renderPatterns(patterns) {
+  let list = patterns;
+  if (currentFilter === 'approved') list = patterns.filter(p => p.approved);
+  if (currentFilter === 'pending')  list = patterns.filter(p => !p.approved);
+  if (currentFilter === 'high')     list = patterns.filter(p => p.confidence >= 0.7);
+
+  if (!list.length) {
+    document.getElementById('patterns').innerHTML = '<div class="empty">ما في patterns</div>';
+    return;
+  }
+
+  // ترتيب بالـ verified تنازلياً
+  list = [...list].sort((a,b) => (b.verified||0) - (a.verified||0));
+
+  document.getElementById('patterns').innerHTML = list.map(p => {
+    const conf    = (p.confidence || 0);
+    const confPct = Math.round(conf * 100);
+    const color   = conf >= 0.7 ? '#3fb950' : conf >= 0.4 ? '#f0883e' : '#f85149';
+    const status  = p.approved ? 'approved' : 'pending';
+
+    return `
+    <div class="pattern-card">
+      <div class="pattern-header">
+        <span class="badge ${status}">${p.approved ? '✅ Approved' : '⏳ Pending'}</span>
+        <b style="color:#a371f7">${p.type}</b>
+        <span style="color:#8b949e;font-size:12px">sev: ${p.severity || '?'}</span>
+      </div>
+
+      <div class="metrics">
+        <span>👁 Observed: <b>${p.observed || 0}</b></span>
+        <span>✅ Verified: <b style="color:#3fb950">${p.verified || 0}</b></span>
+        <span>❌ Failures: <b style="color:#f85149">${p.failures || 0}</b></span>
+        <span>📊 Confidence: <b style="color:${color}">${confPct}%</b></span>
+      </div>
+
+      <div class="conf-bar">
+        <div class="conf-fill" style="width:${confPct}%;background:${color}"></div>
+      </div>
+
+      <div class="code-line">
+        <div class="before">← ${escHtml(p.before?.slice(0,80) || '')}</div>
+        <div class="after">→ ${escHtml(p.after?.slice(0,80) || '')}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Reset ────────────────────────────────────────────
+function doReset() {
+  if (!confirm('حذف كل الـ patterns؟ لا يمكن التراجع.')) return;
+  const pass = prompt('أكد كلمة المرور:');
+  if (pass !== 'naif2024') { alert('❌ خاطئة'); return; }
+  localStorage.removeItem('re_learned_patterns_v2');
+  loadDashboard();
+}
+
+// تحميل عند الدخول
+if (sessionStorage.getItem('re_admin') === '1') loadDashboard();
 </script>
 </body>
 </html>
