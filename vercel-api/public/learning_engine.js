@@ -65,53 +65,102 @@ var LearningEngine = (() => {
     return SAFE_SIGNATURES.some(p => p.test(line));
   }
 
-  // ─── Extract Pair (Diff-based) ─────────────────────
+  // ─── LCS Diff (blocks) ─────────────────────────────
+  function lcsBlocks(before, after) {
+    const n = before.length, m = after.length;
+    const dp = Array.from({length: n+1}, () => new Array(m+1).fill(0));
+    for (let i = 1; i <= n; i++)
+      for (let j = 1; j <= m; j++)
+        dp[i][j] = before[i-1] === after[j-1]
+          ? dp[i-1][j-1]+1
+          : Math.max(dp[i-1][j], dp[i][j-1]);
+
+    const ops = [];
+    let i = n, j = m;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && before[i-1] === after[j-1]) {
+        ops.unshift({ type:'eq', bi:i-1, ai:j-1 }); i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+        ops.unshift({ type:'add', ai:j-1, line:after[j-1] }); j--;
+      } else {
+        ops.unshift({ type:'del', bi:i-1, line:before[i-1] }); i--;
+      }
+    }
+
+    const blocks = [];
+    let cur = null;
+    for (const op of ops) {
+      if (op.type === 'eq') { cur = null; continue; }
+      if (!cur) { cur = { removed:[], added:[] }; blocks.push(cur); }
+      if (op.type === 'del') cur.removed.push({ idx:op.bi, line:op.line });
+      if (op.type === 'add') cur.added.push({ idx:op.ai, line:op.line });
+    }
+    return blocks;
+  }
+
+  // ─── Extract Pair (LCS + Fail Closed) ────────────────
   function extractPair(codeBefore, codeAfter, issue) {
     const linesBefore = codeBefore.split('\n');
     const linesAfter  = codeAfter.split('\n');
-    const ln = (issue.line || 1) - 1;
-    const beforeLine = linesBefore[ln]?.trim() || '';
+    const ln          = (issue.line || 1) - 1;
+    const beforeLine  = linesBefore[ln]?.trim() || '';
 
     if (!beforeLine || isSafe(beforeLine)) return null;
 
-    // لو نفس السطر موجود في after → ما تغير
-    if (linesAfter.some(l => l.trim() === beforeLine)) return null;
+    // LCS blocks
+    const blocks = lcsBlocks(
+      linesBefore.map(l => l.trim()),
+      linesAfter.map(l => l.trim())
+    );
 
-    // ابحث عن الإصلاح المناسب في نفس المنطقة
+    // الـ hunk اللي يحتوي issue line
+    const hunk = blocks.find(b => b.removed.some(r => r.idx === ln));
+    if (!hunk || !hunk.added.length) return null;
+
     const t = (issue.type || issue.cAct || '').toLowerCase();
-    const window = 3;
-    const start = Math.max(0, ln - window);
-    const end   = Math.min(linesAfter.length - 1, ln + window);
 
+    // TYPE_FIXES — ربط نوع الثغرة بـ regex الإصلاح
+    const TYPE_FIXES = {
+      secret:    /process\.env|os\.environ\.get|getenv/,
+      hardcoded: /process\.env|os\.environ\.get|getenv/,
+      cwe_798:   /process\.env|os\.environ\.get|getenv/,
+      sql:       /\?|prepare|parameterized|db\.query/,
+      cwe_89:    /\?|prepare|parameterized/,
+      xss:       /textContent|htmlspecialchars|sanitize|DOMPurify/,
+      crypto:    /sha256|bcrypt|argon2/,
+      cwe_327:   /sha256|bcrypt|argon2/,
+      eval:      /JSON\.parse|safeEval/,
+      cwe_094:   /JSON\.parse|safeEval/,
+      cmd:       /execFile|allowedCmds/,
+      accumul:   /\+=/,
+      counter:   /\+=/,
+    };
+
+    // Fail Closed: لو النوع غير معروف → رفض
+    const knownType = Object.keys(TYPE_FIXES).some(k => t.includes(k));
+    if (!knownType) return null;
+
+    // فلتر candidates من نفس الـ hunk
+    const candidates = hunk.added.filter(a => {
+      const l = a.line;
+      if (!l || l.length < 5) return false;
+      if (/^\/\//.test(l)) return false;
+      if (/^[{}();,#]$/.test(l)) return false;
+      return true;
+    });
+
+    if (!candidates.length) return null;
+
+    // اختر الـ candidate المناسب لنوع الثغرة
     let afterLine = '';
-    for (let i = start; i <= end; i++) {
-      const l = linesAfter[i]?.trim() || '';
-      if (!l || l === beforeLine) continue;
-      if (/^[{}();,]$/.test(l)) continue;
-
-      // تحقق أن after مناسب لنوع الثغرة
-      const isSecretFix = /process\.env|os\.environ|getenv/.test(l);
-      const isSQLFix    = /\?|prepare|parameterized/.test(l);
-      const isXSSFix    = /textContent|htmlspecialchars|sanitize/.test(l);
-      const isCryptoFix = /sha256|bcrypt|argon/.test(l);
-      const isEvalFix   = /SECURITY.*eval|JSON\.parse/.test(l);
-
-      if (t.includes('secret') || t.includes('hardcoded') || t.includes('cwe_798')) {
-        if (!isSecretFix) continue;
-      } else if (t.includes('sql') || t.includes('cwe_89')) {
-        if (!isSQLFix) continue;
-      } else if (t.includes('xss')) {
-        if (!isXSSFix) continue;
-      } else if (t.includes('crypto') || t.includes('cwe_327')) {
-        if (!isCryptoFix) continue;
-      } else if (t.includes('eval') || t.includes('cwe_094')) {
-        if (!isEvalFix) continue;
+    for (const [key, regex] of Object.entries(TYPE_FIXES)) {
+      if (t.includes(key)) {
+        const match = candidates.find(c => regex.test(c.line));
+        if (match) { afterLine = match.line; break; }
       }
-
-      afterLine = l;
-      break;
     }
 
+    // Fail Closed: لو ما في match → رفض
     if (!afterLine || afterLine === beforeLine) return null;
 
     return {
@@ -121,7 +170,6 @@ var LearningEngine = (() => {
       after:    afterLine,
     };
   }
-
   // ─── Learn ──────────────────────────────────────────
   function learn(codeBefore, codeAfter, issues, fileName) {
     if (!codeBefore || !codeAfter || codeBefore === codeAfter) return 0;
