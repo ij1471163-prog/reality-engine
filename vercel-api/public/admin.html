@@ -32,7 +32,7 @@ function loadStats() {
             <div style="margin:8px 0;padding:8px;background:#0d1117;border-radius:6px">
                 <b style="color:#a371f7">${p.type}</b> — 
                 confidence: <b style="color:#3fb950">${p.confidence?.toFixed(2)}</b> 
-                (${p.samples} samples)<br>
+                (${p.observed || p.samples || 0} observed | ${p.verified || 0} verified)<br>
                 <small style="color:#8b949e">${p.example?.before?.slice(0,60)||''}</small>
             </div>
         `).join('')}
