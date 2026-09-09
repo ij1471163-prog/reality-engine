@@ -175,7 +175,7 @@ var LearningEngine = (() => {
     if (!codeBefore || !codeAfter || codeBefore === codeAfter) return 0;
 
     const db = load();
-    let learned = 0;
+    const learnedIds = []; // IDs للـ patterns الجديدة أو الموجودة
 
     issues.forEach(issue => {
       const pair = extractPair(codeBefore, codeAfter, issue);
@@ -188,9 +188,11 @@ var LearningEngine = (() => {
       if (existing) {
         existing.observed = (existing.observed || 0) + 1;
         existing.lastSeen = Date.now();
+        learnedIds.push(existing.id); // أضف ID الموجود
       } else {
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
         db.patterns.push({
-          id:         `${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+          id,
           type:       pair.type,
           severity:   pair.severity,
           before:     pair.before,
@@ -204,13 +206,13 @@ var LearningEngine = (() => {
           created:    Date.now(),
           lastSeen:   Date.now(),
         });
-        learned++;
+        learnedIds.push(id); // أضف ID الجديد
       }
     });
 
     db.meta.total++;
     save(db);
-    return learned;
+    return learnedIds;
   }
 
   // ─── Verify (Ghost Mode calls this with patternId) ──
@@ -343,3 +345,4 @@ var LearningEngine = (() => {
 
 if (typeof window !== 'undefined') window.LearningEngine = LearningEngine;
 if (typeof module !== 'undefined') module.exports = LearningEngine;
+
