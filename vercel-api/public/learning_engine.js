@@ -257,17 +257,21 @@ var LearningEngine = (() => {
       if (!t || t.startsWith('//') || t.startsWith('#')) return;
 
       goodPatterns.forEach(p => {
-        if (!matchPattern(t, p.pattern)) return;
-
-        // تحقق إن الـ fix مختلف
-        if (matchPattern(t, p.fix)) return; // مصلح بالفعل
+        // تطابق مباشر مع example.before
+        const exBefore = p.example?.before?.trim();
+        const directMatch = exBefore && t === exBefore;
+        const patternMatch = matchPattern(t, p.pattern);
+        if (!directMatch && !patternMatch) return;
+        if (t === p.example?.after?.trim()) return; // مصلح بالفعل
 
         console.log(`[Learning] تطبيق pattern: ${p.type} (confidence: ${p.confidence.toFixed(2)})`);
         applied++;
         changed = true;
 
         // طبّق الإصلاح المتعلم
-        // نستخدم المثال كـ guide وليس replacement مباشر
+        if (p.example?.before && p.example?.after && p.example.before !== p.example.after) {
+          lines[i] = line.replace(p.example.before.trim(), p.example.after.trim());
+        }
         p.lastUsed = Date.now();
       });
     });
