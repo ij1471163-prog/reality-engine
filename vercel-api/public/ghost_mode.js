@@ -21,6 +21,12 @@ var GhostMode = (() => {
     const origLines  = original.split('\n').length;
     const fixedLines = fixed.split('\n').length;
     if (fixedLines < origLines * 0.2) return false;
+
+    // رفض comment-only fixes
+    const origSet2  = new Set(original.split('\n').map(l => l.trim()));
+    const newLines2 = fixed.split('\n').map(l => l.trim()).filter(l => l && !origSet2.has(l));
+    if (newLines2.length > 0 && newLines2.every(l => l.startsWith('//') || l.startsWith('#') || l.startsWith('/*'))) return false;
+
     return true;
   }
 
@@ -66,11 +72,12 @@ var GhostMode = (() => {
   function calcScore(origAnalysis, fixedAnalysis, targetTypes) {
     let score = 0;
 
-    // Target Fix: +50 لو اختفت الثغرة المستهدفة
-    if (targetTypes && targetTypes.length) {
-      const gone = targetGone(origAnalysis, fixedAnalysis, targetTypes);
-      if (gone) score += 50;
-    }
+    const gone = targetTypes && targetTypes.length
+      ? targetGone(origAnalysis, fixedAnalysis, targetTypes)
+      : fixedAnalysis.total < origAnalysis.total;
+
+    // Target Fix: +55 لو اختفت الثغرة المستهدفة
+    if (gone) score += 55;
 
     // Critical reduction: +20
     const critDiff = origAnalysis.critical - fixedAnalysis.critical;
@@ -78,7 +85,7 @@ var GhostMode = (() => {
 
     // High reduction: +15
     const highDiff = origAnalysis.high - fixedAnalysis.high;
-    if (highDiff > 0) score += Math.min(15, highDiff * 5);
+    if (highDiff > 0) score += Math.min(15, highDiff * 8);
 
     // No new issues: +10
     if (!hasRegression(origAnalysis, fixedAnalysis)) score += 10;
