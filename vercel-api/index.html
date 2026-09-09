@@ -555,6 +555,13 @@ function fixAllEngine() {
             F[fn] = finalCode;
             totalFixed += result.repairs.length;
         }
+        // LearningEngine — يطبق ما تعلمه
+        if (typeof LearningEngine !== 'undefined') {
+          const lr = LearningEngine.applyLearned(F[fn], fn);
+          if (lr.applied > 0) {
+            F[fn] = lr.fixed;
+          }
+        }
         R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
     });
     // RepairSQL — الخط الخامس المتخصص بـ SQL
