@@ -126,7 +126,7 @@ var GhostMode = (() => {
 
     if (s >= 75 && gone) {
       return { verdict: VERDICT.PASS,    score: s, reason: 'all_fixed' };
-    } else if (s >= 30 && !noFix) {
+    } else if (s >= 15 && !noFix) {
       return { verdict: VERDICT.PARTIAL, score: s, reason: 'partial_fix', targetGone: gone };
     } else {
       return { verdict: VERDICT.FAIL,    score: s, reason: 'no_improvement' };
@@ -146,8 +146,13 @@ var GhostMode = (() => {
       LearningEngine.verify(meta.patternId, v.verdict === VERDICT.PASS);
     }
 
-    // PASS فقط يُقبل مباشرة
+    // PASS يُقبل مباشرة
     if (v.verdict === VERDICT.PASS) {
+      return { code: fixedCode, verdict: v.verdict, score: v.score, ghost: false };
+    }
+
+    // PARTIAL → كود أفضل من الأصلي → نقبله
+    if (v.verdict === VERDICT.PARTIAL) {
       return { code: fixedCode, verdict: v.verdict, score: v.score, ghost: false };
     }
 
