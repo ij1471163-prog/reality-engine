@@ -112,6 +112,14 @@ public class MainActivity extends AppCompatActivity {
         btnWeb.setLayoutParams(webParams);
         ((android.widget.LinearLayout) btnPickFile.getParent()).addView(btnWeb);
 
+        // نص توضيحي تحت زر الموقع
+        android.widget.TextView tvWebHint = new android.widget.TextView(this);
+        tvWebHint.setText("💡 مستخدم الموقع يحصل على تحليل أعمق وأدق باستخدام محركات Reality Engine المتقدمة، مقارنةً بالمحرك المحلي في الجوال.");
+        tvWebHint.setTextSize(11);
+        tvWebHint.setTextColor(0xFF888888);
+        tvWebHint.setPadding(8, 4, 8, 8);
+        ((android.widget.LinearLayout) btnPickFile.getParent()).addView(tvWebHint);
+
         btnWeb.setOnClickListener(v -> {
             new Thread(() -> {
                 try {
