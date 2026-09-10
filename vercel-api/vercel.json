@@ -34,7 +34,7 @@
       "includeFiles": "public/{analyzer.js,engine_java.js,knowledge_base.js}"
     },
     "api/analyze.js": {
-      "includeFiles": "public/{engine_java.js,analyzer.js,security_scanner.js,knowledge_base.js,cve_patterns.js,taint_py.js,taint_php.js,context_analyzer.js}"
+      "includeFiles": "public/{analyzer.js,engine_java.js,security_scanner.js,secret_detector.js,taint_core.js,taint_js.js,taint_py.js,taint_php.js,context_analyzer.js,repair_engine.js,fallback_fixes.js,emergency_fixes.js,smart_repair.js,fixers_orchestrator.js,repair_sql.js,self_healing_engine.js}"
     }
   }
 }

@@ -54,8 +54,13 @@ module.exports = async (req, res) => {
       if (ctx.window.SelfHealing) ctx.SelfHealing = ctx.window.SelfHealing;
     }
 
-    // DEBUG
-    if (typeof analyzeCode !== 'undefined') {}
+    // تحقق من المحلل داخل VM
+    if (typeof ctx.analyzeCode !== 'function') {
+      return res.status(500).json({
+        error: 'analyzeCode is not defined in VM',
+        available: Object.keys(ctx).filter(k => /analyze|engine|taint/i.test(k))
+      });
+    }
 
     if (engineLoadErrors.length) {
       return res.status(500).json({
@@ -67,7 +72,7 @@ module.exports = async (req, res) => {
     // تحليل
     ctx.F = { [fileName]: code };
     ctx.R = { [fileName]: { issues: [] } };
-    ctx.R[fileName].issues = vm.runInContext(`analyzeCode(F['${fileName}'], '${fileName}')`, ctx);
+    ctx.R[fileName].issues = ctx.analyzeCode(code, fileName);
 
     const issues = ctx.R[fileName].issues || [];
     const c = issues.filter(i => i.sev==='c').length;
