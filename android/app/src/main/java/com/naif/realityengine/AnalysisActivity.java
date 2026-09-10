@@ -93,6 +93,16 @@ public class AnalysisActivity extends AppCompatActivity {
 
         // Add stub cards
         for (EngineAnalyzer.FunctionAnalysis fn : report.stubs) {
+            android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            row.setBackgroundColor(0xFF1C2128);
+            android.widget.LinearLayout.LayoutParams rowParams = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            rowParams.setMargins(0, 8, 0, 0);
+            row.setLayoutParams(rowParams);
+            row.setPadding(16, 12, 16, 12);
+
             TextView tv = new TextView(this);
             String color = fn.fixability == EngineAnalyzer.Fixability.HIGH   ? "✅"
                          : fn.fixability == EngineAnalyzer.Fixability.MEDIUM ? "⚠️"
@@ -100,15 +110,38 @@ public class AnalysisActivity extends AppCompatActivity {
             tv.setText(color + " " + fn.name + "()  — " + fn.intent + "\n" + fn.fixReason);
             tv.setTextColor(0xFFE6EDF3);
             tv.setTextSize(13);
-            tv.setPadding(16, 12, 16, 12);
-            tv.setBackgroundColor(0xFF1C2128);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            );
-            params.setMargins(0, 8, 0, 0);
-            tv.setLayoutParams(params);
-            llStubs.addView(tv);
+            android.widget.LinearLayout.LayoutParams tvParams = new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            tv.setLayoutParams(tvParams);
+
+            android.widget.Button btnFix = new android.widget.Button(this);
+            btnFix.setText("\uD83D\uDD27 إصلاح");
+            btnFix.setTextSize(11);
+            btnFix.setBackgroundColor(0xFF238636);
+            btnFix.setTextColor(0xFFFFFFFF);
+            android.widget.LinearLayout.LayoutParams fixParams = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            fixParams.setMargins(8, 0, 0, 0);
+            btnFix.setLayoutParams(fixParams);
+
+            final String stubName = fn.name;
+            btnFix.setOnClickListener(v -> {
+                try {
+                    java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
+                    java.io.FileWriter fw = new java.io.FileWriter(tmp);
+                    fw.write(fileCode);
+                    fw.close();
+                } catch (Exception e) {}
+                android.content.Intent approvalIntent = new android.content.Intent(this, ApprovalActivity.class);
+                approvalIntent.putExtra("fileName", fileName);
+                approvalIntent.putExtra("targetStubName", stubName);
+                startActivity(approvalIntent);
+            });
+
+            row.addView(tv);
+            row.addView(btnFix);
+            llStubs.addView(row);
         }
 
         btnCancel.setOnClickListener(v -> finish());

@@ -66,6 +66,21 @@ public class ApprovalActivity extends AppCompatActivity {
             StubDetector.StubResult result = StubDetector.detect(code);
             stubs = result.stubs;
 
+            // targetStubName — إصلاح دالة محددة فقط
+            String targetStubName = getIntent().getStringExtra("targetStubName");
+            if (targetStubName != null && !targetStubName.isEmpty()) {
+                java.util.List<StubDetector.StubFunction> filtered = new java.util.ArrayList<>();
+                for (StubDetector.StubFunction sf : stubs) {
+                    if (targetStubName.equals(sf.name)) { filtered.add(sf); break; }
+                }
+                if (filtered.isEmpty()) {
+                    android.widget.Toast.makeText(this, "لم يتم العثور على الدالة: " + targetStubName, android.widget.Toast.LENGTH_LONG).show();
+                    finish();
+                    return;
+                }
+                stubs = filtered;
+            }
+
             if (stubs.isEmpty()) {
                 Toast.makeText(this, "لا دوال ناقصة", Toast.LENGTH_SHORT).show();
                 finish();
