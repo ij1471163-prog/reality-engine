@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "Reality Engine — Self-Healing Log",
+    "fields": {
+      "id":            "معرف فريد SH_{timestamp}_{random}",
+      "timestamp":     "وقت الحادثة ISO8601",
+      "type":          "نوع المشكلة: ENGINE_ERROR | ENGINE_CONFLICT | REGRESSION | ACCUMULATION | FOREACH_RETURN | SQL_INJECTION | SYNTAX | RUNTIME_ERROR",
+      "engine":        "المحرك المتأثر",
+      "fileName":      "اسم الملف",
+      "detail":        "وصف المشكلة",
+      "status":        "PENDING_REVIEW | APPROVED | REJECTED | ROLLED_BACK",
+      "healingResult": "PASS | FAIL | SKIPPED",
+      "testResults":   "نتائج كل الاختبارات",
+      "patch":         "الـ diff (سطور متغيرة)",
+      "patchedCode":   "الكود المقترح (قبل الموافقة فقط)",
+      "approvedAt":    "وقت الموافقة (إذا أُقرّ)",
+      "rejectedAt":    "وقت الرفض (إذا رُفض)",
+      "rollbackMsg":   "سبب الـ Rollback (إذا فشل)"
+    }
+  },
+  "entries": []
+}
