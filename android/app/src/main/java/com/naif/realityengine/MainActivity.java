@@ -339,8 +339,7 @@ public class MainActivity extends AppCompatActivity {
             if (fileName == null) fileName = "code.js";
             // افتح AnalysisActivity (محلي بدون API)
             Intent intent = new Intent(this, AnalysisActivity.class);
-            intent.putExtra("code", code);
-            intent.putExtra("fileName", fileName);
+            intent.setData(uri);
             startActivity(intent);
         } catch (Exception e) {
             // fallback للقديم
