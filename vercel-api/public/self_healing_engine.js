@@ -546,7 +546,8 @@ const Patcher = {
   generate(code, problem) {
     if (problem.type === "SQL_INJECTION" && typeof RepairSQL !== "undefined") {
       try {
-        const patchedCode = RepairSQL.fix(code, problem.fileName || "unknown.js");
+        const result      = RepairSQL.fix(code, problem.fileName || "unknown.js");
+        const patchedCode = result.code;
 
         // ✅ يجب أن يكون string
         if (typeof patchedCode !== "string") {
