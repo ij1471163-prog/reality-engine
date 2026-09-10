@@ -32,15 +32,37 @@ module.exports = async (req, res) => {
       'secret_detector.js', 'taint_core.js', 'taint_js.js',
       'taint_py.js', 'taint_php.js', 'context_analyzer.js',
       'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
-      'smart_repair.js', 'fixers_orchestrator.js',
+      'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'self_healing_engine.js',
     ];
+
+    const engineLoadErrors = [];
 
     engines.forEach(f => {
       const p = path.join(process.cwd(), 'public', f);
       if (fs.existsSync(p)) {
-        try { vm.runInContext(fs.readFileSync(p, 'utf8'), ctx); } catch(e) {}
+        try {
+          vm.runInContext(fs.readFileSync(p, 'utf8'), ctx);
+        } catch(e) {
+          engineLoadErrors.push(f + ': ' + e.message);
+        }
       }
     });
+
+    // ربط الـexports التي تستخدم window داخل VM
+    if (ctx.window) {
+      if (ctx.window.RepairSQL) ctx.RepairSQL = ctx.window.RepairSQL;
+      if (ctx.window.SelfHealing) ctx.SelfHealing = ctx.window.SelfHealing;
+    }
+
+    // DEBUG
+    if (typeof analyzeCode !== 'undefined') {}
+
+    if (engineLoadErrors.length) {
+      return res.status(500).json({
+        error: 'Engine load errors',
+        details: engineLoadErrors
+      });
+    }
 
     // تحليل
     ctx.F = { [fileName]: code };
@@ -54,24 +76,58 @@ module.exports = async (req, res) => {
     const l = issues.filter(i => i.sev==='l').length;
     const score = Math.max(0, Math.round(100 - Math.min(90, c*10+h*5+m*2+l*1)));
 
-    let fixed = code;
+      let fixed = code;
+      let healingResult = null;
     if (fix) {
-      for (let p = 0; p < 5; p++) {
-        const iss = vm.runInContext(`analyzeCode(F['${fileName}'], '${fileName}')`, ctx);
-        if (!iss.length) break;
-        ctx.tmpI = iss;
-        const r = vm.runInContext(`repairCode(F['${fileName}'], tmpI, '${fileName}')`, ctx);
-        if (!r || r.repaired === ctx.F[fileName] || !r.repairs.length) break;
-        ctx.F[fileName] = r.repaired;
-      }
-      ctx.R[fileName] = { issues: vm.runInContext(`analyzeCode(F['${fileName}'], '${fileName}')`, ctx) };
-      vm.runInContext('applyFallbackToAll(F, R)', ctx);
-      vm.runInContext('SmartRepairEngine.applySmartRepair(F, R)', ctx);
-      vm.runInContext('applyEmergencyToAll(F, R)', ctx);
-      fixed = ctx.F[fileName];
-    }
+      const SH = ctx.SelfHealing;
+      const sqlIssues = issues.filter(i => (i.type||i.cAct||'').toUpperCase().includes('SQL'));
 
-    res.status(200).json({
+      let usedSelfHealing = false;
+
+      if (SH && sqlIssues.length > 0) {
+        for (const issue of sqlIssues) {
+          const problem = {
+            type: 'SQL_INJECTION', engine: 'repair_sql',
+            fileName, code: ctx.F[fileName],
+            detail: issue.title || '',
+            targetIssues: [issue]
+          };
+          const healed = SH.heal(problem);
+          if (healed && healed.status === 'PENDING_REVIEW' && healed.result === 'PASS') {
+            ctx.F[fileName] = healed.patchedCode;
+            healingResult = { id: healed.id, status: 'PENDING_REVIEW', result: 'PASS' };
+            usedSelfHealing = true;
+            break;
+          } else if (healed && healed.status === 'ROLLED_BACK') {
+            healingResult = { id: healed.id, status: 'ROLLED_BACK', result: 'FAIL' };
+            usedSelfHealing = true;
+            break;
+          }
+        }
+      }
+
+      if (!usedSelfHealing) {
+        // مسار الإصلاح القديم
+        for (let p = 0; p < 5; p++) {
+          const iss = vm.runInContext(`analyzeCode(F['${fileName}'], '${fileName}')`, ctx);
+          if (!iss.length) break;
+          ctx.tmpI = iss;
+          const r = vm.runInContext(`repairCode(F['${fileName}'], tmpI, '${fileName}')`, ctx);
+          if (!r || r.repaired === ctx.F[fileName] || !r.repairs.length) break;
+          ctx.F[fileName] = r.repaired;
+        }
+        ctx.R[fileName] = { issues: vm.runInContext(`analyzeCode(F['${fileName}'], '${fileName}')`, ctx) };
+        vm.runInContext('applyFallbackToAll(F, R)', ctx);
+        vm.runInContext('SmartRepairEngine.applySmartRepair(F, R)', ctx);
+        vm.runInContext('applyEmergencyToAll(F, R)', ctx);
+      }
+
+      fixed = ctx.F[fileName];
+      // أضف healingResult للـresponse لاحقاً
+      ctx._healingResult = healingResult;
+
+      }
+    res.status(200).json({ healing: healingResult || null,
       success: true,
       fileName,
       issues: issues.map(i => ({
