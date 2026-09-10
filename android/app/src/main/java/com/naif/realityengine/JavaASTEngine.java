@@ -43,7 +43,6 @@ public class JavaASTEngine {
             detectAccumulation(cu, issues);
             detectNullComparison(cu, issues);
             detectEmptyCatch(cu, issues);
-            detectReturnInLoop(cu, issues);
             
         } catch (ParseProblemException e) {
             // كود فيه أخطاء syntax
@@ -137,7 +136,7 @@ public class JavaASTEngine {
                             "في Java استخدم .equals() لمقارنة الـ Strings",
                             expr.getBegin().map(p -> p.line).orElse(0),
                             "HIGH",
-                            left + ".equals(" + right + ")",
+                            (right.startsWith("\"") ? right + ".equals(" + left + ")" : left + ".equals(" + right + ")") ,
                             "comparison"
                         ));
                     }
@@ -162,26 +161,7 @@ public class JavaASTEngine {
         });
     }
 
-    // ─── 5. return داخل forEach ───────────────────────
-    private static void detectReturnInLoop(CompilationUnit cu, List<ASTIssue> issues) {
-        cu.findAll(MethodCallExpr.class).forEach(call -> {
-            if (!call.getNameAsString().equals("forEach")) return;
-            if (call.getArguments().isEmpty()) return;
-            
-            call.getArguments().get(0).findAll(ReturnStmt.class).forEach(ret -> {
-                if (ret.getExpression().isPresent()) {
-                    issues.add(new ASTIssue(
-                        "return داخل forEach لا يُرجع قيمة",
-                        "forEach يتجاهل الـ return — استخدم find أو filter",
-                        ret.getBegin().map(p -> p.line).orElse(0),
-                        "CRITICAL",
-                        "استبدل forEach بـ stream().filter().findFirst()",
-                        "logic"
-                    ));
-                }
-            });
-        });
-    }
+
 
     // ─── Helper Methods ────────────────────────────────
     private static boolean isPassStatement(Statement stmt) {
@@ -208,3 +188,4 @@ public class JavaASTEngine {
         }
     }
 }
+
