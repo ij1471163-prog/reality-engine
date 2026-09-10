@@ -200,6 +200,49 @@ function fingerprint(issue) {
   return `${type}|${line}|${sev}`;
 }
 
+// تصنيف محدود لربط حدث healing العام بنتيجة الـ analyzer الفعلية.
+// لا نعمّم العناوين: الاستثناءان هما SQL Injection وXSS لأن الحدث يستخدم
+// نوعًا عامًا بينما بعض الـ analyzers يبلّغون عنهما في title فقط.
+function issueKind(issue) {
+  const type = String(issue?.type || "").trim().toUpperCase();
+  const title = String(issue?.title || "");
+  if (type === "SQL_INJECTION" || /\bsql\s+injection\b/i.test(title)) {
+    return "SQL_INJECTION";
+  }
+  if (/XSS/i.test(type) || /\bxss\b|innerhtml/i.test(title)) {
+    return "XSS";
+  }
+  return type;
+}
+
+function issueSeverity(issue) {
+  return String(issue?.sev || issue?.severity || "").trim().toUpperCase();
+}
+
+// يعيد كل نتائج before التي يصفها target بدقة. الموقع والشدة، عند وجودهما
+// في target، هما قيود إلزامية؛ الهدف العام SQL_INJECTION يطابق فقط نتائج SQL
+// Injection ولا يطابق أنواع Injection أخرى مثل NoSQL Injection.
+function resolveTargetIssues(targetIssue, beforeIssues) {
+  const targetKind = issueKind(targetIssue);
+  if (!targetKind) return [];
+
+  const targetLine = targetIssue?.line;
+  const targetSev  = issueSeverity(targetIssue);
+
+  return beforeIssues.filter(issue => {
+    if (issueKind(issue) !== targetKind) return false;
+    if (targetLine != null && targetLine !== "" && issue.line !== targetLine) return false;
+    if (targetSev && issueSeverity(issue) !== targetSev) return false;
+    return true;
+  });
+}
+
+function isXSSProblem(problem) {
+  const type  = String(problem?.type || "");
+  const title = String(problem?.title || problem?.detail || "");
+  return /XSS/i.test(type) || /\bxss\b|innerhtml/i.test(title);
+}
+
 // ═══════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════
@@ -294,9 +337,13 @@ const Tests = {
     const beforeFPs = new Set(beforeIssues.map(fingerprint));
     const afterFPs  = new Set(afterIssues.map(fingerprint));
 
-    // fingerprints المشاكل المستهدفة — اختفاؤها متوقع ومقبول
+    // اربط targetIssues (قد تكون أحداث healing عامة) بنتائج before الفعلية.
+    // نستخدم fingerprint النتيجة الفعلية فقط، كي لا يختلف type/title/line/severity
+    // بين مصدر الحدث والـ analyzer.
     const targetFPs = new Set(
-      Array.isArray(targetIssues) ? targetIssues.map(fingerprint) : []
+      (Array.isArray(targetIssues) ? targetIssues : [])
+        .flatMap(targetIssue => resolveTargetIssues(targetIssue, beforeIssues))
+        .map(fingerprint)
     );
 
     // مشاكل اختفت
@@ -531,7 +578,7 @@ const Patcher = {
 
   /**
    * يُعيد null (SKIPPED) في أغلب الحالات.
-   * SQL Injection فقط → عبر RepairSQL.fix() الموثوق.
+   * SQL Injection و XSS فقط → عبر الـ fixers الموثوقة الموجودة.
    *
    * RepairSQL.fix(code, fileName) يرجع STRING مباشرة.
    * نتحقق:
@@ -576,6 +623,35 @@ const Patcher = {
 
       } catch (e) {
         // خطأ في RepairSQL → SKIPPED بأمان
+        return null;
+      }
+    }
+
+    if (isXSSProblem(problem) && typeof XSSFixer !== "undefined" &&
+        typeof XSSFixer.fix === "function") {
+      try {
+        const result = XSSFixer.fix(code, problem.fileName || "unknown.js");
+        // XSSFixer الحالي يرجع { fixed, changed }، مع قبول String أو { code }
+        // للتوافق مع واجهات fixer الأخرى.
+        const patchedCode = typeof result === "string"
+          ? result
+          : result?.fixed ?? result?.code;
+
+        if (typeof patchedCode !== "string" || patchedCode === code) {
+          return null;
+        }
+
+        const diff         = Snapshots.diff(code, patchedCode);
+        const changedCount = diff.changedCount;
+        if (changedCount === 0) return null;
+
+        return {
+          patchedCode,
+          confidence: "HIGH",
+          reason:     `XSSFixer.fix() عدّل ${changedCount} سطر`,
+          changedCount,
+        };
+      } catch (_) {
         return null;
       }
     }
