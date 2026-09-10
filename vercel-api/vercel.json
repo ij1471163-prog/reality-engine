@@ -32,6 +32,9 @@
   "functions": {
     "api/patterns/save.js": {
       "includeFiles": "public/{analyzer.js,engine_java.js,knowledge_base.js}"
+    },
+    "api/analyze.js": {
+      "includeFiles": "public/{engine_java.js,analyzer.js,security_scanner.js,knowledge_base.js,cve_patterns.js,taint_py.js,taint_php.js,context_analyzer.js}"
     }
   }
 }
