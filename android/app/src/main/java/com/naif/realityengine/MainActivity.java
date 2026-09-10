@@ -329,8 +329,8 @@ public class MainActivity extends AppCompatActivity {
             String code = sb.toString();
             String fileName = uri.getLastPathSegment();
             if (fileName == null) fileName = "code.js";
-            // افتح WebEngineActivity
-            Intent intent = new Intent(this, WebEngineActivity.class);
+            // افتح AnalysisActivity (محلي بدون API)
+            Intent intent = new Intent(this, AnalysisActivity.class);
             intent.putExtra("code", code);
             intent.putExtra("fileName", fileName);
             startActivity(intent);
