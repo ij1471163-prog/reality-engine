@@ -57,25 +57,7 @@ public class AnalysisActivity extends AppCompatActivity {
         // Analyze - محرك Java المحلي
         report = EngineAnalyzer.analyze(fileCode, fileName);
 
-        // Full Engine API - محركات الموقع القوية
-        AIEngine.analyzeWithEngine(fileCode, fileName, new AIEngine.Callback() {
-            @Override
-            public void onResult(String result) {
-                try {
-                    org.json.JSONObject json = new org.json.JSONObject(result);
-                    int apiScore = json.optInt("score", 0);
-                    int apiIssues = json.optJSONObject("stats") != null ?
-                        json.optJSONObject("stats").optInt("total", 0) : 0;
-                    runOnUiThread(() -> {
-                        android.widget.Toast.makeText(AnalysisActivity.this,
-                            "🌐 Web Engine: " + apiIssues + " مشكلة | Score: " + apiScore,
-                            android.widget.Toast.LENGTH_SHORT).show();
-                    });
-                } catch (Exception e) {}
-            }
-            @Override
-            public void onError(String error) {}
-        });
+
 
         // Bug Detection
         BugDetector.BugReport bugReport = BugDetector.detect(fileCode);
@@ -225,3 +207,4 @@ public class AnalysisActivity extends AppCompatActivity {
             .show();
     }
 }
+
