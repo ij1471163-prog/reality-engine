@@ -113,6 +113,14 @@ public class AnalysisActivity extends AppCompatActivity {
 
         btnCancel.setOnClickListener(v -> finish());
 
+        // نص توضيحي
+        android.widget.TextView tvHint = new android.widget.TextView(this);
+        tvHint.setText("💡 مستخدم الموقع يحصل على تحليل أعمق وأدق باستخدام محركات Reality Engine المتقدمة، مقارنةً بالمحرك المحلي في الجوال.");
+        tvHint.setTextSize(11);
+        tvHint.setTextColor(0xFF888888);
+        tvHint.setPadding(8, 8, 8, 8);
+        ((android.widget.LinearLayout) btnCancel.getParent()).addView(tvHint, ((android.widget.LinearLayout) btnCancel.getParent()).indexOfChild(btnCancel) + 1);
+
         // زر AI محذوف — يوصل من MainActivity
 
         // زر PDF (Pro)
