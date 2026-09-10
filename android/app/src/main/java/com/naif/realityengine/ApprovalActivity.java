@@ -210,8 +210,7 @@ public class ApprovalActivity extends AppCompatActivity {
         android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(this);
         builder.setTitle("✅ تم الإصلاح");
         String msg = "موافق: " + approved + " | مرفوض: " + rejected;
-        if (webEngineResult != null) msg += "
-" + webEngineResult;
+        if (webEngineResult != null) msg += "\n" + webEngineResult;
         builder.setMessage(msg);
         builder.setCancelable(false);
 
