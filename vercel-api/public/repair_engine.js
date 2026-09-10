@@ -705,7 +705,7 @@ function detectStrategy(issue) {
   if (t.includes('nameerror') || t.includes('غير معرّف'))        return 'NAMEERROR';
   if (t.includes('callback'))                                     return 'CALLBACK_HELL';
   if (t.includes('auth') || t.includes('middleware'))             return 'MISSING_AUTH';
-  if (t.includes('cwe-798') || t.includes('credential'))            return 'HARDCODED_PASS';
+  if (t.includes('cwe-798') || t.includes('credential'))            return 'HARDCODED_SECRET';
   return null;
 }
 function getAIReason(strategy) {
@@ -717,3 +717,4 @@ function getAIReason(strategy) {
   };
   return reasons[strategy] || 'يحتاج مراجعة يدوية';
 }
+
