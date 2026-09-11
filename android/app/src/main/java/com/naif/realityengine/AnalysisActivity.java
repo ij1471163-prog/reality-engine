@@ -82,6 +82,16 @@ public class AnalysisActivity extends AppCompatActivity {
         tvEngineMessage.setText(report.recommendation);
 
         // Add stub cards
+        // DataFlow warnings
+        if (report.securityNotes != null && !report.securityNotes.isEmpty()) {
+            android.widget.TextView tvFlow = new android.widget.TextView(this);
+            tvFlow.setText("\uD83D\uDD0D تدفق البيانات:\n" + String.join("\n", report.securityNotes));
+            tvFlow.setTextColor(0xFFFF9800);
+            tvFlow.setTextSize(12);
+            tvFlow.setPadding(16, 8, 16, 8);
+            llStubs.addView(tvFlow);
+        }
+
         for (EngineAnalyzer.FunctionAnalysis fn : report.stubs) {
             android.widget.LinearLayout row = new android.widget.LinearLayout(this);
             row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
