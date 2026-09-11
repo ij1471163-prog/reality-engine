@@ -57,7 +57,17 @@ public class AnalysisActivity extends AppCompatActivity {
         // Analyze - محرك Java المحلي
         report = EngineAnalyzer.analyze(fileCode, fileName);
 
-
+        // Bug Detection — keep the dedicated logical-bug path
+        BugDetector.BugReport bugReport = BugDetector.detect(fileCode);
+        if (!bugReport.bugs.isEmpty()) {
+            StringBuilder bugMsg = new StringBuilder("\n\n🐛 أخطاء مكتشفة (")
+                    .append(bugReport.bugs.size()).append("):\n");
+            for (BugDetector.Bug bug : bugReport.bugs) {
+                bugMsg.append("• ").append(bug.title)
+                      .append(" — السطر ").append(bug.line).append("\n");
+            }
+            report.engineMessage = report.engineMessage + bugMsg.toString();
+        }
 
         // Show results
         TextView tvFileName      = findViewById(R.id.tvFileName);
@@ -126,7 +136,7 @@ public class AnalysisActivity extends AppCompatActivity {
         tvHint.setTextSize(11);
         tvHint.setTextColor(0xFF888888);
         tvHint.setPadding(8, 8, 8, 8);
-        ((android.widget.LinearLayout) btnCancel.getParent()).addView(tvHint, ((android.widget.LinearLayout) btnCancel.getParent()).indexOfChild(btnCancel) + 1);
+        llStubs.addView(tvHint);
 
         // زر AI محذوف — يوصل من MainActivity
 
@@ -141,7 +151,7 @@ public class AnalysisActivity extends AppCompatActivity {
         pdfLP.setMargins(0, 8, 0, 0);
         btnPDF.setLayoutParams(pdfLP);
         btnPDF.setVisibility(android.view.View.GONE); // يظهر بعد الإصلاح
-        ((android.view.ViewGroup) btnProceed.getParent()).addView(btnPDF);
+        llStubs.addView(btnPDF);
         btnPDF.setOnClickListener(v -> {
             android.content.Intent pdfIntent = new android.content.Intent(this, PDFReportActivity.class);
             pdfIntent.putExtra("fileCode", fileCode);
@@ -150,10 +160,29 @@ public class AnalysisActivity extends AppCompatActivity {
         });
 
         btnProceed.setOnClickListener(v -> {
-            if (report.stubs.isEmpty() && report.bugCount == 0) {
+            if (report.stubs.isEmpty() && bugReport.bugs.isEmpty()) {
                 Toast.makeText(this, "✅ الكود نظيف — لا يحتاج إصلاح", Toast.LENGTH_SHORT).show();
                 return;
             }
+
+            if (report.stubs.isEmpty() && !bugReport.bugs.isEmpty()) {
+                Intent fixIntent = new Intent(this, ApprovalActivity.class);
+                fixIntent.putExtra("fileName", fileName);
+                fixIntent.putExtra("fixBugsOnly", true);
+
+                try {
+                    java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
+                    java.io.FileWriter fw = new java.io.FileWriter(tmp);
+                    fw.write(fileCode);
+                    fw.close();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                startActivity(fixIntent);
+                return;
+            }
+
             try {
                 java.io.File tmp = new java.io.File(getCacheDir(), "temp_code.txt");
                 java.io.FileWriter fw = new java.io.FileWriter(tmp);
