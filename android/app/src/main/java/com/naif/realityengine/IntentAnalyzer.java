@@ -88,7 +88,7 @@ public class IntentAnalyzer {
             ContextAnalyzer.CodeContext ctx = ContextAnalyzer.analyze(
                 funcBody != null ? funcBody : "", funcName
             );
-            if (ctx != null && !ctx.flowNodes.isEmpty()) {
+            if (ctx != null && !ctx.dataFlow.isEmpty()) {
                 IntentResult r = analyzeFromFlowNodes(ctx);
                 if (r != null && r.confidence >= 0.5) return r;
             }
@@ -137,16 +137,17 @@ public class IntentAnalyzer {
     // ─── تحليل من FlowNodes ───────────────────────────────
     private static IntentResult analyzeFromFlowNodes(ContextAnalyzer.CodeContext ctx) {
         boolean hasSink = false, hasSource = false;
-        for (ContextAnalyzer.FlowNode node : ctx.flowNodes) {
-            if (node.role != null) {
-                if (node.role.contains("sink"))   hasSink   = true;
-                if (node.role.contains("source")) hasSource = true;
+        for (java.util.List<ContextAnalyzer.FlowNode> chain : ctx.dataFlow.values()) {
+            for (ContextAnalyzer.FlowNode node : chain) {
+                if (node.kind == ContextAnalyzer.FlowNode.Kind.SOURCE) {
+                    hasSource = true;
+                }
             }
         }
 
         if (hasSource && hasSink) {
             IntentResult r = new IntentResult("تدفق بيانات (Source→Sink)", 0.75, "flow");
-            r.evidence.add("FlowNodes: " + ctx.flowNodes.size());
+            r.evidence.add("FlowNodes: " + ctx.dataFlow.size());
             return r;
         }
         return null;
