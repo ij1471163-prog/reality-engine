@@ -237,7 +237,7 @@
     if (lang === 'js') {
       // 1. String concatenation: db.query("..." + var)
       fixed = fixed.replace(
-        /(\w+)\s*\.\s*(?:query|execute|raw)\s*\(\s*(['"`])([^'"`]*(?:SELECT|INSERT|UPDATE|DELETE)[^'"`]*)\2\s*(\+[^)]+)\)/gi,
+        /(\w+)\s*\.\s*(?:query|execute|raw)\s*\(\s*(['"`])((?:(?!\2)[\s\S])*(?:SELECT|INSERT|UPDATE|DELETE)(?:(?!\2)[\s\S])*)\2\s*(\+[^)]+)\)/gi,
         (match, dbVar, quote, queryStr, concatPart) => {
           const vars = extractVarsFromConcat(queryStr, concatPart);
           if (!vars.length) return match;

@@ -116,6 +116,7 @@ function loadAnalyzer() {
     analyzeCode = ctx.analyzeCode;
     return typeof analyzeCode === 'function';
   } catch(e) {
+    console.error('loadAnalyzer FAIL:', e.message, e.code, e.stack?.slice(0,200));
     return false;
   }
 }
