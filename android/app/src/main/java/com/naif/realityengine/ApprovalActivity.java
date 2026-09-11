@@ -81,6 +81,25 @@ public class ApprovalActivity extends AppCompatActivity {
             btnApprove.setOnClickListener(v -> handleApprove());
             btnReject.setOnClickListener(v  -> handleReject());
 
+            // زر اقتراح الإصلاح التلقائي
+            android.widget.Button btnAutoRepair = new android.widget.Button(this);
+            btnAutoRepair.setText("\uD83E\uDD16 اقتراح إصلاح تلقائي");
+            btnAutoRepair.setBackgroundColor(0xFF1F6FEB);
+            btnAutoRepair.setTextColor(0xFFFFFFFF);
+            btnAutoRepair.setTextSize(13);
+
+            android.widget.LinearLayout.LayoutParams arLP =
+                    new android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+
+            arLP.setMargins(0, 12, 0, 0);
+            btnAutoRepair.setLayoutParams(arLP);
+            btnAutoRepair.setOnClickListener(v -> runSelfRepair());
+
+            ((android.widget.LinearLayout) btnApprove.getParent())
+                    .addView(btnAutoRepair);
+
             // Show first stub
             showCurrent();
 
@@ -176,6 +195,63 @@ public class ApprovalActivity extends AppCompatActivity {
 
     private void saveFiles() {
         showSaveDialog();
+    }
+
+    // ── SelfRepairEngine — اقتراح إصلاح تلقائي ─────────
+    private void runSelfRepair() {
+        try {
+            SelfRepairEngine engine = new SelfRepairEngine(this);
+            SelfRepairEngine.RunSummary summary =
+                    engine.repairFile(fileName, code);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("\uD83E\uDD16 نتائج الإصلاح التلقائي:\n\n");
+
+            boolean hasCandidate = false;
+
+            for (SelfRepairEngine.RepairAttempt attempt : summary.attempts) {
+                sb.append("• ")
+                  .append(attempt.plan != null
+                          ? attempt.plan.functionName
+                          : "?");
+
+                sb.append(": ")
+                  .append(attempt.status.name());
+
+                if (attempt.message != null) {
+                    sb.append("\n  ")
+                      .append(attempt.message);
+                }
+
+                sb.append("\n");
+
+                if (attempt.status ==
+                        SelfRepairEngine.RepairStatus.CANDIDATE_ACCEPTED) {
+                    hasCandidate = true;
+                }
+            }
+
+            if (!hasCandidate) {
+                sb.append("\n⚠️ هذا اقتراح فقط — لم يتم تعديل الكود فعليًا.");
+            } else {
+                sb.append("\n✅ اقتراح جاهز للمراجعة — يحتاج موافقتك قبل التطبيق.");
+            }
+
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("اقتراح الإصلاح التلقائي")
+                    .setMessage(sb.toString())
+                    .setPositiveButton("موافق", null)
+                    .show();
+
+        } catch (Exception e) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("خطأ")
+                    .setMessage(e.getMessage() != null
+                            ? e.getMessage()
+                            : "حدث خطأ غير معروف")
+                    .setPositiveButton("موافق", null)
+                    .show();
+        }
     }
 
     private void showSaveDialog() {
