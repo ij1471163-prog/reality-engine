@@ -38,7 +38,7 @@ module.exports = async (req, res) => {
     const engineLoadErrors = [];
 
     engines.forEach(f => {
-      const p = path.join(process.cwd(), 'public', f);
+      const p = path.join(__dirname, '..', 'public', f);
       if (fs.existsSync(p)) {
         try {
           vm.runInContext(fs.readFileSync(p, 'utf8'), ctx);
