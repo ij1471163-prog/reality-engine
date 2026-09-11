@@ -25,7 +25,7 @@ public class EngineAnalyzer {
         "^\\s*def\\s+\\w+", Pattern.MULTILINE);
 
     private static final Pattern PAT_PYTHON_STUB = Pattern.compile(
-        "^(\\s*)def\\s+(\\w+)\\s*\\([^)]*\\).*:\\s*\\n(?:.*\\n)*?\\1    (?:pass|\\.\\.\\.)",
+        "^(\\s*)def\\s+(\\w+)\\s*\\(([^)]*)\\).*:\\s*\\n(?:.*\\n)*?\\1    (?:pass|\\.\\.\\.)",
         Pattern.MULTILINE);
 
     // ═══════════════════════════════════════════════════
@@ -60,6 +60,8 @@ public class EngineAnalyzer {
         // إحصائيات إضافية
         public int                     securityIssues = 0;
         public int                     bugCount       = 0;
+        public List<String>            securityNotes  = new ArrayList<>(); // DataFlow warnings
+        public List<DataFlowAnalyzer.DataFlow> dataFlows = new ArrayList<>(); // تدفقات البيانات
     }
 
     // ═══════════════════════════════════════════════════
@@ -263,6 +265,18 @@ public class EngineAnalyzer {
     // analyze() — Entry Point
     // ═══════════════════════════════════════════════════
 
+    // ─── استخراج body الدالة ─────────────────────────────
+    private static String extractFuncBody(String code, int startPos, String indent) {
+        String[] lines = code.substring(startPos).split("\n");
+        StringBuilder body = new StringBuilder();
+        for (String line : lines) {
+            if (!line.isEmpty() && !line.startsWith(indent + "    ") && !line.trim().isEmpty()) break;
+            body.append(line).append("\n");
+            if (body.length() > 2000) break; // حد أقصى للأداء
+        }
+        return body.toString().trim();
+    }
+
     public static EngineReport analyze(String code, String fileName) {
         EngineReport report = new EngineReport();
         report.fileName   = fileName;
@@ -282,12 +296,28 @@ public class EngineAnalyzer {
             String before = code.substring(0, m.start());
             int lineNo    = before.split("\n", -1).length;
 
+            // استخرج parameters وbody الدالة
+            String rawParams = m.groupCount() >= 3 ? m.group(3) : "";
+            java.util.List<String> params = new java.util.ArrayList<>();
+            if (rawParams != null && !rawParams.isEmpty()) {
+                for (String p : rawParams.split(",")) {
+                    String trimmed = p.trim().replaceAll("\\s*=.*", ""); // حذف default values
+                    if (!trimmed.isEmpty()) params.add(trimmed);
+                }
+            }
+            // استخرج body الدالة (أسطر بعد def حتى نهاية الـstub)
+            String funcBody = extractFuncBody(code, m.end(), m.group(1));
+
             FunctionAnalysis fa = new FunctionAnalysis();
             fa.name       = name;
             fa.line       = lineNo;
             fa.risk       = "confirmed";
             fa.fixability = getFixability(name);
-            fa.intent     = getIntent(name);
+            // IntentAnalyzer — يحلل اسم + parameters + body
+            try {
+                IntentAnalyzer.IntentResult ir = IntentAnalyzer.analyze(name, params, funcBody);
+                fa.intent = (ir != null && ir.confidence > 0.4) ? ir.intent : getIntent(name);
+            } catch (Exception _e) { fa.intent = getIntent(name); }
             fa.canAutoFix = fa.fixability == Fixability.HIGH;
 
             switch (fa.fixability) {
@@ -310,6 +340,15 @@ public class EngineAnalyzer {
 
             report.stubs.add(fa);
         }
+
+        // DataFlowAnalyzer — تحليل تدفق البيانات على مستوى الملف
+        try {
+            DataFlowAnalyzer.DataFlowResult dfr = DataFlowAnalyzer.analyze(code, fileName);
+            if (dfr != null) {
+                report.dataFlows.addAll(dfr.flows);
+                report.securityNotes.addAll(dfr.warnings);
+            }
+        } catch (Exception ignored) {}
 
         report.highFixable   = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.HIGH).count();
         report.mediumFixable = (int) report.stubs.stream().filter(s -> s.fixability == Fixability.MEDIUM).count();
