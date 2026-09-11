@@ -184,9 +184,11 @@ public class DataFlowAnalyzer {
         try {
             ContextAnalyzer.CodeContext ctx = ContextAnalyzer.analyze(code, null);
             if (ctx != null) {
-                for (ContextAnalyzer.FlowNode node : ctx.dataFlow) {
-                    if (node.kind != null && node.kind.contains("taint")) {
-                        result.warnings.add("⚠️ Taint: " + node.name + " [L" + node.line + "]");
+                for (java.util.List<ContextAnalyzer.FlowNode> chain : ctx.dataFlow.values()) {
+                    for (ContextAnalyzer.FlowNode node : chain) {
+                        if (node.kind == ContextAnalyzer.FlowNode.Kind.SOURCE) {
+                            result.warnings.add("⚠️ Taint: " + node.name + " [L" + node.line + "]");
+                        }
                     }
                 }
             }
