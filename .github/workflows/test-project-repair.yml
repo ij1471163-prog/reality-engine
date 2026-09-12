@@ -29,4 +29,4 @@ jobs:
       - name: Run Tests
         run: |
           cd tools/project-repair
-          java -cp build/classes com.naif.projectrepair.EngineTests
+          java -cp build/classes com.naif.projectrepair.EngineTests src/test/fixtures
