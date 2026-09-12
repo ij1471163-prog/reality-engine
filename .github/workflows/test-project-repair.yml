@@ -1,0 +1,32 @@
+name: Test ProjectRepairEngine
+
+on:
+  push:
+    paths:
+      - 'tools/project-repair/**'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      
+      - name: Compile
+        run: |
+          cd tools/project-repair
+          mkdir -p build/classes
+          javac -d build/classes \
+            src/main/java/com/naif/projectrepair/ProjectRepairEngine.java \
+            src/test/java/com/naif/projectrepair/EngineTests.java
+      
+      - name: Run Tests
+        run: |
+          cd tools/project-repair
+          java -cp build/classes com.naif.projectrepair.EngineTests
