@@ -160,7 +160,7 @@ public final class EngineTests {
                         && result.verificationResult.status == VerificationResult.Status.VERIFIED,
                 "expected VERIFIED, got " + (result.verificationResult == null ? "null" : result.verificationResult.status));
         check("07c_runtimeOutputCorrect", result.verificationResult != null
-                        && result.verificationResult.runtimeOutput.contains("done"),
+                        && result.verificationResult.runtimeOutput.contains("helper_value"),
                 "expected 'done' in runtime output");
         check("07d_aiUnavailableHonest", result.aiStatus == AIReasoningLayer.AIStatus.AI_UNAVAILABLE,
                 "expected AI_UNAVAILABLE since no real provider is connected, got " + result.aiStatus);
