@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 
 /**
  * EngineAnalyzer v2.0
- * ✅ engineMessage مُهيَّأ — لا null bug
+ * ✅ engineMessage مُهيَأ — لا null bug
  * ✅ Pattern.compile static final
  * ✅ Language detection شامل
  * ✅ JS block لا يتجاهل stubs
@@ -17,20 +17,20 @@ import java.util.regex.Pattern;
  */
 public class EngineAnalyzer {
 
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
     // Compiled Patterns
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
 
     private static final Pattern PAT_FUNC_COUNT = Pattern.compile(
         "^\\s*def\\s+\\w+", Pattern.MULTILINE);
 
     private static final Pattern PAT_PYTHON_STUB = Pattern.compile(
-        "^(\\s*)def\\s+(\\w+)\\s*\\(([^)]*)\\).*:\\s*\\n(?:.*\\n)*?\\1    (?:pass|\\.\\.\\.)",
+        "^(\\s*)def\\s+(\\w+)\\s*\\(([^)]*)\\).*:\\s*\\n(?:(?:\\1[ \\t]+.*|[ \\t]*)\\n)*?\\1    (?:pass|\\.\\.\\.)",
         Pattern.MULTILINE);
 
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
     // Enums & Data Classes
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
 
     public enum Fixability { HIGH, MEDIUM, LOW }
 
@@ -54,7 +54,7 @@ public class EngineAnalyzer {
         public int                     highFixable;
         public int                     mediumFixable;
         public int                     lowFixable;
-        public String                  engineMessage  = ""; // ✅ مُهيَّأ بـ ""
+        public String                  engineMessage  = ""; // ✅ مُهيَأ بـ ""
         public String                  recommendation = "";
         public String                  language;
         // إحصائيات إضافية
@@ -64,9 +64,9 @@ public class EngineAnalyzer {
         public List<DataFlowAnalyzer.DataFlow> dataFlows = new ArrayList<>(); // تدفقات البيانات
     }
 
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
     // Language Detection
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
 
     private static String detectLanguage(String code, String fileName) {
         if (fileName.endsWith(".py"))   return "Python";
@@ -86,9 +86,9 @@ public class EngineAnalyzer {
         return "Unknown";
     }
 
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
     // Fixability + Intent
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
 
     private static Fixability getFixability(String name) {
         String n = name.toLowerCase();
@@ -118,9 +118,9 @@ public class EngineAnalyzer {
         return "غير محدد";
     }
 
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
     // Summary Builder — يجمع كل الـ summaries
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
 
     private static String buildAllSummaries(String code, String fileName, EngineReport report) {
         StringBuilder all = new StringBuilder();
@@ -131,10 +131,10 @@ public class EngineAnalyzer {
                 SecurityScanner.scan(code, fileName);
             if (!secIssues.isEmpty()) {
                 report.securityIssues = secIssues.size();
-                all.append("\n\n\uD83D\uDD10 تحذيرات أمنية (")
+                all.append("\n\n🔐 تحذيرات أمنية (")
                    .append(secIssues.size()).append("):\n");
                 for (SecurityScanner.SecurityIssue si : secIssues) {
-                    all.append(si.severity.equals("CRITICAL") ? "\uD83D\uDD34" : "\uD83D\uDFE0")
+                    all.append(si.severity.equals("CRITICAL") ? "🔴" : "🟠")
                        .append(" ").append(si.title)
                        .append(" — السطر ").append(si.line).append("\n");
                 }
@@ -146,11 +146,11 @@ public class EngineAnalyzer {
             BugDetector.BugReport bugReport = BugDetector.detect(code);
             if (!bugReport.bugs.isEmpty()) {
                 report.bugCount = bugReport.bugs.size();
-                all.append("\n\n\uD83D\uDC1B أخطاء مكتشفة (")
+                all.append("\n\n🐛 أخطاء مكتشفة (")
                    .append(bugReport.bugs.size()).append("):\n");
                 for (BugDetector.Bug bug : bugReport.bugs) {
-                    String icon = bug.severity == BugDetector.Severity.CRITICAL ? "\uD83D\uDD34"
-                        : bug.severity == BugDetector.Severity.HIGH ? "\uD83D\uDFE0" : "\uD83D\uDFE1";
+                    String icon = bug.severity == BugDetector.Severity.CRITICAL ? "🔴"
+                        : bug.severity == BugDetector.Severity.HIGH ? "🟠" : "🟡";
                     all.append(icon).append(" ").append(bug.title)
                        .append(" — السطر ").append(bug.line).append("\n");
                 }
@@ -163,11 +163,11 @@ public class EngineAnalyzer {
             try {
                 JSAnalyzer.AnalysisResult jsResult = JSAnalyzer.analyze(code);
                 if (jsResult.hasIssues()) {
-                    all.append("\n\n\uD83D\uDC1B أخطاء JavaScript (")
+                    all.append("\n\n🐛 أخطاء JavaScript (")
                        .append(jsResult.issues.size()).append("):\n");
                     for (JSAnalyzer.Issue issue : jsResult.issues) {
-                        String icon = issue.severity == JSAnalyzer.Severity.CRITICAL ? "\uD83D\uDD34"
-                            : issue.severity == JSAnalyzer.Severity.HIGH ? "\uD83D\uDFE0" : "\uD83D\uDFE1";
+                        String icon = issue.severity == JSAnalyzer.Severity.CRITICAL ? "🔴"
+                            : issue.severity == JSAnalyzer.Severity.HIGH ? "🟠" : "🟡";
                         all.append(icon).append(" ").append(issue.title)
                            .append(" — السطر ").append(issue.line).append("\n");
                     }
@@ -261,11 +261,11 @@ public class EngineAnalyzer {
         return all.toString();
     }
 
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
     // analyze() — Entry Point
-    // ═══════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════
 
-    // ─── استخراج body الدالة ─────────────────────────────
+    // ─── استخراج body الدالة ─────────────────────
     private static String extractFuncBody(String code, int startPos, String indent) {
         String[] lines = code.substring(startPos).split("\n");
         StringBuilder body = new StringBuilder();
@@ -305,8 +305,9 @@ public class EngineAnalyzer {
                     if (!trimmed.isEmpty()) params.add(trimmed);
                 }
             }
-            // استخرج body الدالة (أسطر بعد def حتى نهاية الـstub)
-            String funcBody = extractFuncBody(code, m.end(), m.group(1));
+            // نص المطابقة نفسه هو الدالة من def حتى نهاية الـstub.
+            // m.end() كان يبدأ بعد pass فيُرجع ما بعد الدالة، وينتهي فارغًا دائمًا تقريبًا.
+            String funcBody = m.group();
 
             FunctionAnalysis fa = new FunctionAnalysis();
             fa.name       = name;
