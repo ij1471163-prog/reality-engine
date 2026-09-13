@@ -361,6 +361,8 @@ function fixHardcodedSecret(code, issue, lines, ext) {
     fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
   } else if (ext === 'java') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
+  } else if (ext === 'cs') {
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `Environment.GetEnvironmentVariable("${varName}")`);
   } else {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   }
