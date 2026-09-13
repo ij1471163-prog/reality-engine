@@ -105,14 +105,14 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── eval() ───────────────────────────────────────────
-function fixEval(code, issue) {
+function fixEval(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
   if (!/\beval\s*\(/.test(line)) return null;
 
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
   const indent = ' '.repeat(line.search(/\S/));
 
   // استخرج الـ argument
@@ -141,12 +141,12 @@ function fixEval(code, issue) {
 }
 
 // ─── Hardcoded Password ───────────────────────────────
-function fixHardcodedPassword(code, issue) {
+function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
 
   // استخرج اسم المتغير
   const varMatch = line.match(/(\w+)\s*[:=]/);
@@ -186,12 +186,12 @@ function fixHardcodedPassword(code, issue) {
 }
 
 // ─── Command Injection ────────────────────────────────
-function fixCommandInjection(code, issue) {
+function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
   const indent = ' '.repeat(line.search(/\S/));
 
   if (ext === 'py') {
@@ -357,6 +357,8 @@ function fixHardcodedSecret(code, issue, lines, ext) {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
   } else if (ext === 'php') {
     fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
+  } else if (ext === 'java') {
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
   } else {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   }
@@ -491,12 +493,12 @@ function fixCallbackHell(code, issue) {
 }
 
 // ─── Hardcoded API Keys (متقدم) ───────────────────────
-function fixApiKeyAdvanced(code, issue) {
+function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
 
   // استخرج اسم المتغير والقيمة
   const m = line.match(/(?:const|let|var|private|public|string)?\s*(\w+)\s*[:=]\s*["']([^"']+)["']/);
