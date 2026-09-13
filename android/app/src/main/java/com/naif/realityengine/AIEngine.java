@@ -393,9 +393,9 @@ public class AIEngine {
         }
 
         // أضف repair guide
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("══════════════════════════════════════\n");
         prompt.append("📚 دليل الإصلاح — اتبعه بدقة:\n");
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("══════════════════════════════════════\n");
         prompt.append("SQL: use parameterized queries (?,param) not concatenation\n");
         prompt.append("CMD: use subprocess.run(shlex.split(cmd)) not os.system\n");
         prompt.append("MD5: use SHA256 not MD5/SHA1\n");
@@ -447,15 +447,15 @@ public class AIEngine {
 
         prompt.append("📁 الملف الرئيسي المستهدف بالتعديل: ").append(fileName).append("\n\n");
 
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("══════════════════════════════════════\n");
         prompt.append("المحتوى الكامل للملف الرئيسي:\n");
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("══════════════════════════════════════\n");
         prompt.append("```\n").append(fullCode).append("\n```\n\n");
 
         if (relatedFiles != null && !relatedFiles.isEmpty()) {
-            prompt.append("═══════════════════════════════════════\n");
+            prompt.append("══════════════════════════════════════\n");
             prompt.append("ملفات مرتبطة من نفس المشروع (للفهم فقط — لا تُعدّلها):\n");
-            prompt.append("═══════════════════════════════════════\n");
+            prompt.append("══════════════════════════════════════\n");
             for (Map.Entry<String, String> entry : relatedFiles.entrySet()) {
                 prompt.append("\n📄 ملف مرتبط: ").append(entry.getKey()).append("\n");
                 prompt.append("```\n").append(entry.getValue()).append("\n```\n");
@@ -464,9 +464,9 @@ public class AIEngine {
                   .append(fileName).append(".\n\n");
         }
 
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("══════════════════════════════════════\n");
         prompt.append("المناطق الناقصة المكتشفة (Candidates):\n");
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("══════════════════════════════════════\n");
 
         for (int i = 0; i < candidates.size(); i++) {
             StubDetector.Candidate c = candidates.get(i);
@@ -476,9 +476,9 @@ public class AIEngine {
             prompt.append("الكود:\n```\n").append(c.codeSnippet).append("\n```\n");
         }
 
-        prompt.append("\n═══════════════════════════════════════\n");
+        prompt.append("\n══════════════════════════════════════\n");
         prompt.append("المطلوب:\n");
-        prompt.append("═══════════════════════════════════════\n");
+        prompt.append("══════════════════════════════════════\n");
         prompt.append("⚠️ مهم: أرقام الأسطر (start_line, end_line) تبدأ من 0 (0-based)، ");
         prompt.append("أي أن السطر الأول في الملف رقمه 0 وليس 1.\n");
         prompt.append("⚠️ مهم: إذا لم يكن هناك تعديل مطلوب، استدعِ الدالة بمصفوفة fixes فارغة.\n");
@@ -744,6 +744,13 @@ public class AIEngine {
         return fetchSessionToken();
     }
 
+    /** يُبطل الـsession token المخزّن حتى تُجلب نسخة جديدة عند المحاولة التالية. */
+    private static void invalidateSessionToken() {
+        apiKey = null;
+        sessionToken = null;
+        tokenExpiry = 0;
+    }
+
     private static String callAPI(String prompt) throws Exception {
         if (apiKey == null || apiKey.isEmpty()) {
             apiKey = fetchKeyFromServer();
@@ -788,6 +795,13 @@ public class AIEngine {
                 throw new RetryableException("HTTP " + responseCode);
             }
 
+            if (responseCode == 401) {
+                // الـtoken صالح 10 دقائق فقط؛ بدون إبطاله هنا يبقى المخزّن منتهيًا للأبد
+                readStream(conn.getErrorStream());
+                invalidateSessionToken();
+                throw new RetryableException("انتهت صلاحية الجلسة - إعادة المحاولة بـtoken جديد");
+            }
+
             if (responseCode < 200 || responseCode >= 300) {
                 String errBody = readStream(conn.getErrorStream());
                 throw new Exception("HTTP " + responseCode + ": " + errBody);
@@ -811,4 +825,3 @@ public class AIEngine {
         }
     }
 }
-
