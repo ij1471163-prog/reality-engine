@@ -67,7 +67,7 @@ var UnifiedEngine = (() => {
   }
 
   // ─── Layer Runner ─────────────────────────────────
-  async function analyze(code, fileName) {
+  function analyze(code, fileName) {
     const kb = new KnowledgeBase();
     const ext = (fileName || '').split('.').pop().toLowerCase();
     const lang = ext === 'py' ? 'py' : ext === 'php' ? 'php' : 'js';
