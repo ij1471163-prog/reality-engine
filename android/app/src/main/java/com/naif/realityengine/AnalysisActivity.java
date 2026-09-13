@@ -56,6 +56,7 @@ public class AnalysisActivity extends AppCompatActivity {
 
         // Analyze - محرك Java المحلي
         report = EngineAnalyzer.analyze(fileCode, fileName);
+        BugDetector.BugReport bugReport = BugDetector.detect(fileCode);
 
         // Show results
         TextView tvFileName      = findViewById(R.id.tvFileName);
@@ -83,7 +84,7 @@ public class AnalysisActivity extends AppCompatActivity {
         // DataFlow warnings
         if (report.securityNotes != null && !report.securityNotes.isEmpty()) {
             android.widget.TextView tvFlow = new android.widget.TextView(this);
-            tvFlow.setText("\uD83D\uDD0D تدفق البيانات:\n" + String.join("\n", report.securityNotes));
+            tvFlow.setText("🔍 تدفق البيانات:\n" + String.join("\n", report.securityNotes));
             tvFlow.setTextColor(0xFFFF9800);
             tvFlow.setTextSize(12);
             tvFlow.setPadding(16, 8, 16, 8);
@@ -226,4 +227,3 @@ public class AnalysisActivity extends AppCompatActivity {
             .show();
     }
 }
-
