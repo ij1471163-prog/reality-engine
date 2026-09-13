@@ -6,17 +6,15 @@ const analyzeLimits = new Map();
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   // Rate limit: 20 requests per IP per 10min
   const ip = req.headers['x-forwarded-for']?.split(',')[0] || 'unknown';
   const now = Date.now();
   const limits = (analyzeLimits.get(ip) || []).filter(t => now - t < 600000);
   if (limits.length >= 20) return res.status(429).json({ error: 'Rate limit exceeded' });
   analyzeLimits.set(ip, [...limits, now]);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
