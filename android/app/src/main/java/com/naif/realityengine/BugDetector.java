@@ -53,8 +53,6 @@ public class BugDetector {
         if (report.language.equals("python")) {
             detectAccumulation(lines, report);
             detectNoneComparison(lines, report);
-        }
-        if (report.language.equals("javascript") || report.language.equals("java")) {
             detectModifyIteration(lines, report);
             detectBareExcept(lines, report);
             detectMutableDefault(lines, report);

@@ -357,8 +357,15 @@ function fixHardcodedSecret(code, issue, lines, ext) {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
   } else if (ext === 'php') {
     fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
-  } else {
+  } else if (ext === 'java') {
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
+  } else if (ext === 'cs') {
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `Environment.GetEnvironmentVariable("${varName}")`);
+  } else if (['js','ts','jsx','tsx','mjs','cjs','html'].includes(ext)) {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
+  } else {
+    // لغة بلا صيغة env معروفة هنا: لا تطبّق إصلاحاً بصيغة لغة أخرى
+    return null;
   }
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Secret moved to env variable' };

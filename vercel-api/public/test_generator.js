@@ -3,7 +3,7 @@
 
 function generateTests(code, fileName) {
   const ext = fileName.split('.').pop().toLowerCase();
-  const functions = extractFunctions(code, ext);
+  const functions = extractTestableFunctions(code, ext);
   
   if (functions.length === 0) return '// ما وجدنا دوال لاختبارها';
   
@@ -15,7 +15,8 @@ function generateTests(code, fileName) {
 }
 
 // ─── استخراج الدوال ───────────────────────────────────
-function extractFunctions(code, ext) {
+// ملاحظة: الاسم مخصص لهذا الملف لتجنّب التصادم مع extractFunctions في project_intelligence.js
+function extractTestableFunctions(code, ext) {
   const functions = [];
   const lines = code.split('\n');
   

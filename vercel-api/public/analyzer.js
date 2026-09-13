@@ -185,8 +185,11 @@ function extractKeys(code, varName) {
 // ═══════════════════════════════════════════════════════
 
 function analyzeCode(code, fileName) {
-    if (typeof analyzeJava !== 'undefined' && fileName.endsWith('.java'))
-        return analyzeJava(code, fileName);
+    // Java: شغّل محرك Java المخصص أولاً، ثم أكمل بقية الفحوص العامة على نفس الملف.
+    // نتائج analyzeJava تُحفظ منفصلة وتُدمج في النهاية بأولوية كاملة (لا حذف ولا تكرار).
+    const javaIssues = (typeof analyzeJava !== 'undefined' && fileName.endsWith('.java'))
+        ? (analyzeJava(code, fileName) || [])
+        : [];
 
     const issues = [];
     const ext    = fileName.split('.').pop().toLowerCase();
@@ -654,13 +657,23 @@ function analyzeCode(code, fileName) {
   }
 
   // Final dedup - يأخذ أعلى confidence
-  const dedupMap = new Map();
-  issues.forEach(issue => {
+  const _dedupKey = issue => {
     const t = (issue.type||issue.cAct||issue.cwe||'').toLowerCase()
       .replace(/sql.*/,'sql').replace(/xss.*/,'xss')
       .replace(/secret|credential|hardcoded/,'secret')
       .replace(/cmd|command/,'cmd').replace(/eval|code.injection/,'code');
-    const key = (issue.line||0) + ':' + t;
+    return (issue.line||0) + ':' + t;
+  };
+  const dedupMap = new Map();
+  // نتائج analyzeJava تدخل كما هي بدون دمج بينها، ولها الأولوية على الفحوص العامة
+  const javaKeys = new Set();
+  javaIssues.forEach((issue, idx) => {
+    dedupMap.set('__java#' + idx, issue);
+    javaKeys.add(_dedupKey(issue));
+  });
+  issues.forEach(issue => {
+    const key = _dedupKey(issue);
+    if (javaKeys.has(key)) return;
     const existing = dedupMap.get(key);
     if (!existing || (issue.conf||0) > (existing.conf||0)) {
       dedupMap.set(key, issue);

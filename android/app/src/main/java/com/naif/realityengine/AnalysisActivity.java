@@ -56,6 +56,7 @@ public class AnalysisActivity extends AppCompatActivity {
 
         // Analyze - محرك Java المحلي
         report = EngineAnalyzer.analyze(fileCode, fileName);
+        BugDetector.BugReport bugReport = BugDetector.detect(fileCode);
 
         // Show results
         TextView tvFileName      = findViewById(R.id.tvFileName);

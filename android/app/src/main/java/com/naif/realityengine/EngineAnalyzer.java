@@ -25,7 +25,7 @@ public class EngineAnalyzer {
         "^\\s*def\\s+\\w+", Pattern.MULTILINE);
 
     private static final Pattern PAT_PYTHON_STUB = Pattern.compile(
-        "^(\\s*)def\\s+(\\w+)\\s*\\(([^)]*)\\).*:\\s*\\n(?:.*\\n)*?\\1    (?:pass|\\.\\.\\.)",
+        "^(\\s*)def\\s+(\\w+)\\s*\\(([^)]*)\\).*:\\s*\\n(?:(?:\\1[ \\t]+.*|[ \\t]*)\\n)*?\\1    (?:pass|\\.\\.\\.)",
         Pattern.MULTILINE);
 
     // ═══════════════════════════════════════════════════
@@ -305,8 +305,9 @@ public class EngineAnalyzer {
                     if (!trimmed.isEmpty()) params.add(trimmed);
                 }
             }
-            // استخرج body الدالة (أسطر بعد def حتى نهاية الـstub)
-            String funcBody = extractFuncBody(code, m.end(), m.group(1));
+            // نص المطابقة نفسه هو الدالة من def حتى نهاية الـstub.
+            // m.end() كان يبدأ بعد pass فيُرجع ما بعد الدالة، وينتهي فارغًا دائمًا تقريبًا.
+            String funcBody = m.group();
 
             FunctionAnalysis fa = new FunctionAnalysis();
             fa.name       = name;

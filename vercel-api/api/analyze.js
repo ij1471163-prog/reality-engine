@@ -33,6 +33,14 @@ module.exports = async (req, res) => {
       'taint_py.js', 'taint_php.js', 'context_analyzer.js',
       'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
       'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'self_healing_engine.js',
+      // المحركات التي يستدعيها analyzeCode() اختيارياً عبر typeof — بدونها يتدهور تحليل
+      // الخادم بصمت مقارنةً بالمتصفح. أُضيفت بعد التحقق من عدم وجود تصادم أسماء عام
+      // ومن عدم استخدامها لأي DOM API على المستوى الأعلى.
+      'acorn.min.js', 'ast-engine.js',
+      'crypto_scanner.js', 'typescript_analyzer.js', 'kotlin_analyzer.js',
+      'php_analyzer.js', 'c_cpp_analyzer.js', 'dart_analyzer.js',
+      'csharp_analyzer.js', 'deep_analyzer.js', 'pattern_detector.js',
+      'extended_patterns.js', 'project_intelligence.js',
     ];
 
     const engineLoadErrors = [];
@@ -126,6 +134,8 @@ module.exports = async (req, res) => {
         ctx.R[fileName] = { issues: vm.runInContext(`analyzeCode(F[__name], __name)`, ctx) };
         vm.runInContext('applyFallbackToAll(F, R)', ctx);
         vm.runInContext('SmartRepairEngine.applySmartRepair(F, R)', ctx);
+        // نفس ترتيب المتصفح في index.html: smart repair ثم المصلحات المتخصصة ثم الطوارئ
+        vm.runInContext('if (typeof applySpecializedFixers === "function") applySpecializedFixers(F, R)', ctx);
         vm.runInContext('applyEmergencyToAll(F, R)', ctx);
       }
 
