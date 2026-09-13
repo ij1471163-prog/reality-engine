@@ -9,7 +9,8 @@
 // 1. TYPE INFERENCE ENGINE
 // ═══════════════════════════════════════════════════════
 
-class TypeInference {
+// ملاحظة: الاسم مخصص لهذا الملف لتجنّب التصادم مع TypeInference في type_inference.js
+class DeepTypeInference {
     constructor() {
         this.types = new Map(); // varName → type info
     }
@@ -492,7 +493,7 @@ function deepAnalyze(code, fileName) {
 
     try {
         // 1. Type Inference
-        const ti = new TypeInference();
+        const ti = new DeepTypeInference();
         const typeMap = ti.infer(code);
 
         // 2. Data Flow
