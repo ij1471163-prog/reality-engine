@@ -23,8 +23,7 @@ public class PremiumManager {
     }
 
     public static boolean isPremium(Context ctx) {
-        return true; // TEST MODE — remove before release
-        // return getPrefs(ctx).getBoolean(KEY_PREMIUM, false);
+        return getPrefs(ctx).getBoolean(KEY_PREMIUM, false);
     }
 
     // ─── WebView Quota ─────────────────────────────────

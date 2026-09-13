@@ -70,6 +70,8 @@ module.exports = async (req, res) => {
     }
 
     // تحليل
+    // fileName يأتي من الطلب: يُمرَّر كقيمة داخل الـcontext ولا يُدمج في نص كود يُنفَّذ
+    ctx.__name = fileName;
     ctx.F = { [fileName]: code };
     ctx.R = { [fileName]: { issues: [] } };
     ctx.R[fileName].issues = ctx.analyzeCode(code, fileName);
@@ -114,14 +116,14 @@ module.exports = async (req, res) => {
       if (!usedSelfHealing) {
         // مسار الإصلاح القديم
         for (let p = 0; p < 5; p++) {
-          const iss = vm.runInContext(`analyzeCode(F['${fileName}'], '${fileName}')`, ctx);
+          const iss = vm.runInContext(`analyzeCode(F[__name], __name)`, ctx);
           if (!iss.length) break;
           ctx.tmpI = iss;
-          const r = vm.runInContext(`repairCode(F['${fileName}'], tmpI, '${fileName}')`, ctx);
+          const r = vm.runInContext(`repairCode(F[__name], tmpI, __name)`, ctx);
           if (!r || r.repaired === ctx.F[fileName] || !r.repairs.length) break;
           ctx.F[fileName] = r.repaired;
         }
-        ctx.R[fileName] = { issues: vm.runInContext(`analyzeCode(F['${fileName}'], '${fileName}')`, ctx) };
+        ctx.R[fileName] = { issues: vm.runInContext(`analyzeCode(F[__name], __name)`, ctx) };
         vm.runInContext('applyFallbackToAll(F, R)', ctx);
         vm.runInContext('SmartRepairEngine.applySmartRepair(F, R)', ctx);
         vm.runInContext('applyEmergencyToAll(F, R)', ctx);
