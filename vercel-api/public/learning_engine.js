@@ -138,6 +138,50 @@ var LearningEngine = (() => {
     return Math.abs(h).toString(36);
   }
 
+  // ─── Anchor Tokens ───────────────────────────────────
+  // معرّفات السطر فقط — بدون القيم النصية ولا الكلمات المفتاحية
+  function anchorTokens(line) {
+    const KEYWORDS = new Set([
+      'const','let','var','function','def','return','new','this','self','class',
+      'public','private','protected','static','final','import','from','require',
+      'if','else','for','while','try','catch','async','await',
+    ]);
+    const noStrings = (line || '').replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, ' ');
+    const words = noStrings.match(/[A-Za-z_$][\w$]*/g) || [];
+    return [...new Set(words.filter(w => !KEYWORDS.has(w)))];
+  }
+
+  // ─── Corresponding Candidate ─────────────────────────
+  // يربط after بالسطر الأصلي نفسه — وليس بأول سطر يطابق نوع الثغرة
+  function pickCorresponding(typed, hunk, beforeLine, removedRank) {
+    if (!typed.length)      return null;
+    if (typed.length === 1) return typed[0];
+
+    // 1) تطابق المعرّفات — الإشارة الأقوى، وتتطلب فائزاً واضحاً
+    const anchors = anchorTokens(beforeLine);
+    if (anchors.length) {
+      const scored = typed
+        .map(c => {
+          const tokens = new Set(anchorTokens(c.line));
+          return { c, score: anchors.filter(a => tokens.has(a)).length };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      if (scored[0].score > 0 && scored[0].score > (scored[1] ? scored[1].score : 0)) {
+        return scored[0].c;
+      }
+    }
+
+    // 2) تقابل موضعي — فقط إذا كان الـhunk استبدالاً 1:1 بلا إدراج
+    if (removedRank >= 0 && hunk.removed.length === hunk.added.length) {
+      const byPos = hunk.added[removedRank];
+      if (byPos && typed.indexOf(byPos) !== -1) return byPos;
+    }
+
+    // 3) غير محسوم → Fail Closed: لا نتعلم زوجاً غير مؤكد
+    return null;
+  }
+
   // ─── Extract Pair (LCS + Fail Closed) ────────────────
   function extractPair(codeBefore, codeAfter, issue) {
     const linesBefore = codeBefore.split('\n');
@@ -191,13 +235,15 @@ var LearningEngine = (() => {
 
     if (!candidates.length) return null;
 
-    // اختر الـ candidate المناسب لنوع الثغرة
+    // اختر الـ candidate المقابل فعلياً للسطر الأصلي داخل نفس الـhunk
+    const removedRank = hunk.removed.findIndex(r => r.idx === ln);
+
     let afterLine = '';
     for (const [key, regex] of Object.entries(TYPE_FIXES)) {
-      if (t.includes(key)) {
-        const match = candidates.find(c => regex.test(c.line));
-        if (match) { afterLine = match.line; break; }
-      }
+      if (!t.includes(key)) continue;
+      const typed = candidates.filter(c => regex.test(c.line));
+      const match = pickCorresponding(typed, hunk, beforeLine, removedRank);
+      if (match) { afterLine = match.line; break; }
     }
 
     // Fail Closed: لو ما في match → رفض
@@ -210,6 +256,38 @@ var LearningEngine = (() => {
       after:    afterLine,
     };
   }
+  // ─── Validate Fix Before Learning ────────────────────
+  // لا نخزّن after لا نستطيع إثبات سلامته. لا parser جديد:
+  // isBalanced موجودة في analyzer.js:83 ويستخدمها المحلل لنفس الغرض
+  // (analyzer.js:129)، وacorn محمّل أصلاً في الصفحة.
+  function parsesAsJS(src) {
+    for (const sourceType of ['module', 'script']) {
+      try { acorn.parse(src, { ecmaVersion: 'latest', sourceType }); return true; }
+      catch(e) {}
+    }
+    return false;
+  }
+
+  // التحقق على مستوى الزوج نفسه — لا على مستوى الملف، حتى لا يُرفض
+  // نمط صحيح بسبب سطر مكسور آخر يحقنه محرك الإصلاح في مكان بعيد.
+  function isPairUsable(pair, fileName) {
+    // Fail Closed: بلا أداة تحقق متاحة لا نتعلم شيئاً
+    if (typeof isBalanced !== 'function') return false;
+
+    // 1) توازن الأقواس — لكل اللغات (JS/TS/Python/PHP).
+    //    لا نحاسب سطراً كان أصلاً غير متوازن (سطر جزئي مثل "items.forEach(i => {")
+    if (isBalanced(pair.before) && !isBalanced(pair.after)) return false;
+
+    // 2) JS النقي فقط: تحقق نحوي بـacorn. لا يدعم TS/JSX فتُستثنى،
+    //    ونحكم فقط إذا كان before سطراً مكتملاً يُحلَّل وحده — وإلا لا حكم.
+    if (/\.(js|mjs|cjs)$/i.test(fileName || '')) {
+      if (typeof acorn === 'undefined' || typeof acorn.parse !== 'function') return false;
+      if (parsesAsJS(pair.before) && !parsesAsJS(pair.after)) return false;
+    }
+
+    return true;
+  }
+
   // ─── Learn ──────────────────────────────────────────
   function learn(codeBefore, codeAfter, issues, fileName) {
     if (!codeBefore || !codeAfter || codeBefore === codeAfter) return 0;
@@ -220,6 +298,8 @@ var LearningEngine = (() => {
     issues.forEach(issue => {
       const pair = extractPair(codeBefore, codeAfter, issue);
       if (!pair) return;
+      // after مشوّه ⇒ لا يُخزَّن (لا نصلحه ولا نغيّره)
+      if (!isPairUsable(pair, fileName)) return;
 
       // استخرج language + context + fingerprint أولاً
       const lang = inferLanguage(fileName);

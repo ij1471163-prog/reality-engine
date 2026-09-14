@@ -2,6 +2,26 @@
 // © 2025 Naif Lucena — Reality Engine
 // التدفق: Ghost PASS فقط → learn() → verify(patternId, true)
 
+// ─── Syntax Guard للإصلاح المتعلَّم ─────────────────────
+// acorn موجود أصلاً في الصفحة (acorn.min.js). لا يدعم TS ولا JSX،
+// لذلك يقتصر الفحص على JS النقي، ولا يُحاسَب الإصلاح إذا كان الأصل
+// نفسه غير قابل للتحليل (JSX/TS داخل .js) — تجنباً للرفض الكاذب.
+function learnedSyntaxOk(fileName, beforeCode, afterCode) {
+    if (!/\.(js|mjs|cjs)$/i.test(fileName || '')) return true;
+    if (typeof acorn === 'undefined' || typeof acorn.parse !== 'function') return true;
+
+    const parses = src => {
+        for (const sourceType of ['module', 'script']) {
+            try { acorn.parse(src, { ecmaVersion: 'latest', sourceType }); return true; }
+            catch(e) {}
+        }
+        return false;
+    };
+
+    if (!parses(beforeCode)) return true;   // الأصل غير قابل للتحليل ⇒ لا حكم
+    return parses(afterCode);
+}
+
 function fixAllEngine() {
     const origF = {};
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
@@ -59,10 +79,24 @@ function fixAllEngine() {
             totalFixed += result.repairs.length;
         }
 
-        // applyLearned
+        // applyLearned — لا يُقبل إلا بعد تحقق Ghost، وإلا rollback للكود الأصلي
         if (typeof LearningEngine !== 'undefined') {
-            const lr = LearningEngine.applyLearned(F[fn], fn);
-            if (lr.applied > 0) F[fn] = lr.fixed;
+            const beforeLearned = F[fn];
+            const lr = LearningEngine.applyLearned(beforeLearned, fn);
+            if (lr.applied > 0 && lr.fixed !== beforeLearned) {
+                // لا targetTypes هنا — الحكم على الإصلاح المتعلَّم وحده:
+                // REGRESSION (نوع جديد أو زيادة حرج/عالي) أو FAIL (بلا تحسّن) ⇒ رفض
+                let accepted = false;
+                if (typeof GhostMode !== 'undefined') {
+                    const lv = GhostMode.verdict(beforeLearned, lr.fixed, fn, analyzeCode);
+                    accepted = lv.verdict !== GhostMode.VERDICT.FAIL &&
+                               lv.verdict !== GhostMode.VERDICT.REGRESSION;
+                }
+                // فحص نحوي — يمنع قبول إصلاح متعلَّم يكسر صياغة الملف
+                if (accepted && !learnedSyntaxOk(fn, beforeLearned, lr.fixed)) accepted = false;
+                // Fail Closed: بدون مُحكِّم متاح لا نقبل تعديلاً متعلَّماً
+                F[fn] = accepted ? lr.fixed : beforeLearned;
+            }
         }
 
         R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
