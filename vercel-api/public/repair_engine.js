@@ -30,6 +30,14 @@ const STRATEGIES = {
   NPE_CHAIN:        { fn: null,                 autoFix: false, confidence: 0.15 },
 };
 
+// ─── قيود اللغة ───────────────────────────────────────
+// عائلة JS — نفس الصياغة (process.env / console)
+const JS_EXT = /^(js|mjs|cjs|jsx|ts|tsx)$/;
+// اللغات التي يملك هذا المحرك صياغة env صحيحة لها — ما عداها لا يُلمس
+const ENV_FIX_EXT = /^(js|mjs|cjs|jsx|ts|tsx|py|php|java|cs)$/;
+// سطر مُصلَح سلفاً — إعادة تغليفه تنتج استدعاءات متداخلة
+const ALREADY_ENV = /process\.env\.|os\.environ|getenv\s*\(|System\.getenv\s*\(|Environment\.GetEnvironmentVariable\s*\(/;
+
 // ─── SQL Injection ────────────────────────────────────
 function fixSQLInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
@@ -122,9 +130,7 @@ function fixEval(code, issue) {
   if (ext === 'js' || ext === 'ts') {
     if (/json|data|response|result/i.test(arg)) {
       lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
-    } else if (ext === 'php') {
-    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
-  } else {
+    } else {
       // eval على user input خطير — احذفه واترك تحذير
       lines[ln] = `${indent}// SECURITY: eval() is dangerous — removed. Validate ${arg} before use`;
     }
@@ -141,12 +147,16 @@ function fixEval(code, issue) {
 }
 
 // ─── Hardcoded Password ───────────────────────────────
-function fixHardcodedPassword(code, issue) {
+function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = detectExt(code, fileName);
+  if (ALREADY_ENV.test(line)) return null;
+  // امتداد بلا صياغة env معروفة ⇒ لا نلمس الملف
+  const fext = (ext2 || (fileName || '').split('.').pop() || '').toLowerCase();
+  if (fext && !ENV_FIX_EXT.test(fext)) return null;
 
   // استخرج اسم المتغير
   const varMatch = line.match(/(\w+)\s*[:=]/);
@@ -165,21 +175,23 @@ function fixHardcodedPassword(code, issue) {
       `process.env.${varName}`
     );
   } else if (ext === 'php') {
-    fixedLine = line
-      .replace(/md5\s*\(/gi, 'hash("sha256", ')
-      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
+    lines[ln] = line.replace(
+      /(["\'])[^"\']+(["\'])/,
+      `getenv('${varName}')`
+    );
   } else if (ext === 'cs') {
     lines[ln] = line.replace(
       /(["\'])[^"\']+(["\'])/,
       `Environment.GetEnvironmentVariable("${varName}")`
     );
-  } else if (ext === 'php') {
-    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
-  } else {
+  } else if (ext === 'java') {
     lines[ln] = line.replace(
       /(["\'])[^"\']+(["\'])/,
       `System.getenv("${varName}")`
     );
+  } else {
+    // لغة بلا صياغة معروفة ⇒ لا إصلاح، بدل حقن صياغة لغة أخرى
+    return null;
   }
 
   return { fixed: lines.join('\n'), patch: lines[ln], reason: 'Hardcoded credential moved to env variable' };
@@ -353,14 +365,21 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   const varMatch = line.match(/(\w+)\s*[:=]/);
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
   let fixed = line;
+  // idempotent — السطر مُصلَح سلفاً ⇒ لا نعيد تغليفه (يُنتج استدعاءات متداخلة)
+  if (ALREADY_ENV.test(line)) return null;
   if (ext === 'py') {
-    // idempotent — السطر مُصلَح سلفاً ⇒ لا نعيد تغليفه (يُنتج os.environ.get المتداخلة)
-    if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
   } else if (ext === 'php') {
     fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
-  } else {
+  } else if (ext === 'java') {
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
+  } else if (ext === 'cs') {
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `Environment.GetEnvironmentVariable("${varName}")`);
+  } else if (JS_EXT.test(ext || '')) {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
+  } else {
+    // لغة بلا صياغة معروفة ⇒ لا نحقن صياغة JS في ملفها
+    return null;
   }
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Secret moved to env variable' };
@@ -388,11 +407,12 @@ function fixEmptyCatch(code, issue, lines, ext) {
     fixed = line + '\n' + ' '.repeat(line.search(/\S/) + 4) + 'logging.error("Exception: %s", str(e))';
   } else if (ext === 'cs') {
     fixed = line.replace(/catch\s*(\([^)]*\))?\s*\{\s*\}/, 'catch (Exception ex) { Debug.LogError("Error: " + ex.Message); }');
-  } else if (ext === 'php') {
-    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
-  } else {
+  } else if (JS_EXT.test(ext || '')) {
     fixed = line.replace(/catch\s*\(([^)]+)\)\s*\{\s*\}/, 'catch ($1) { console.error("Error:", $1); }');
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ console.error("unexpected error"); }');
+  } else {
+    // لغة بلا صياغة معروفة ⇒ لا إصلاح
+    return null;
   }
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Empty catch now logs error' };
@@ -422,8 +442,6 @@ function fixEmptyFunction(code, issue, lines, ext) {
   } else if (/is|has|check|valid/i.test(funcName)) {
     body = ext === 'py' ? `${indent}return False  # TODO: implement validation` :
            `${indent}return false; // TODO: implement validation`;
-  } else if (ext === 'php') {
-    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
   } else {
     body = ext === 'py' ? `${indent}pass  # TODO: implement` :
            `${indent}// TODO: implement`;
@@ -493,12 +511,16 @@ function fixCallbackHell(code, issue) {
 }
 
 // ─── Hardcoded API Keys (متقدم) ───────────────────────
-function fixApiKeyAdvanced(code, issue) {
+function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = detectExt(code, fileName);
+  if (ALREADY_ENV.test(line)) return null;
+  // امتداد بلا صياغة env معروفة ⇒ لا نلمس الملف
+  const fext = (ext2 || (fileName || '').split('.').pop() || '').toLowerCase();
+  if (fext && !ENV_FIX_EXT.test(fext)) return null;
 
   // استخرج اسم المتغير والقيمة
   const m = line.match(/(?:const|let|var|private|public|string)?\s*(\w+)\s*[:=]\s*["']([^"']+)["']/);
@@ -524,6 +546,9 @@ function fixApiKeyAdvanced(code, issue) {
     lines[ln] = line.replace(/["'][^"']+["']/, `Environment.GetEnvironmentVariable("${envName}")`);
   } else if (ext === 'java') {
     lines[ln] = line.replace(/["'][^"']+["']/, `System.getenv("${envName}")`);
+  } else {
+    // لغة بلا صياغة معروفة ⇒ لا إصلاح
+    return null;
   }
 
   return {
@@ -632,7 +657,13 @@ function repairCode(code, issues, fileName) {
     }
 
     const lines = repairedCode.split('\n');
-    const result = strat.fn(repairedCode, issue, lines, ext, fileName);
+    let result;
+    try {
+      result = strat.fn(repairedCode, issue, lines, ext, fileName);
+    } catch(e) {
+      // استراتيجية انهارت ⇒ تخطَّ هذه الثغرة وأكمل الباقي، بدل إسقاط الإصلاح كله
+      return;
+    }
     if (!result || result.fixed === repairedCode) { return; }
 
     repairs.push({
