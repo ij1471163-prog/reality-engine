@@ -78,6 +78,96 @@ var SmartRepairEngine = (() => {
     return 'unknown';
   }
 
+  // ─── SQL Concat Parsing ───────────────────────────────
+  // يقسم تعبيراً على + خارج النصوص فقط. يرجع null لو بقي نص غير مغلق.
+  function splitTopLevelPlus(expr) {
+    const out = [];
+    let cur = '', quote = null, depth = 0;
+    for (let k = 0; k < expr.length; k++) {
+      const ch = expr[k];
+      if (quote) {
+        cur += ch;
+        if (ch === '\\') { if (k + 1 < expr.length) cur += expr[++k]; continue; }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') { quote = ch; cur += ch; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') depth++;
+      else if (ch === ')' || ch === ']' || ch === '}') depth--;
+      else if (ch === '+' && depth === 0) { out.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    if (quote || depth !== 0) return null;
+    out.push(cur);
+    return out;
+  }
+
+  // يفكّ ترميز نص حرفي إلى قيمته الفعلية. النص المُلتقَط من المصدر يحوي
+  // الهروب كما كُتب (\\' مثلاً)، وإعادة ترميزه بلا فكّ تُضاعف الشرطة
+  // المائلة فيتغيّر الاستعلام. أي هروب غير مألوف ⇒ null (fail-closed).
+  function decodeStringLiteral(raw) {
+    const MAP = { '\\': '\\', "'": "'", '"': '"', '`': '`', n: '\n', t: '\t', r: '\r' };
+    let out = '';
+    for (let k = 0; k < raw.length; k++) {
+      const ch = raw[k];
+      if (ch !== '\\') { out += ch; continue; }
+      const nx = raw[++k];
+      if (nx === undefined || !(nx in MAP)) return null;
+      out += MAP[nx];
+    }
+    return out;
+  }
+
+  // يحوّل تعبير تجميع SQL إلى نص استعلام كامل + قائمة المعاملات بالترتيب.
+  // لا يفقد أي مقطع من الاستعلام، ويرجع null (fail-closed) لأي جزء
+  // لا نضمن ترجمته — تعبير مركّب، أو template literal، أو بلا معاملات.
+  function parseSqlConcat(rhs) {
+    const parts = splitTopLevelPlus(rhs);
+    if (!parts) return null;
+    let query = '';
+    const params = [];
+    for (const raw of parts) {
+      const piece = raw.trim();
+      if (!piece) return null;
+      const lit = piece.match(/^(['"])((?:\\.|(?!\1)[^\\])*)\1$/);
+      if (lit) {
+        const decoded = decodeStringLiteral(lit[2]);
+        if (decoded === null) return null;
+        query += decoded;
+        continue;
+      }
+      if (!/^[A-Za-z_$][\w$]*$/.test(piece)) return null;
+      query += '?';
+      params.push(piece);
+    }
+    if (!params.length) return null;
+    if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(query)) return null;
+    return { query, params };
+  }
+
+  // يبني regex لاستدعاء يستهلك متغير الاستعلام ولم تُمرَّر له معاملات بعد.
+  // يقبل db.query(q) و db.query(q, function…) و db.query(q, (…) =>
+  // ويستبعد db.query(q, [..]) لأن المعاملات مربوطة أصلاً.
+  function queryCallRe(varName) {
+    return new RegExp(
+      '((?:db|conn|pool|client|connection|session)\\s*\\.\\s*(?:query|execute)\\s*\\(\\s*)' +
+      varName + '\\s*(\\)|,\\s*(?:function\\b|\\())'
+    );
+  }
+
+  // يبحث عن موضع الاستدعاء داخل نفس الكتلة فقط (يتوقف عند أول سطر
+  // إزاحته أقل من سطر الاستعلام ⇒ خرجنا من الكتلة).
+  function findQueryCallSite(lines, varName, fromLine, indentWidth) {
+    const re = queryCallRe(varName);
+    for (let k = fromLine + 1; k < lines.length; k++) {
+      const raw = lines[k];
+      if (!raw.trim()) continue;
+      if (re.test(raw)) return k;
+      if (raw.search(/\S/) < indentWidth) return -1;
+    }
+    return -1;
+  }
+
   // ─── Smart Fixers ─────────────────────────────────────
 
   // 1. SQL Injection — يفهم السياق ويصلح بدقة
@@ -85,6 +175,7 @@ var SmartRepairEngine = (() => {
     const lines = code.split('\n');
     let changed = false;
     const repairs = [];
+    const bound = new Set();   // متغيّرات رُبطت معاملاتها فعلاً
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -130,21 +221,28 @@ var SmartRepairEngine = (() => {
       if (ctx.ext === 'js' || ctx.ext === 'ts') {
         // يكتشف SQL + concatenation
         if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']/.test(t) && /\+\s*\w+/.test(t) && !/LIKE/i.test(t) && !/%\?%/.test(t)) {
-          const params = [];
-          const params2 = [];
-          t.replace(/\+\s*(\w+)\b/g, (_, p) => {
-            if (!/^(?:SELECT|INSERT|UPDATE|DELETE|WHERE|AND|OR|FROM|JOIN|SET)$/i.test(p)) params2.push(p);
-          });
-          if (params2.length) {
-            const varM2 = t.match(/(\w+)\s*=/);
-            const varName2 = varM2 ? varM2[1] : 'query';
-            const indent2 = ' '.repeat(line.search(/\S/));
-            const qM2 = t.match(/["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
-            if (qM2) {
-              let q2 = qM2[1].replace(/='\s*$/, '=?').replace(/'\s*$/, '').trim();
-              if (!q2.endsWith('?')) q2 += '?';
-              lines[i] = `${indent2}${varName2} = "${q2}";`;
-              repairs.push({ line: i + 1, fix: `JS SQL → parameterized [${params2.join(', ')}]` });
+          // الاستعلام يُعاد بناؤه من التعبير كاملاً: كل مقطع نصي يبقى،
+          // وكل متغيّر يصير ? ويُحفَظ بالترتيب. لا بتر لبقية الاستعلام
+          // ولا إسقاط لكلمة التصريح.
+          const declM = t.match(/^(const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
+          const parsed = declM ? parseSqlConcat(declM[3]) : null;
+          if (parsed) {
+            const decl      = declM[1] ? declM[1] + ' ' : '';
+            const varName2  = declM[2];
+            const indentW   = line.search(/\S/);
+            const indent2   = ' '.repeat(indentW);
+            // fail-closed: بلا موضع ربط فعلي لا نعيد الكتابة إطلاقاً،
+            // لأن استعلاماً بـ? بلا معاملات يغيّر النتيجة بصمت.
+            const callIdx = findQueryCallSite(lines, varName2, i, indentW);
+            if (callIdx !== -1) {
+              const re   = queryCallRe(varName2);
+              const args = '[' + parsed.params.join(', ') + ']';
+              lines[callIdx] = lines[callIdx].replace(re, (m, head, tail) =>
+                tail === ')' ? `${head}${varName2}, ${args})`
+                             : `${head}${varName2}, ${args}${tail}`);
+              lines[i] = `${indent2}${decl}${varName2} = ${JSON.stringify(parsed.query)};`;
+              bound.add(varName2);
+              repairs.push({ line: i + 1, fix: `JS SQL → parameterized [${parsed.params.join(', ')}]` });
               changed = true;
             }
           }
@@ -174,7 +272,9 @@ var SmartRepairEngine = (() => {
         const dbM = t.match(/(?:db|conn|pool|client)\.query\s*\(\s*(\w+)\s*,\s*function/);
         if (dbM) {
           const queryVar = dbM[1];
-          const sqlInfo = ctx.sqlVars.get(queryVar);
+          // لا نربط معاملات باستعلام ما زال يجمّع نصاً — الربط يتم في
+          // كتلة إعادة الكتابة أعلاه، وهذه شبكة أمان لا تلمس غيرها.
+          const sqlInfo = bound.has(queryVar) ? ctx.sqlVars.get(queryVar) : null;
           if (sqlInfo && sqlInfo.params.length) {
             const indent = ' '.repeat(line.search(/\S/));
             lines[i] = indent + t.replace(
