@@ -14,7 +14,7 @@ var GhostMode = (() => {
   };
 
   // ─── 1. Structural Check ────────────────────────────
-  // تحقق بنيوي (ليس syntax parsing حقيقي — مرحلة قادمة)
+  // تحقق بنيوي (الفحص النحوي منفصل في syntaxOk أدناه)
   function structuralCheck(original, fixed) {
     if (!fixed || !fixed.trim()) return false;
     if (fixed.trim().length < original.trim().length * 0.25) return false;
@@ -28,6 +28,26 @@ var GhostMode = (() => {
     if (newLines2.length > 0 && newLines2.every(l => l.startsWith('//') || l.startsWith('#') || l.startsWith('/*'))) return false;
 
     return true;
+  }
+
+  // ─── 1b. Syntax Check ───────────────────────────────
+  // إصلاح لا يُحلَّل ليس إصلاحاً مهما تحسّنت أرقام التحليل. نفس قواعد
+  // learnedSyntaxOk المعتمدة في fix_engine_pipeline: JS النقي فقط
+  // (acorn لا يدعم TS/JSX)، ولا حكم إذا كان الأصل نفسه لا يُحلَّل أو
+  // كان acorn غير متاح — فلا يُرفض إصلاح صحيح لسبب خارج عنه.
+  function parsesAsJS(src) {
+    for (const sourceType of ['module', 'script']) {
+      try { acorn.parse(src, { ecmaVersion: 'latest', sourceType }); return true; }
+      catch(e) {}
+    }
+    return false;
+  }
+
+  function syntaxOk(original, fixed, fileName) {
+    if (!/\.(js|mjs|cjs)$/i.test(fileName || '')) return true;
+    if (typeof acorn === 'undefined' || typeof acorn.parse !== 'function') return true;
+    if (!parsesAsJS(original)) return true;
+    return parsesAsJS(fixed);
   }
 
   // ─── 2. Re-Analyze ──────────────────────────────────
@@ -106,6 +126,11 @@ var GhostMode = (() => {
     // Structural Check
     if (!structuralCheck(original, fixed)) {
       return { verdict: VERDICT.FAIL, score: 0, reason: 'structural_invalid' };
+    }
+
+    // Syntax Check — كود لا يُحلَّل لا يُسلَّم ولا يُتعلَّم منه
+    if (!syntaxOk(original, fixed, fileName)) {
+      return { verdict: VERDICT.FAIL, score: 0, reason: 'syntax_broken' };
     }
 
     // Re-analyze
