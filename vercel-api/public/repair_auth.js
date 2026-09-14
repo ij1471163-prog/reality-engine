@@ -84,7 +84,11 @@ var AuthRepair = (() => {
 
           // أضف بعد السطر الأول من الدالة
           const openBrace = lines.findIndex((l, idx) => idx >= i && l.includes('{'));
-          if (openBrace >= 0) {
+          // دالة كاملة في سطر واحد: قوسها يُفتح ويُغلق في نفس السطر،
+          // فالإدراج بعده يضع return خارج الدالة ⇒ نتخطّاها
+          const braceLine  = openBrace >= 0 ? lines[openBrace] : '';
+          const spansLines = (braceLine.split('{').length - braceLine.split('}').length) > 0;
+          if (openBrace >= 0 && spansLines) {
             lines.splice(openBrace + 1, 0, authLine);
             repairs.push({ line: openBrace + 1, fix: `Auth check added to ${funcName}()` });
             i = openBrace + 2;

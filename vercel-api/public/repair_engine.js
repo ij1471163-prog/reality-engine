@@ -354,6 +354,8 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
   let fixed = line;
   if (ext === 'py') {
+    // idempotent — السطر مُصلَح سلفاً ⇒ لا نعيد تغليفه (يُنتج os.environ.get المتداخلة)
+    if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
   } else if (ext === 'php') {
     fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
