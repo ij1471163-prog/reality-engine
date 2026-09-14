@@ -113,14 +113,14 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── eval() ───────────────────────────────────────────
-function fixEval(code, issue) {
+function fixEval(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
   if (!/\beval\s*\(/.test(line)) return null;
 
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
   const indent = ' '.repeat(line.search(/\S/));
 
   // استخرج الـ argument
@@ -152,7 +152,7 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code, fileName);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
   if (ALREADY_ENV.test(line)) return null;
   // امتداد بلا صياغة env معروفة ⇒ لا نلمس الملف
   const fext = (ext2 || (fileName || '').split('.').pop() || '').toLowerCase();
@@ -198,12 +198,12 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── Command Injection ────────────────────────────────
-function fixCommandInjection(code, issue) {
+function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
   const indent = ' '.repeat(line.search(/\S/));
 
   if (ext === 'py') {
@@ -516,7 +516,7 @@ function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = detectExt(code, fileName);
+  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
   if (ALREADY_ENV.test(line)) return null;
   // امتداد بلا صياغة env معروفة ⇒ لا نلمس الملف
   const fext = (ext2 || (fileName || '').split('.').pop() || '').toLowerCase();
