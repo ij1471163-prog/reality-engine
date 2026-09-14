@@ -36,6 +36,18 @@ var AuthRepair = (() => {
     return /req\.user|auth|middleware|isAuthenticated|verify|token/i.test(funcBody);
   }
 
+  // هل يفتح السطر كتلة تمتد لما بعده؟ (أقواس مفتوحة أكثر من المغلقة)
+  // قوس يُفتح ويُغلق في نفس السطر ⇒ الإدراج بعده يضع return خارج الكتلة.
+  function opensBlock(line) {
+    return ((line || '').split('{').length - (line || '').split('}').length) > 0;
+  }
+
+  // فحص الـauth المُدرَج يستعمل req و res، فلا يصحّ إلا في دالة تستقبلهما
+  // فعلاً؛ غير ذلك يُنتج كوداً يشير إلى متغيرات غير معرَّفة.
+  function isRequestHandler(params) {
+    return /\breq\b/.test(params || '') && /\bres\b/.test(params || '');
+  }
+
   function fix(code, fileName) {
     const ext = (fileName || '').split('.').pop().toLowerCase();
     if (!['js','ts','jsx','tsx'].includes(ext)) return { fixed: code, repairs: [] };
@@ -48,14 +60,21 @@ var AuthRepair = (() => {
       const line = lines[i];
       const routeM = line.match(/app\.(get|post|put|delete|patch)\s*\(/);
       if (routeM && !line.includes("req.user") && !line.includes("auth")) {
+        let injected = false;
         for (let j = i; j < Math.min(i+3, lines.length); j++) {
-          if (lines[j].includes("{")) {
+          if (!lines[j].includes("{")) continue;
+          // handler في سطر واحد ⇒ الإدراج بعده يضع return خارجه ⇒ نتخطّاه
+          if (opensBlock(lines[j])) {
             lines.splice(j+1, 0, '  if (!req.user) return res.status(401).json({ error: "Unauthorized" });');
             repairs.push({ fix: "Auth check added to route" });
             i = j + 2;
-            break;
+            injected = true;
           }
+          break;
         }
+        // بلا إدراج لا بد أن يتقدّم المؤشر، وإلا دارت الحلقة بلا نهاية
+        // (مثال: app.get('/x', handler); بلا قوس فتح في النافذة)
+        if (!injected) i++;
         continue;
       }
       const funcMatch = line.match(/(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/);
@@ -78,7 +97,7 @@ var AuthRepair = (() => {
         }
 
         // تحقق هل تحتاج auth
-        if (needsAuth(funcName, funcBody) && !hasAuth(funcBody)) {
+        if (isRequestHandler(params) && needsAuth(funcName, funcBody) && !hasAuth(funcBody)) {
           const ind = ' '.repeat(line.search(/\S/) + 4);
           const authLine = `${ind}if (!req || !req.user) return res.status(401).json({ error: 'Unauthorized' });`;
 
@@ -87,8 +106,7 @@ var AuthRepair = (() => {
           // دالة كاملة في سطر واحد: قوسها يُفتح ويُغلق في نفس السطر،
           // فالإدراج بعده يضع return خارج الدالة ⇒ نتخطّاها
           const braceLine  = openBrace >= 0 ? lines[openBrace] : '';
-          const spansLines = (braceLine.split('{').length - braceLine.split('}').length) > 0;
-          if (openBrace >= 0 && spansLines) {
+          if (openBrace >= 0 && opensBlock(braceLine)) {
             lines.splice(openBrace + 1, 0, authLine);
             repairs.push({ line: openBrace + 1, fix: `Auth check added to ${funcName}()` });
             i = openBrace + 2;
