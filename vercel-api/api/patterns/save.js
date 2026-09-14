@@ -103,16 +103,45 @@ function checkSaveRate(sessionId) {
 }
 
 // ─── Load Analyzer (server-side) ─────────────────────
+// ⚠️ يجب أن تبقى هذه القائمة مطابقة تمامًا لقائمة المحركات في api/analyze.js
+// أي تعديل هناك (إضافة/حذف/ترتيب) يجب أن يُطبَّق هنا بنفس الشكل،
+// وإلا اختلف تحليل نظام التعلم عن تحليل الإنتاج.
+// MUST stay identical to the engine list in api/analyze.js.
+const ENGINES = [
+  'engine_java.js', 'analyzer.js', 'security_scanner.js',
+  'secret_detector.js', 'taint_core.js', 'taint_js.js',
+  'taint_py.js', 'taint_php.js', 'context_analyzer.js',
+  'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
+  'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'self_healing_engine.js',
+];
+
 let analyzeCode = null;
 
 function loadAnalyzer() {
   if (analyzeCode) return true;
   try {
-    const ctx  = vm.createContext({ console, window: {}, global: {} });
-    const base = path.join(process.cwd(), 'public');
-    for (const f of ['engine_java.js', 'knowledge_base.js', 'analyzer.js']) {
-      vm.runInContext(fs.readFileSync(path.join(base, f), 'utf8'), ctx);
+    const ctx  = vm.createContext({ console, window: {}, global: {}, F: {}, R: {} });
+    const base = path.join(__dirname, '..', '..', 'public');
+
+    const loadErrors = [];
+
+    for (const f of ENGINES) {
+      const p = path.join(base, f);
+      if (fs.existsSync(p)) {
+        try {
+          vm.runInContext(fs.readFileSync(p, 'utf8'), ctx);
+        } catch(e) {
+          loadErrors.push(f + ': ' + e.message);
+        }
+      }
     }
+
+    // fail-closed — لا نحلّل بمحرك ناقص
+    if (loadErrors.length) {
+      console.error('loadAnalyzer engine errors:', loadErrors.join(' | '));
+      return false;
+    }
+
     analyzeCode = ctx.analyzeCode;
     return typeof analyzeCode === 'function';
   } catch(e) {
