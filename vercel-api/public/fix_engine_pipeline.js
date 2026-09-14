@@ -61,7 +61,12 @@ function fixAllEngine() {
             // Ghost Mode
             let finalCode = result.repaired;
             if (typeof GhostMode !== 'undefined') {
-                const targetTypes = issues.map(i => i.cAct || i.type).filter(Boolean);
+                // الملاحظات الإرشادية (sev='l') ليست هدف إصلاح — محرك الإصلاح
+                // لا يعالجها أصلاً (مثال: "احذف console.log قبل النشر")، فبقاؤها
+                // ضمن الهدف يمنع targetGone إلى الأبد فلا يصل أي ملف JS إلى PASS
+                // ولا يُتعلَّم منه شيء. كشف الارتداد يبقى على كل الشدّات بلا استثناء.
+                const targetTypes = issues.filter(i => i.sev !== 'l')
+                                          .map(i => i.cAct || i.type).filter(Boolean);
                 const ghostResult = GhostMode.fix(beforeCode, result.repaired, fn, analyzeCode, { targetTypes });
                 finalCode = ghostResult.code;
 

@@ -151,11 +151,38 @@ var LearningEngine = (() => {
     return [...new Set(words.filter(w => !KEYWORDS.has(w)))];
   }
 
+  // ─── Assignment Target ───────────────────────────────
+  // هدف الإسناد في السطر: x أو obj.prop، ويشمل الإسناد المركّب (+=).
+  // null يعني أن السطر ليس إسناداً (استدعاء أو تعبير).
+  function assignTarget(line) {
+    const m = (line || '').trim().match(
+      /^(?:const|let|var)?\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:\+|-|\*|\/|\|\||\?\?)?=(?!=)/);
+    return m ? m[1] : null;
+  }
+
+  // هل يقابل سطر الإصلاح السطرَ الأصلي فعلاً؟
+  // بلا هذا الفحص يُربط أول سطر يطابق نوع الثغرة بأي سطر أصلي، فيُخزَّن
+  // زوج مثل: console.log(API_KEY);  →  const API_KEY = process.env.API_KEY;
+  // وتطبيقه لاحقاً يحذف الاستدعاء ويضع مكانه تصريحاً.
+  function corresponds(beforeLine, afterLine) {
+    const bt = assignTarget(beforeLine);
+    const at = assignTarget(afterLine);
+    if (bt && at && bt === at) return true;   // إسناد لنفس الهدف ⇒ تقابل مؤكد
+    if (!bt && at) return false;              // استدعاء ⇄ تصريح ⇒ ليسا متقابلين
+    const anchors = anchorTokens(beforeLine);
+    if (!anchors.length) return false;
+    const tokens = new Set(anchorTokens(afterLine));
+    return anchors.some(a => tokens.has(a));
+  }
+
   // ─── Corresponding Candidate ─────────────────────────
   // يربط after بالسطر الأصلي نفسه — وليس بأول سطر يطابق نوع الثغرة
   function pickCorresponding(typed, hunk, beforeLine, removedRank) {
-    if (!typed.length)      return null;
-    if (typed.length === 1) return typed[0];
+    if (!typed.length) return null;
+    // بوابة أخيرة على كل المسارات: لا نقبل مرشحاً بلا دليل تقابل،
+    // ولو كان المرشح الوحيد.
+    const confirm = c => (c && corresponds(beforeLine, c.line)) ? c : null;
+    if (typed.length === 1) return confirm(typed[0]);
 
     // 1) تطابق المعرّفات — الإشارة الأقوى، وتتطلب فائزاً واضحاً
     const anchors = anchorTokens(beforeLine);
@@ -168,14 +195,14 @@ var LearningEngine = (() => {
         .sort((a, b) => b.score - a.score);
 
       if (scored[0].score > 0 && scored[0].score > (scored[1] ? scored[1].score : 0)) {
-        return scored[0].c;
+        return confirm(scored[0].c);
       }
     }
 
     // 2) تقابل موضعي — فقط إذا كان الـhunk استبدالاً 1:1 بلا إدراج
     if (removedRank >= 0 && hunk.removed.length === hunk.added.length) {
       const byPos = hunk.added[removedRank];
-      if (byPos && typed.indexOf(byPos) !== -1) return byPos;
+      if (byPos && typed.indexOf(byPos) !== -1) return confirm(byPos);
     }
 
     // 3) غير محسوم → Fail Closed: لا نتعلم زوجاً غير مؤكد
