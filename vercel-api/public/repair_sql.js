@@ -16,21 +16,55 @@
 
   const DRIVERS = {
     // JavaScript
-    mysql:    { placeholder: "?",  arrayWrap: true,  name: "mysql/mysql2" },
-    pg:       { placeholder: "$N", arrayWrap: true,  name: "pg (PostgreSQL)" },
-    sqlite3:  { placeholder: "?",  arrayWrap: true,  name: "sqlite3" },
-    knex:     { placeholder: "?",  arrayWrap: true,  name: "knex" },
-    mongoose: { placeholder: null, arrayWrap: false, name: "mongoose" }, // NoSQL — مختلف
+    mysql: {
+      placeholder: "?",
+      name: "mysql/mysql2",
+      family: "mysql"
+    },
+    pg: {
+      placeholder: "$",
+      name: "pg (PostgreSQL)",
+      family: "postgres"
+    },
+    sqlite3: {
+      placeholder: "?",
+      name: "sqlite3",
+      family: "sqlite"
+    },
+    knex: {
+      placeholder: "?",
+      name: "knex",
+      family: "knex"
+    },
 
     // Python
-    sqlite:   { placeholder: "?",  arrayWrap: false, name: "sqlite3 (Python)" },
-    psycopg2: { placeholder: "%s", arrayWrap: false, name: "psycopg2" },
-    pymysql:  { placeholder: "%s", arrayWrap: false, name: "PyMySQL" },
-    sqlalchemy:{ placeholder: ":param", arrayWrap: false, name: "SQLAlchemy" },
+    sqlite: {
+      placeholder: "?",
+      name: "sqlite3 (Python)",
+      family: "sqlite"
+    },
+    psycopg2: {
+      placeholder: "%s",
+      name: "psycopg2/psycopg",
+      family: "postgres"
+    },
+    pymysql: {
+      placeholder: "%s",
+      name: "PyMySQL",
+      family: "mysql"
+    },
 
     // PHP
-    pdo:      { placeholder: "?",  arrayWrap: false, name: "PDO" },
-    mysqli:   { placeholder: "?",  arrayWrap: false, name: "MySQLi" },
+    pdo: {
+      placeholder: "?",
+      name: "PDO",
+      family: "pdo"
+    },
+    mysqli: {
+      placeholder: "?",
+      name: "MySQLi",
+      family: "mysqli"
+    }
   };
 
   // ═══════════════════════════════════════════════════
@@ -57,28 +91,70 @@
   // ═══════════════════════════════════════════════════
 
   function detectDriver(code) {
+    if (!code || typeof code !== 'string') return null;
+
     const c = code.toLowerCase();
+    const found = [];
 
     // JavaScript
-    if (c.includes("require('mysql2')") || c.includes('require("mysql2")'))  return DRIVERS.mysql;
-    if (c.includes("require('mysql')")  || c.includes('require("mysql")'))   return DRIVERS.mysql;
-    if (c.includes("require('pg')")     || c.includes('require("pg")'))      return DRIVERS.pg;
-    if (c.includes("require('sqlite3')")|| c.includes('require("sqlite3")')) return DRIVERS.sqlite3;
-    if (c.includes("require('knex')")   || c.includes('require("knex")'))    return DRIVERS.knex;
-    if (c.includes("mongoose"))                                               return DRIVERS.mongoose;
+    if (/\b(?:require\s*\(\s*['"]mysql2['"]\s*\)|from\s+['"]mysql2['"]|import\s+.*\s+from\s+['"]mysql2['"])/i.test(code) ||
+        /\b(?:require\s*\(\s*['"]mysql['"]\s*\)|from\s+['"]mysql['"]|import\s+.*\s+from\s+['"]mysql['"])/i.test(code)) {
+      found.push(DRIVERS.mysql);
+    }
+
+    if (/\b(?:require\s*\(\s*['"]pg['"]\s*\)|from\s+['"]pg['"]|import\s+.*\s+from\s+['"]pg['"])/i.test(code)) {
+      found.push(DRIVERS.pg);
+    }
+
+    if (/\b(?:require\s*\(\s*['"]sqlite3['"]\s*\)|from\s+['"]sqlite3['"]|import\s+.*\s+from\s+['"]sqlite3['"])/i.test(code)) {
+      found.push(DRIVERS.sqlite3);
+    }
+
+    if (/\b(?:require\s*\(\s*['"]knex['"]\s*\)|from\s+['"]knex['"]|import\s+.*\s+from\s+['"]knex['"])/i.test(code)) {
+      found.push(DRIVERS.knex);
+    }
 
     // Python
-    if (c.includes("import psycopg2"))   return DRIVERS.psycopg2;
-    if (c.includes("import pymysql"))    return DRIVERS.pymysql;
-    if (c.includes("sqlalchemy"))        return DRIVERS.sqlalchemy;
-    if (c.includes("import sqlite3"))    return DRIVERS.sqlite;
+    if (/\bimport\s+psycopg2\b|\bfrom\s+psycopg2\s+import\b/i.test(code)) {
+      found.push(DRIVERS.psycopg2);
+    }
+
+    if (/\bimport\s+psycopg\b|\bfrom\s+psycopg\s+import\b/i.test(code)) {
+      found.push(DRIVERS.psycopg2);
+    }
+
+    if (/\bimport\s+pymysql\b|\bfrom\s+pymysql\s+import\b/i.test(code)) {
+      found.push(DRIVERS.pymysql);
+    }
+
+    if (/\bimport\s+sqlite3\b|\bfrom\s+sqlite3\s+import\b/i.test(code)) {
+      found.push(DRIVERS.sqlite);
+    }
+
+    if (/\b(?:import|from)\s+sqlalchemy\b/i.test(code)) {
+      found.push(DRIVERS.sqlalchemy);
+    }
 
     // PHP
-    if (c.includes("new pdo("))         return DRIVERS.pdo;
-    if (c.includes("mysqli_"))          return DRIVERS.mysqli;
+    if (/\bnew\s+PDO\s*\(/i.test(code) ||
+        /\bnew\s+pdo\s*\(/i.test(code)) {
+      found.push(DRIVERS.pdo);
+    }
 
-    // Default
-    return DRIVERS.mysql;
+    if (/\b(?:mysqli|mysqli_connect|new\s+mysqli)\b/i.test(code)) {
+      found.push(DRIVERS.mysqli);
+    }
+
+    // إزالة التكرار
+    const unique = [...new Set(found)];
+
+    // لا نخمن إذا لا يوجد driver مثبت
+    if (unique.length === 0) return null;
+
+    // أكثر من driver مختلف = غير آمن للإصلاح التلقائي
+    if (unique.length > 1) return null;
+
+    return unique[0];
   }
 
   // ═══════════════════════════════════════════════════
@@ -225,53 +301,166 @@
   // ═══════════════════════════════════════════════════
 
   function fixSQLInjection(code, fileName) {
-    if (!code || typeof code !== 'string') return code;
+    if (!code || typeof code !== 'string') {
+      return {
+        code,
+        count: 0,
+        fixes: [],
+        driver: null,
+        aiRequired: true,
+        reason: 'invalid_code'
+      };
+    }
 
     const lang   = detectLang(fileName);
     const driver = detectDriver(code);
+
+    // لا نخمن اللغة أو الـ driver.
+    // إذا لم نستطع إثباتهما، لا نعدل الكود.
+    if (lang === 'unknown') {
+      return {
+        code,
+        count: 0,
+        fixes: [],
+        driver: null,
+        aiRequired: true,
+        reason: 'unsupported_language'
+      };
+    }
+
+    if (!driver) {
+      return {
+        code,
+        count: 0,
+        fixes: [],
+        driver: null,
+        aiRequired: true,
+        reason: 'unknown_or_conflicting_driver'
+      };
+    }
+
+    // لا تستخدم هذا الـ SQL fixer مع لغات لا يملك لها مسار إصلاح آمن.
+    if (!['js', 'python', 'php'].includes(lang)) {
+      return {
+        code,
+        count: 0,
+        fixes: [],
+        driver: driver.name,
+        aiRequired: true,
+        reason: 'unsupported_sql_repair_language'
+      };
+    }
+
     let   fixed  = code;
     let   count  = 0;
     const fixes  = [];
 
     // ── JavaScript ──────────────────────────────────
     if (lang === 'js') {
-      // 1. String concatenation: db.query("..." + var)
+
+      // نصلح فقط concatenation بسيطة ومباشرة:
+      // db.query("SELECT ... WHERE name = '" + username + "'")
       fixed = fixed.replace(
-        /(\w+)\s*\.\s*(?:query|execute|raw)\s*\(\s*(['"`])((?:(?!\2)[\s\S])*(?:SELECT|INSERT|UPDATE|DELETE)(?:(?!\2)[\s\S])*)\2\s*(\+[^)]+)\)/gi,
-        (match, dbVar, quote, queryStr, concatPart) => {
-          const vars = extractVarsFromConcat(queryStr, concatPart);
-          if (!vars.length) return match;
+        /(\b[A-Za-z_$][\w$]*)\s*\.\s*(query|execute)\s*\(\s*(["'])(.*?)\3\s*\+\s*([A-Za-z_$][\w$]*)\s*\+\s*(["'])(.*?)\6\s*\)/g,
+        (match, dbVar, method, q1, queryPart, variable, q2, suffix) => {
 
-          // بناء query نظيفة مع ?
-          let cleanQ = queryStr
-            .replace(/WHERE\s+(\w+)\s*=\s*['"]?[^'"]*['"]?/i, `WHERE $1 = ?`)
-            .trim();
-
-          // لو ما غيّر WHERE — استبدل آخر concatenation بـ ?
-          if (cleanQ === queryStr.trim()) {
-            cleanQ = queryStr.trim().replace(/['"]\s*\+\s*\w+\s*\+\s*['"]/, '?');
+          // إذا كان هناك concatenation إضافية بعد المتغير،
+          // فهذا SQL متعدد المتغيرات ولا نصلحه بهذا المسار البسيط.
+          if (/['"]\s*\+\s*[A-Za-z_$][\w$]*/.test(suffix)) {
+            return match;
           }
 
-          const varArray = '[' + vars.join(', ') + ']';
-          const result   = `${dbVar}.query(\n  "${cleanQ}",\n  ${varArray}\n)`;
-          fixes.push({ original: match, fixed: result });
+          const sql = queryPart + suffix;
+
+          // لازم يكون SQL فعلي
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(sql)) {
+            return match;
+          }
+
+          // المتغير يجب أن يكون في سياق قيمة، وليس اسم جدول/عمود.
+          // نسمح فقط بـ = ' + variable + '
+          const valuePattern =
+            /(\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*)['"]?\s*$/i;
+
+          if (!valuePattern.test(queryPart)) {
+            return match;
+          }
+
+          // لا نصلح إذا كان SQL يحتوي على placeholders مسبقاً.
+          if (/[?$]\d*|%s\b|:\w+/.test(sql)) {
+            return match;
+          }
+
+          const placeholder =
+            driver.name === 'pg (PostgreSQL)' ? '$1' : (driver.placeholder || '?');
+
+          const cleanSQL =
+            queryPart.replace(/['"]\s*$/i, '') +
+            suffix.replace(/^\s*['"]/i, '') +
+            placeholder;
+
+          const result =
+            `${dbVar}.${method}(${JSON.stringify(cleanSQL)}, [${variable}])`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'simple_parameterization',
+            driver: driver.name
+          });
+
           count++;
           return result;
         }
       );
 
-      // 2. Template literals: db.query(`SELECT... ${var}`)
+      // Template literals:
+      // db.query(`SELECT ... WHERE name = '${username}'`)
+      //
+      // نصلح فقط إذا كان placeholder داخل قيمة مقارنة واضحة.
       fixed = fixed.replace(
-        /(\w+)\s*\.\s*(?:query|execute|raw)\s*\(\s*`([^`]*(?:SELECT|INSERT|UPDATE|DELETE)[^`]*)`\s*\)/gi,
-        (match, dbVar, queryStr) => {
-          const vars = (queryStr.match(/\$\{([^}]+)\}/g) || [])
-            .map(v => v.replace(/\$\{|\}/g, '').trim());
-          if (!vars.length) return match;
+        /(\b[A-Za-z_$][\w$]*)\s*\.\s*(query|execute)\s*\(\s*`([^`]*\$\{([A-Za-z_$][\w$]*)\}[^`]*)`\s*\)/g,
+        (match, dbVar, method, sql, variable) => {
 
-          const cleanQ   = queryStr.replace(/\$\{[^}]+\}/g, '?');
-          const varArray = '[' + vars.join(', ') + ']';
-          const result   = `${dbVar}.query(\n  "${cleanQ}",\n  ${varArray}\n)`;
-          fixes.push({ original: match, fixed: result });
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(sql)) {
+            return match;
+          }
+
+          if (/[?$]\d*|%s\b|:\w+/.test(sql.replace(/\$\{[^}]+\}/g, ''))) {
+            return match;
+          }
+
+          // نسمح فقط بالمتغير داخل قيمة equality.
+          const marker = `\${${variable}}`;
+          const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+          const safePattern = new RegExp(
+            `(\\b[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*)['"]?\\s*${escapedMarker}\\s*['"]?`,
+            'i'
+          );
+
+          if (!safePattern.test(sql)) {
+            return match;
+          }
+
+          const placeholder =
+            driver.name === 'pg (PostgreSQL)' ? '$1' : (driver.placeholder || '?');
+
+          const cleanSQL = sql.replace(
+            safePattern,
+            (_match, prefix) => prefix + placeholder
+          );
+
+          const result =
+            `${dbVar}.${method}(${JSON.stringify(cleanSQL)}, [${variable}])`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'template_parameterization',
+            driver: driver.name
+          });
+
           count++;
           return result;
         }
@@ -280,83 +469,117 @@
 
     // ── Python ──────────────────────────────────────
     if (lang === 'python') {
-      // cursor.execute("..." + var)
-      fixed = fixed.replace(
-        /(\w+)\s*\.\s*execute\s*\(\s*(['"])([^'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^'"]*)\2\s*\+\s*(.+?)\)/gi,
-        (match, cursor, quote, queryStr, concatPart) => {
-          const vars = extractVarsFromConcat(queryStr, concatPart);
-          if (!vars.length) return match;
 
-          const placeholder = driver.placeholder;
-          const cleanQ = queryStr.replace(
-            /WHERE\s+(\w+)\s*=\s*['"]?[^'"]*['"]?/i,
-            `WHERE $1 = ${placeholder}`
-          );
-          const varTuple = vars.length === 1 ? `(${vars[0]},)` : `(${vars.join(', ')})`;
-          const result   = `${cursor}.execute("${cleanQ}", ${varTuple})`;
-          fixes.push({ original: match, fixed: result });
+      // نصلح فقط cursor.execute("... = '" + variable + "'")
+      // بمتغير واحد وشرط equality واضح.
+      fixed = fixed.replace(
+        /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)(["'])(.*?)\2\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)\s*\+\s*(["'])(.*?)\5\s*\)/g,
+        (match, prefix, q1, queryPart, variable, q2, suffix) => {
+
+          const sql = queryPart + suffix;
+
+          // لازم يكون SQL فعلي.
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(sql)) {
+            return match;
+          }
+
+          // متغير واحد فقط، ولا نسمح بـ concatenation إضافية.
+          if (/[+]\s*[A-Za-z_][A-Za-z0-9_]*/.test(suffix)) {
+            return match;
+          }
+
+          // لازم يكون المتغير داخل equality لقيمة.
+          const valuePattern =
+            /(\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*)['"]?\s*$/i;
+
+          if (!valuePattern.test(queryPart)) {
+            return match;
+          }
+
+          // لا نلمس SQL فيه placeholders مسبقة.
+          if (/[?$]\d*|%s\b|:\w+/.test(sql)) {
+            return match;
+          }
+
+          const placeholder =
+            driver.placeholder || '?';
+
+          const cleanSQL =
+            queryPart.replace(/['"]\s*$/i, '') +
+            suffix.replace(/^\s*['"]/i, '') +
+            placeholder;
+
+          const result =
+            `${prefix}${JSON.stringify(cleanSQL)}, (${variable},))`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'python_simple_parameterization',
+            driver: driver.name
+          });
+
           count++;
           return result;
         }
       );
 
-      // variable = "..." + var → variable = "...?" , (var,)
-      fixed = fixed.replace(
-        /^([ \t]*)(\w+)\s*=\s*(['"])([^'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^'"]*?)\3\s*\+\s*(.+?)$/gim,
-        (match, indent, varName, quote, queryStr, concatPart) => {
-          const vars = extractVarsFromConcat(queryStr, concatPart.trim());
-          if (!vars.length) return match;
-          const placeholder = driver.placeholder;
-          const cleanQ = queryStr.replace(
-            /WHERE\s+(\w+)\s*=\s*['"]?[^'"]*['"]?/i,
-            `WHERE $1 = ${placeholder}`
-          );
-          const varTuple = vars.length === 1 ? `(${vars[0]},)` : `(${vars.join(', ')})`;
-          const result = `${indent}${varName} = "${cleanQ}"  # params: ${varTuple}`;
-          fixes.push({ original: match, fixed: result });
-          count++;
-          return result;
-        }
-      );
-
-      // f-string SQL
-      fixed = fixed.replace(
-        /f(['"])([^'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^'"]*)\1/gi,
-        (match, quote, queryStr) => {
-          const vars = (queryStr.match(/\{([^}]+)\}/g) || [])
-            .map(v => v.replace(/\{|\}/g, '').trim());
-          if (!vars.length) return match;
-
-          const placeholder = driver.placeholder;
-          const cleanQ      = queryStr.replace(/\{[^}]+\}/g, placeholder);
-          const varTuple    = vars.length === 1 ? `(${vars[0]},)` : `(${vars.join(', ')})`;
-          const result      = `"${cleanQ}"  # params: ${varTuple}`;
-          fixes.push({ original: match, fixed: result });
-          count++;
-          return result;
-        }
-      );
+      // f-string و SQL assignment متعمدًا بدون auto-fix هنا.
+      // لأنها تحتاج تحليل سياق أعمق، وتذهب لاحقًا إلى AI_REQUIRED.
     }
 
     // ── PHP ─────────────────────────────────────────
-    if (lang === 'php') {
-      fixed = fixed.replace(
-        /(\$\w+)\s*->\s*(?:query|execute)\s*\(\s*(['"])([^'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^'"]*)\2\s*\.\s*(.+?)\)/gi,
-        (match, dbVar, quote, queryStr, concatPart) => {
-          const vars = extractVarsFromConcat(queryStr, concatPart);
-          if (!vars.length) return match;
+    if (lang === 'php' && driver === DRIVERS.pdo) {
 
-          const cleanQ   = queryStr.replace(/WHERE\s+(\w+)\s*=\s*.*/i, 'WHERE $1 = ?');
-          const varList  = vars.map(v => v.startsWith('$') ? v : '$' + v).join(', ');
-          const result   = `$stmt = ${dbVar}->prepare("${cleanQ}");\n$stmt->execute([${varList}]);`;
-          fixes.push({ original: match, fixed: result });
+      // PDO فقط: concatenation بسيطة بمتغير واحد.
+      // mysqli لا يدخل هذا المسار.
+      fixed = fixed.replace(
+        /(\$\w+)\s*->\s*query\s*\(\s*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"\s*\.\s*(\$[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*"([^"]*)"\s*\)\s*;?/gi,
+        (match, dbVar, queryPart, variable, suffix) => {
+
+          if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(queryPart)) {
+            return match;
+          }
+
+          // لا نصلح إذا كان فيه placeholder موجود مسبقاً.
+          if (/[?$]\d*|%s\b|:\w+/.test(queryPart + suffix)) {
+            return match;
+          }
+
+          // المتغير يجب أن يكون في نهاية قيمة equality واضحة.
+          if (!/\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*'?\s*$/i.test(queryPart)) {
+            return match;
+          }
+
+          const cleanSQL =
+            queryPart.replace(/['"]\s*$/i, '') +
+            '?' +
+            suffix.replace(/^\s*['"]/, '');
+
+          const result =
+            `$stmt = ${dbVar}->prepare(${JSON.stringify(cleanSQL)});\n` +
+            `$stmt->execute([${variable}]);`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'php_pdo_simple_parameterization',
+            driver: driver.name
+          });
+
           count++;
           return result;
         }
       );
     }
 
-    return { code: fixed, count, fixes, driver: driver.name };
+    return {
+      code: fixed,
+      count,
+      fixes,
+      driver: driver.name,
+      aiRequired: count === 0
+    };
   }
 
   // ═══════════════════════════════════════════════════
@@ -364,12 +587,18 @@
   // ═══════════════════════════════════════════════════
 
   function detectLang(fileName) {
-    if (!fileName) return 'js';
+    if (!fileName || typeof fileName !== 'string') return 'unknown';
+
     const ext = fileName.split('.').pop().toLowerCase();
-    if (ext === 'py')                     return 'python';
-    if (ext === 'php')                    return 'php';
-    if (['java','kt'].includes(ext))      return 'java';
-    return 'js'; // default
+
+    if (['js', 'mjs', 'cjs', 'jsx'].includes(ext)) return 'js';
+    if (['ts', 'tsx'].includes(ext)) return 'ts';
+    if (ext === 'py') return 'python';
+    if (ext === 'php') return 'php';
+    if (ext === 'java') return 'java';
+    if (ext === 'kt') return 'kotlin';
+
+    return 'unknown';
   }
 
   // ═══════════════════════════════════════════════════
@@ -395,13 +624,26 @@
 
       patterns.forEach(pat => {
         pat.lastIndex = 0;
+
         if (pat.test(line)) {
+          const repaired = fixSQLInjection(code, fileName);
+
+          let fixedLine = t;
+
+          if (repaired.code !== code) {
+            const fixedLines = repaired.code.split('\n');
+
+            if (fixedLines[i] !== undefined) {
+              fixedLine = fixedLines[i].trim();
+            }
+          }
+
           issues.push({
             line:  i + 1,
             code:  t,
             sev:   'c',
             title: 'SQL Injection — string concatenation في query',
-            fix:   fixSQLInjection(line, fileName).code,
+            fix:   fixedLine,
           });
         }
       });
