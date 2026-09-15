@@ -12,7 +12,7 @@ const STRATEGY_LANGS = {
   HARDCODED_SECRET: ['js', 'ts', 'py', 'php', 'java', 'cs'],
   LOG_SECRET:       ['js', 'ts', 'py', 'java'],
   EMPTY_CATCH:      ['js', 'ts', 'py', 'java', 'cs'],
-  EMPTY_FUNCTION:   ['js', 'ts', 'py'],
+  EMPTY_FUNCTION:   ['js', 'ts', 'py', 'php'],
   CALLBACK_HELL:    ['js', 'ts'],
   API_KEY:          ['js', 'ts', 'py', 'php', 'java', 'cs'],
   SQL_INJECTION:    ['js', 'ts', 'py', 'php', 'cs'],
@@ -63,8 +63,8 @@ function detectExt(code, fileName) {
   const ext = fileName.split('.').pop().toLowerCase();
   if (ext === 'jsx' || ext === 'mjs' || ext === 'cjs') return 'js';
   if (ext === 'tsx') return 'ts';
-  const supported = ['js', 'ts', 'py', 'php', 'java', 'cs'];
-  return supported.includes(ext) ? ext : 'unknown';
+  // يرجع الامتداد كما هو — STRATEGY_LANGS هي اللي ترفض غير المدعوم
+  return ext || 'unknown';
 }
 
 // ─── Helper ───────────────────────────────────────────
@@ -159,6 +159,9 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
   } else if (ext === 'cs') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `Environment.GetEnvironmentVariable("${varName}")`);
+  } else if (ext === 'php') {
+    if (/getenv\s*\(/i.test(line)) return null;
+    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
   } else {
     return null;
   }
@@ -168,7 +171,7 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   return { fixed: lines.join('\n'), patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' };
 }
 
-// ─── Command Injection JS/TS — splice لا string concat ─
+// ─── Command Injection ────────────────────────────────
 function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
@@ -346,6 +349,7 @@ function fixHardcodedSecret(code, issue, lines, ext) {
     if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
   } else if (ext === 'php') {
+    if (/getenv\s*\(/i.test(line)) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `getenv('${varName}')`);
   } else if (ext === 'java') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
@@ -464,7 +468,7 @@ function fixEmptyCatch(code, issue, lines, ext) {
 function fixEmptyFunction(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  if (ext !== 'js' && ext !== 'ts' && ext !== 'py') return null;
+  if (ext !== 'js' && ext !== 'ts' && ext !== 'py' && ext !== 'php') return null;
 
   const indent = ' '.repeat(line.search(/\S/) + 4);
   const outerIndent = ' '.repeat(line.search(/\S/));
@@ -480,6 +484,8 @@ function fixEmptyFunction(code, issue, lines, ext) {
     body = ext === 'py' ? `${indent}return 0  # TODO: implement` : `${indent}return 0; // TODO: implement`;
   } else if (/is|has|check|valid/i.test(funcName)) {
     body = ext === 'py' ? `${indent}return False  # TODO: implement` : `${indent}return false; // TODO: implement`;
+  } else if (ext === 'php') {
+    body = `${indent}// TODO: implement`;
   } else {
     body = ext === 'py' ? `${indent}pass  # TODO: implement` : `${indent}// TODO: implement`;
   }
@@ -596,7 +602,8 @@ function getAIReason(strategy) {
 
 // ─── Main repairCode ──────────────────────────────────
 function repairCode(code, issues, fileName) {
-  const ext = detectExt(code, fileName);
+  let ext = 'unknown';
+  try { ext = detectExt(code, fileName); } catch(e) { ext = 'unknown'; }
   const repairs  = [];
   const aiNeeded = [];
   let repairedCode = code;
@@ -616,8 +623,20 @@ function repairCode(code, issues, fileName) {
       return;
     }
 
+    // stale line check: تحقق أن الدليل يطابق السطر الفعلي
+    if (issue.ev) {
+      const currentLines = repairedCode.split('\n');
+      const targetLine = currentLines[(issue.line || 1) - 1] || '';
+      const expected = String(issue.ev || '').trim();
+      const actual   = String(targetLine || '').trim();
+      if (expected && actual && !actual.includes(expected) && !expected.includes(actual)) { return; }
+    }
+
     const lines = repairedCode.split('\n');
-    const result = strat.fn(repairedCode, issue, lines, ext, fileName);
+    let result;
+    try {
+      result = strat.fn(repairedCode, issue, lines, ext, fileName);
+    } catch(e) { return; }
     if (!result || result.fixed === repairedCode) { return; }
 
     repairs.push({
