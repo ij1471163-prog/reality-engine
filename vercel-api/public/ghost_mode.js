@@ -73,7 +73,11 @@ var GhostMode = (() => {
     const fixedCritical = fixedAnalysis.critical + fixedAnalysis.high;
     if (fixedCritical > origCritical) return true;
     const origTypes = new Set(origAnalysis.issues.map(i => i.cAct || i.type || ''));
-    return fixedAnalysis.issues.some(i => !origTypes.has(i.cAct || i.type || ''));
+    // نوع جديد يُعتبر انحداراً فقط إذا كان حرجاً أو عالياً — وهو ما يقوله
+    // سبب الحكم نفسه (new_critical_issues). ملاحظة إرشادية جديدة (sev='l'/'m')
+    // يضيفها الإصلاح لا يجوز أن تُلغي إصلاحاً أزال ثغرات حرجة.
+    return fixedAnalysis.issues.some(i =>
+      (i.sev === 'c' || i.sev === 'h') && !origTypes.has(i.cAct || i.type || ''));
   }
 
   // ─── 4. Target Verification ─────────────────────────

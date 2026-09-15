@@ -35,6 +35,9 @@ const STRATEGIES = {
 const JS_EXT = /^(js|mjs|cjs|jsx|ts|tsx)$/;
 // اللغات التي يملك هذا المحرك صياغة env صحيحة لها — ما عداها لا يُلمس
 const ENV_FIX_EXT = /^(js|mjs|cjs|jsx|ts|tsx|py|php|java|cs)$/;
+// امتدادات معروفة لا يملك المحرك لها أي فرع صياغة. تخمين اللغة من المحتوى
+// يصنّفها Python (بسبب import/print/require) فيُحقن فيها كود Python.
+const UNSUPPORTED_EXT = /^(kt|kts|go|rb|dart|swift|rs|scala|pl|lua|sh|ex|exs|hs|clj|erl)$/;
 // سطر مُصلَح سلفاً — إعادة تغليفه تنتج استدعاءات متداخلة
 const ALREADY_ENV = /process\.env\.|os\.environ|getenv\s*\(|System\.getenv\s*\(|Environment\.GetEnvironmentVariable\s*\(/;
 
@@ -620,6 +623,12 @@ function detectExt(code, fileName) {
   if (fileName && fileName.endsWith('.py')) return 'py';
   if (fileName && fileName.endsWith('.cs')) return 'cs';
   if (fileName && fileName.endsWith('.java')) return 'java';
+  // امتداد معروف بلا فرع صياغة ⇒ أعِد الامتداد نفسه فلا يطابق أي فرع،
+  // بدل تخمينه Python وحقن cursor.execute/import ast في ملف Dart أو Kotlin
+  if (fileName) {
+    const _e = (fileName.split('.').pop() || '').toLowerCase();
+    if (UNSUPPORTED_EXT.test(_e)) return _e;
+  }
   if (/def\s+\w+|import\s+\w+|print\s*\(|hashlib|os\.environ/.test(code)) return 'py';
   if (/<\?php|mysqli|\$_GET|\$_POST/.test(code)) return 'php';
   if (/using\s+System|namespace\s+\w+|public\s+class/.test(code) && !/def\s+\w+/.test(code)) return 'cs';
@@ -657,6 +666,15 @@ function repairCode(code, issues, fileName) {
     }
 
     const lines = repairedCode.split('\n');
+    // بعض الاستراتيجيات تُدرج أسطراً في رأس الملف (import os / import ast)،
+    // فتُزيح كل الأسطر وتُبطل issue.line لبقية القائمة المشتقة من تحليل قديم.
+    // إذا لم يعد السطر المستهدف يطابق دليل الثغرة، اتركها للتحليل التالي
+    // بدل إصلاح سطر بريء.
+    const _ev = (issue.ev || '').trim();
+    if (_ev.length > 8) {
+      const _cur = (lines[issue.line - 1] || '').trim();
+      if (!_cur || (!_cur.includes(_ev.slice(0, 20)) && !_ev.includes(_cur.slice(0, 20)))) return;
+    }
     let result;
     try {
       result = strat.fn(repairedCode, issue, lines, ext, fileName);
