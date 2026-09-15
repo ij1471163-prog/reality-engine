@@ -63,8 +63,9 @@ function detectExt(code, fileName) {
   const ext = fileName.split('.').pop().toLowerCase();
   if (ext === 'jsx' || ext === 'mjs' || ext === 'cjs') return 'js';
   if (ext === 'tsx') return 'ts';
-  const supported = ['js', 'ts', 'py', 'php', 'java', 'cs'];
-  return supported.includes(ext) ? ext : 'unknown';
+  // detectExt يحدد هوية الملف من الامتداد فقط.
+  // دعم الإصلاحات تحدده STRATEGY_LANGS لاحقًا.
+  return ext || 'unknown';
 }
 
 // ─── Helper ───────────────────────────────────────────
@@ -159,6 +160,9 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
   } else if (ext === 'cs') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `Environment.GetEnvironmentVariable("${varName}")`);
+  } else if (ext === 'php') {
+    if (/getenv\s*\(/i.test(line)) return null;
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `getenv('${varName}')`);
   } else {
     return null;
   }
@@ -340,12 +344,25 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   if (!line) return null;
   const varMatch = line.match(/(\w+)\s*[:=]/);
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
+
+  // Idempotency: لا نعيد تغليف قيمة سبق نقلها إلى متغير بيئة.
+  if (
+    /process\.env\./.test(line) ||
+    /os\.environ(?:\.get)?\s*\(/.test(line) ||
+    /getenv\s*\(/i.test(line) ||
+    /System\.getenv\s*\(/.test(line) ||
+    /Environment\.GetEnvironmentVariable\s*\(/.test(line)
+  ) {
+    return null;
+  }
+
   let fixed = line;
 
   if (ext === 'py') {
     if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
   } else if (ext === 'php') {
+    if (/getenv\s*\(/i.test(line)) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `getenv('${varName}')`);
   } else if (ext === 'java') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
@@ -464,7 +481,7 @@ function fixEmptyCatch(code, issue, lines, ext) {
 function fixEmptyFunction(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  if (ext !== 'js' && ext !== 'ts' && ext !== 'py') return null;
+  if (ext !== 'js' && ext !== 'ts' && ext !== 'py' && ext !== 'php') return null;
 
   const indent = ' '.repeat(line.search(/\S/) + 4);
   const outerIndent = ' '.repeat(line.search(/\S/));
@@ -596,7 +613,23 @@ function getAIReason(strategy) {
 
 // ─── Main repairCode ──────────────────────────────────
 function repairCode(code, issues, fileName) {
-  const ext = detectExt(code, fileName);
+  let ext = 'unknown';
+  try {
+    ext = detectExt(code, fileName);
+  } catch (e) {
+    // إذا فشل detector، نستخدم امتداد اسم الملف فقط.
+    // لا يوجد هنا أي تخمين من محتوى الكود.
+    ext = 'unknown';
+    if (fileName) {
+      const fallback = String(fileName).split('.').pop().toLowerCase();
+      if (fallback) {
+        if (fallback === 'jsx' || fallback === 'mjs' || fallback === 'cjs') ext = 'js';
+        else if (fallback === 'tsx') ext = 'ts';
+        else ext = fallback;
+      }
+    }
+  }
+
   const repairs  = [];
   const aiNeeded = [];
   let repairedCode = code;
@@ -617,7 +650,44 @@ function repairCode(code, issues, fileName) {
     }
 
     const lines = repairedCode.split('\n');
-    const result = strat.fn(repairedCode, issue, lines, ext, fileName);
+
+    // حماية من stale-line:
+    // إذا كان الدليل لا يطابق السطر، فالـissue قديمة ويجب تجاهلها.
+    // الاستثناء الوحيد: إذا حصل إصلاح سابق غيّر أرقام الأسطر
+    // (مثل إضافة import في الرأس)، نعيد ربط الدليل بموقعه الجديد.
+    if (issue.ev && String(issue.ev).trim()) {
+      const evidence = String(issue.ev).trim();
+      const originalLineIndex = issue.line - 1;
+      const currentLine = lines[originalLineIndex];
+
+      if (!currentLine || !String(currentLine).includes(evidence)) {
+        // لا يوجد تعديل سابق: mismatch حقيقي = stale issue.
+        if (repairedCode === code) {
+          return;
+        }
+
+        // حصل تعديل سابق، لذلك قد يكون رقم السطر تحرك.
+        const matchIndex = lines.findIndex(line =>
+          String(line).includes(evidence)
+        );
+
+        if (matchIndex === -1) {
+          return;
+        }
+
+        issue = { ...issue, line: matchIndex + 1 };
+      }
+    }
+
+    let result = null;
+    try {
+      result = strat.fn(repairedCode, issue, lines, ext, fileName);
+    } catch (e) {
+      // فشل Strategy واحدة لا يجب أن يُسقط باقي الإصلاحات.
+      console.warn(`[RepairEngine] Strategy failed: ${stratKey}`, e?.message || e);
+      return;
+    }
+
     if (!result || result.fixed === repairedCode) { return; }
 
     repairs.push({
