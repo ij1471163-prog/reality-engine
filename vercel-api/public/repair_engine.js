@@ -1,45 +1,78 @@
 // ═══════════════════════════════════════════════════════
-// repair_engine.js v3.0 — Smart Repair Engine
-// كود حقيقي — بدون تعليقات وهمية
+// repair_engine.js v3.2 — Language-aware Repair Engine
 // ═══════════════════════════════════════════════════════
 
-const STRATEGIES = {
-  XSS_INNER_HTML:   { fn: fixXSS,              autoFix: true,  confidence: 0.95 },
-  HTTP_USAGE:       { fn: fixHTTP,              autoFix: true,  confidence: 0.98 },
-  VAR_USAGE:        { fn: fixVar,               autoFix: true,  confidence: 0.95 },
-  LOOSE_EQUALITY:   { fn: fixEquality,          autoFix: true,  confidence: 0.90 },
-  ACCUMULATION:     { fn: fixAccumulation,      autoFix: true,  confidence: 0.88 },
-  HARDCODED_SECRET: { fn: fixHardcodedSecret,   autoFix: true,  confidence: 0.85 },
-  LOG_SECRET:       { fn: fixLogSecret,         autoFix: true,  confidence: 0.90 },
-  EMPTY_CATCH:      { fn: fixEmptyCatch,        autoFix: true,  confidence: 0.80 },
-  EMPTY_FUNCTION:   { fn: fixEmptyFunction,     autoFix: true,  confidence: 0.70 },
-  CALLBACK_HELL:    { fn: fixCallbackHell,      autoFix: true,  confidence: 0.75 },
-  MISSING_AUTH:     { fn: null,                 autoFix: false, confidence: 0.70 }, // handled by AuthRepair
-  API_KEY:          { fn: fixApiKeyAdvanced,     autoFix: true,  confidence: 0.90 },
-  SQL_INJECTION:    { fn: fixSQLInjection,      autoFix: true,  confidence: 0.75 },
-  EVAL_USAGE:       { fn: fixEval,              autoFix: true,  confidence: 0.85 },
-  WEAK_CRYPTO:      { fn: fixWeakCrypto,        autoFix: true,  confidence: 0.90 },
-  MD5_USAGE:        { fn: fixWeakCrypto,        autoFix: true,  confidence: 0.90 },
-  WEAK_HASH:        { fn: fixWeakCrypto,        autoFix: true,  confidence: 0.90 },
-  HARDCODED_PASS:   { fn: fixHardcodedPassword, autoFix: true,  confidence: 0.82 },
-  CMD_INJECTION:    { fn: fixCommandInjection,  autoFix: true,  confidence: 0.78 },
-  CMD_INJECTION_PY: { fn: fixCommandInjectionPy, autoFix: true,  confidence: 0.85 },
-  NONE_COMPARE:     { fn: fixNoneCompare,       autoFix: true,  confidence: 0.95 },
-  NAMEERROR:        { fn: fixNameError,         autoFix: true,  confidence: 0.90 },
-  RETURN_NULL:      { fn: null,                 autoFix: false, confidence: 0.10 },
-  NPE_CHAIN:        { fn: null,                 autoFix: false, confidence: 0.15 },
+// ─── Language Allowlists per Strategy ────────────────
+const STRATEGY_LANGS = {
+  XSS_INNER_HTML:   ['js', 'ts'],
+  HTTP_USAGE:       ['js', 'ts', 'py', 'php', 'java', 'cs'],
+  VAR_USAGE:        ['js', 'ts'],
+  LOOSE_EQUALITY:   ['js', 'ts'],
+  ACCUMULATION:     ['js', 'ts', 'py', 'php'],
+  HARDCODED_SECRET: ['js', 'ts', 'py', 'php', 'java', 'cs'],
+  LOG_SECRET:       ['js', 'ts', 'py', 'java'],
+  EMPTY_CATCH:      ['js', 'ts', 'py', 'java', 'cs'],
+  EMPTY_FUNCTION:   ['js', 'ts', 'py'],
+  CALLBACK_HELL:    ['js', 'ts'],
+  API_KEY:          ['js', 'ts', 'py', 'php', 'java', 'cs'],
+  SQL_INJECTION:    ['js', 'ts', 'py', 'php', 'cs'],
+  EVAL_USAGE:       ['js', 'ts', 'py'],
+  WEAK_CRYPTO:      ['js', 'ts', 'py', 'php', 'java', 'cs'],
+  MD5_USAGE:        ['js', 'ts', 'py', 'php', 'java', 'cs'],
+  WEAK_HASH:        ['js', 'ts', 'py', 'php', 'java', 'cs'],
+  HARDCODED_PASS:   ['js', 'ts', 'py', 'java', 'cs'],
+  CMD_INJECTION:    ['js', 'ts'],
+  CMD_INJECTION_PY: ['py'],
+  NONE_COMPARE:     ['py'],
+  NAMEERROR:        ['py'],
+  MISSING_AUTH:     [],
+  RETURN_NULL:      [],
+  NPE_CHAIN:        [],
 };
 
-// ─── قيود اللغة ───────────────────────────────────────
-// عائلة JS — نفس الصياغة (process.env / console)
-const JS_EXT = /^(js|mjs|cjs|jsx|ts|tsx)$/;
-// اللغات التي يملك هذا المحرك صياغة env صحيحة لها — ما عداها لا يُلمس
-const ENV_FIX_EXT = /^(js|mjs|cjs|jsx|ts|tsx|py|php|java|cs)$/;
-// امتدادات معروفة لا يملك المحرك لها أي فرع صياغة. تخمين اللغة من المحتوى
-// يصنّفها Python (بسبب import/print/require) فيُحقن فيها كود Python.
-const UNSUPPORTED_EXT = /^(kt|kts|go|rb|dart|swift|rs|scala|pl|lua|sh|ex|exs|hs|clj|erl)$/;
-// سطر مُصلَح سلفاً — إعادة تغليفه تنتج استدعاءات متداخلة
-const ALREADY_ENV = /process\.env\.|os\.environ|getenv\s*\(|System\.getenv\s*\(|Environment\.GetEnvironmentVariable\s*\(/;
+const STRATEGIES = {
+  XSS_INNER_HTML:   { fn: fixXSS,               autoFix: true,  confidence: 0.95 },
+  HTTP_USAGE:       { fn: fixHTTP,               autoFix: true,  confidence: 0.98 },
+  VAR_USAGE:        { fn: fixVar,                autoFix: true,  confidence: 0.95 },
+  LOOSE_EQUALITY:   { fn: fixEquality,           autoFix: true,  confidence: 0.90 },
+  ACCUMULATION:     { fn: fixAccumulation,       autoFix: true,  confidence: 0.88 },
+  HARDCODED_SECRET: { fn: fixHardcodedSecret,    autoFix: true,  confidence: 0.85 },
+  LOG_SECRET:       { fn: fixLogSecret,          autoFix: true,  confidence: 0.90 },
+  EMPTY_CATCH:      { fn: fixEmptyCatch,         autoFix: true,  confidence: 0.80 },
+  EMPTY_FUNCTION:   { fn: fixEmptyFunction,      autoFix: true,  confidence: 0.70 },
+  CALLBACK_HELL:    { fn: fixCallbackHell,       autoFix: false, confidence: 0.75 },
+  MISSING_AUTH:     { fn: null,                  autoFix: false, confidence: 0.70 },
+  API_KEY:          { fn: fixApiKeyAdvanced,     autoFix: true,  confidence: 0.90 },
+  SQL_INJECTION:    { fn: fixSQLInjection,       autoFix: true,  confidence: 0.75 },
+  EVAL_USAGE:       { fn: fixEval,               autoFix: true,  confidence: 0.85 },
+  WEAK_CRYPTO:      { fn: fixWeakCrypto,         autoFix: true,  confidence: 0.90 },
+  MD5_USAGE:        { fn: fixWeakCrypto,         autoFix: true,  confidence: 0.90 },
+  WEAK_HASH:        { fn: fixWeakCrypto,         autoFix: true,  confidence: 0.90 },
+  HARDCODED_PASS:   { fn: fixHardcodedPassword,  autoFix: true,  confidence: 0.82 },
+  CMD_INJECTION:    { fn: fixCommandInjection,   autoFix: true,  confidence: 0.78 },
+  CMD_INJECTION_PY: { fn: fixCommandInjectionPy, autoFix: true,  confidence: 0.85 },
+  NONE_COMPARE:     { fn: fixNoneCompare,        autoFix: true,  confidence: 0.95 },
+  NAMEERROR:        { fn: fixNameError,          autoFix: true,  confidence: 0.90 },
+  RETURN_NULL:      { fn: null,                  autoFix: false, confidence: 0.10 },
+  NPE_CHAIN:        { fn: null,                  autoFix: false, confidence: 0.15 },
+};
+
+// ─── detectExt — امتداد الملف فقط ───────────────────
+function detectExt(code, fileName) {
+  if (!fileName) return 'unknown';
+  const ext = fileName.split('.').pop().toLowerCase();
+  if (ext === 'jsx' || ext === 'mjs' || ext === 'cjs') return 'js';
+  if (ext === 'tsx') return 'ts';
+  const supported = ['js', 'ts', 'py', 'php', 'java', 'cs'];
+  return supported.includes(ext) ? ext : 'unknown';
+}
+
+// ─── Helper ───────────────────────────────────────────
+function replaceLineInCode(code, lineNum, newLine) {
+  const lines = code.split('\n');
+  lines[lineNum - 1] = newLine;
+  return lines.join('\n');
+}
 
 // ─── SQL Injection ────────────────────────────────────
 function fixSQLInjection(code, issue, lines2, ext2, fileName) {
@@ -47,71 +80,34 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
+  const ext = detectExt(code, fileName);
 
   if (ext === 'py') {
-    const m = line.match(/(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*).*\+.*?(\w+)/i);
-    if (m) {
-      const indent = ' '.repeat(line.search(/\S/));
-      const varName = m[1];
-      const param = m[3];
-      const queryStr = m[2].trim();
-      // استبدل السطر بـ parameterized query + cursor.execute
-      lines[ln] = `${indent}${varName} = "${queryStr}?"`;
-      // احذف أي cursor/conn.execute وreturn قديمة بعده، وأي # query معلق
-      let nextIdx = ln + 1;
-      while (nextIdx < lines.length && 
-             /cursor\s*=\s*conn\.execute|conn\.execute|return cursor|#\s*query/.test(lines[nextIdx])) {
-        lines.splice(nextIdx, 1);
-      }
-      // احذف أي # query في السطر نفسه
-      if (lines[ln].trim().startsWith('#')) {
-        lines[ln] = lines[ln].replace(/^(\s*)#\s*/, '$1');
-      }
-      // أضف cursor.execute الصح مباشرة
-      lines.splice(ln + 1, 0, `${indent}cursor = conn.cursor()`);
-      lines.splice(ln + 2, 0, `${indent}cursor.execute(${varName}, (${param},))`);
-      lines.splice(ln + 3, 0, `${indent}return cursor.fetchall()`);
-      return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection fixed with parameterized query' };
-    }
+    // Python SQL: السياق والdriver غير معروفَين — نترك للمراجعة اليدوية
+    return null;
   } else if (ext === 'js' || ext === 'ts') {
-    // صلح SQL: "...'" + var + "'" أو "..." + var
     let fixedLine = line
-      .replace(/"([^"]*)'"\s*\+\s*\w+\s*\+\s*"'([^"]*)"/g, '"$1?$2"')
+      .replace(/"([^"']*)'"\s*\+\s*\w+\s*\+\s*"'([^"]*)"/g, '"$1?$2"')
       .replace(/"([^"]*)"\s*\+\s*(\w+)/g, '"$1?"');
-    if (fixedLine !== line) {
-      lines[ln] = fixedLine + ' // use: db.query(sql, [param])';
-      return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — use parameterized queries' };
-    }
-    const pyComment = ext === 'py' ? '# ' : '// ';
-    if (!line.includes('TODO') && !line.includes('// use:')) lines[ln] = line.trimEnd() + ' // TODO: SQL Injection';
-    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection marked for fix' };
+    if (fixedLine === line) return null;
+    lines[ln] = fixedLine + ' // use: db.query(sql, [param])';
+    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — parameterized query' };
   } else if (ext === 'php') {
     const phpM = line.match(/\$(\w+)\s*=\s*["']([^"']+)["']\s*\.\s*\$(\w+)/);
-    if (phpM) {
-      const indent = ' '.repeat(line.search(/\S/));
-      lines[ln] = `${indent}$stmt = $conn->prepare("${phpM[2]}?");`;
-      lines.splice(ln + 1, 0, `${indent}$stmt->bind_param("s", $${phpM[3]});`);
-      lines.splice(ln + 2, 0, `${indent}$stmt->execute();`);
-      return { fixed: lines.join('\n'), patch: lines[ln], reason: 'PHP SQL Injection fixed with prepared statement' };
-    }
-    return null;
+    if (!phpM) return null;
+    const indent = ' '.repeat(line.search(/\S/));
+    lines[ln] = `${indent}$stmt = $conn->prepare("${phpM[2]}?");`;
+    lines.splice(ln + 1, 0, `${indent}$stmt->bind_param("s", $${phpM[3]});`);
+    lines.splice(ln + 2, 0, `${indent}$stmt->execute();`);
+    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'PHP SQL Injection — prepared statement' };
   } else if (ext === 'cs') {
-    // C#: استبدل بـ SqlParameter
     const m = line.match(/"([^"]+)"\s*\+\s*(\w+)/);
-    if (m) {
-      lines[ln] = line.replace(
-        /"([^"]+)"\s*\+\s*(\w+)/,
-        '"$1@param"'
-      );
-      const indent = ' '.repeat(line.search(/\S/));
-      lines.splice(ln + 1, 0, `${indent}cmd.Parameters.AddWithValue("@param", ${m[2]});`);
-      return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection fixed with SqlParameter' };
-    }
+    if (!m) return null;
+    lines[ln] = line.replace(/"([^"]+)"\s*\+\s*(\w+)/, '"$1@param"');
+    const indent = ' '.repeat(line.search(/\S/));
+    lines.splice(ln + 1, 0, `${indent}cmd.Parameters.AddWithValue("@param", ${m[2]});`);
+    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'C# SQL Injection — SqlParameter' };
   }
-
-  if (line.trim().startsWith('//') || line.trim().startsWith('#')) return null;
-  // لا تعلّق الكود — اترك للمطور
   return null;
 }
 
@@ -122,11 +118,8 @@ function fixEval(code, issue, lines2, ext2, fileName) {
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
   if (!/\beval\s*\(/.test(line)) return null;
-
-  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
+  const ext = detectExt(code, fileName);
   const indent = ' '.repeat(line.search(/\S/));
-
-  // استخرج الـ argument
   const argMatch = line.match(/eval\s*\(([^)]+)\)/);
   const arg = argMatch ? argMatch[1] : 'data';
 
@@ -134,19 +127,15 @@ function fixEval(code, issue, lines2, ext2, fileName) {
     if (/json|data|response|result/i.test(arg)) {
       lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
     } else {
-      // eval على user input خطير — احذفه واترك تحذير
-      lines[ln] = `${indent}// SECURITY: eval() is dangerous — removed. Validate ${arg} before use`;
+      lines[ln] = `${indent}// SECURITY: eval() removed. Validate ${arg} before use`;
     }
+    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'eval() replaced with safe alternative' };
   } else if (ext === 'py') {
-    // استبدل eval بـ ast.literal_eval
     lines[ln] = line.replace(/eval\s*\(([^)]+)\)/, 'ast.literal_eval($1)');
-    // أضف import لو ما موجود
-    if (!code.includes('import ast')) {
-      lines.unshift('import ast');
-    }
+    if (!code.includes('import ast')) lines.unshift('import ast');
+    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'eval() → ast.literal_eval()' };
   }
-
-  return { fixed: lines.join('\n'), patch: lines[ln], reason: 'eval() replaced with safe alternative' };
+  return null;
 }
 
 // ─── Hardcoded Password ───────────────────────────────
@@ -155,76 +144,49 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
-  if (ALREADY_ENV.test(line)) return null;
-  // امتداد بلا صياغة env معروفة ⇒ لا نلمس الملف
-  const fext = (ext2 || (fileName || '').split('.').pop() || '').toLowerCase();
-  if (fext && !ENV_FIX_EXT.test(fext)) return null;
-
-  // استخرج اسم المتغير
+  const ext = detectExt(code, fileName);
   const varMatch = line.match(/(\w+)\s*[:=]/);
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
 
+  let fixed = line;
   if (ext === 'py') {
-    lines[ln] = line.replace(
-      /(["\'])[^"\']+(["\'])/,
-      `os.environ.get('${varName}', '')`
-    );
     if (line.includes('os.environ')) return null;
-    if (!code.includes('import os')) lines.unshift('import os');
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
+    if (fixed !== line && !code.includes('import os')) lines.unshift('import os');
   } else if (ext === 'js' || ext === 'ts') {
-    lines[ln] = line.replace(
-      /(["\'])[^"\']+(["\'])/,
-      `process.env.${varName}`
-    );
-  } else if (ext === 'php') {
-    lines[ln] = line.replace(
-      /(["\'])[^"\']+(["\'])/,
-      `getenv('${varName}')`
-    );
-  } else if (ext === 'cs') {
-    lines[ln] = line.replace(
-      /(["\'])[^"\']+(["\'])/,
-      `Environment.GetEnvironmentVariable("${varName}")`
-    );
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   } else if (ext === 'java') {
-    lines[ln] = line.replace(
-      /(["\'])[^"\']+(["\'])/,
-      `System.getenv("${varName}")`
-    );
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
+  } else if (ext === 'cs') {
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `Environment.GetEnvironmentVariable("${varName}")`);
   } else {
-    // لغة بلا صياغة معروفة ⇒ لا إصلاح، بدل حقن صياغة لغة أخرى
     return null;
   }
 
-  return { fixed: lines.join('\n'), patch: lines[ln], reason: 'Hardcoded credential moved to env variable' };
+  if (fixed === line) return null;
+  lines[ln] = fixed;
+  return { fixed: lines.join('\n'), patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' };
 }
 
-// ─── Command Injection ────────────────────────────────
+// ─── Command Injection JS/TS — splice لا string concat ─
 function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
+  const ext = detectExt(code, fileName);
+  if (ext !== 'js' && ext !== 'ts') return null;
+
   const indent = ' '.repeat(line.search(/\S/));
+  const execArg = line.match(/exec\s*\(([^)]+)\)/)?.[1] || 'command';
+  const safeLine = line.replace(/exec\s*\([^)]+\)/, 'exec(safeArgs)');
 
-  if (ext === 'py') {
-    // استبدل os.system بـ subprocess مع list
-    if (/os\.system\s*\(/.test(line)) {
-      const argMatch = line.match(/os\.system\s*\(([^)]+)\)/);
-      if (argMatch) {
-        lines[ln] = line.replace(
-          /os\.system\s*\([^)]+\)/,
-          `subprocess.run(shlex.split(${argMatch[1]}), check=True)`
-        );
-        if (!code.includes('import subprocess')) lines.unshift('import subprocess\nimport shlex');
-      }
-    }
-  } else if (ext === 'js' || ext === 'ts') {
-    lines[ln] = `${indent}// SECURITY: Validate and sanitize input before exec\n${indent}const safeArgs = ${line.match(/exec\s*\(([^)]+)\)/)?.[1] || 'command'}.replace(/[^a-zA-Z0-9 ]/g, '');\n${indent}${line.replace(/exec\s*\([^)]+\)/, 'exec(safeArgs)')}`;
-  }
-
+  // أسطر مضافة بشكل صحيح عبر splice
+  lines.splice(ln, 1,
+    `${indent}// SECURITY: validate input before exec`,
+    `${indent}const safeArgs = ${execArg}.replace(/[^a-zA-Z0-9 ]/g, '');`,
+    safeLine
+  );
   return { fixed: lines.join('\n'), patch: lines[ln], reason: 'Command injection mitigated' };
 }
 
@@ -234,9 +196,9 @@ function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
-
+  const ext = detectExt(code, fileName);
   let fixedLine = line;
+
   if (ext === 'py') {
     fixedLine = line
       .replace(/hashlib\.md5\s*\(/g, 'hashlib.sha256(')
@@ -257,6 +219,8 @@ function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
     fixedLine = line
       .replace(/MessageDigest\.getInstance\s*\(\s*["']MD5["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")')
       .replace(/MessageDigest\.getInstance\s*\(\s*["']SHA-1["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")');
+  } else {
+    return null;
   }
 
   if (fixedLine === line) return null;
@@ -264,11 +228,21 @@ function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
   return { fixed: lines.join('\n'), patch: fixedLine.trim(), reason: 'Weak crypto MD5/SHA1 → SHA256' };
 }
 
-// ─── NameError Fix ───────────────────────────────────────
+// ─── NameError Fix — يستخدم issue.line أولاً ─────────
 function fixNameError(code, issue) {
   const lines = code.split('\n');
-  // ابحث عن # query معلق وأزل الـ #
-  for (let i = 0; i < lines.length; i++) {
+  const ln = (issue.line || 1) - 1;
+
+  // تحقق من السطر المستهدف أولاً
+  if (ln >= 0 && ln < lines.length && /^\s*#\s*query\s*=/.test(lines[ln])) {
+    lines[ln] = lines[ln].replace(/^(\s*)#\s*/, '$1');
+    return { fixed: lines.join('\n'), patch: lines[ln].trim(), reason: 'Uncommented query definition' };
+  }
+
+  // بحث في الأسطر المجاورة فقط (±3 أسطر)
+  const start = Math.max(0, ln - 3);
+  const end   = Math.min(lines.length - 1, ln + 3);
+  for (let i = start; i <= end; i++) {
     if (/^\s*#\s*query\s*=/.test(lines[i])) {
       lines[i] = lines[i].replace(/^(\s*)#\s*/, '$1');
       return { fixed: lines.join('\n'), patch: lines[i].trim(), reason: 'Uncommented query definition' };
@@ -283,11 +257,9 @@ function fixNoneCompare(code, issue) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-
   const fixed = line
     .replace(/==\s*None/g, 'is None')
     .replace(/!=\s*None/g, 'is not None');
-
   if (fixed === line) return null;
   lines[ln] = fixed;
   return { fixed: lines.join('\n'), patch: fixed.trim(), reason: 'Use "is None" instead of "== None"' };
@@ -299,9 +271,8 @@ function fixXSS(code, issue, lines, ext) {
   if (!line) return null;
   let fixed = line.replace(/\.innerHTML\s*=/, '.textContent =');
   if (fixed === line) fixed = line.replace(/\.outerHTML\s*=/, '.textContent =');
-  // res.send XSS → res.json sanitized
   if (fixed === line && /res\.send\s*\(/.test(line)) {
-    const m = line.match(/res\.send\s*\(['"`]([^'"\`]*?)['"\`]\s*\+\s*(\w+)/);
+    const m = line.match(/res\.send\s*\(["'`]([^"'`]*?)["'`]\s*\+\s*(\w+)/);
     if (m) {
       fixed = line.replace(/res\.send\s*\([^)]+\)/, `res.json({ message: String(${m[2]}).replace(/[<>]/g, '') })`);
     } else if (/res\.send\s*\([^)]*\+[^)]*\)/.test(line)) {
@@ -310,7 +281,7 @@ function fixXSS(code, issue, lines, ext) {
     }
   }
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'XSS: res.send → res.json sanitized' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'XSS fixed' };
 }
 
 // ─── HTTP → HTTPS ─────────────────────────────────────
@@ -322,37 +293,39 @@ function fixHTTP(code, issue, lines, ext) {
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'HTTP → HTTPS' };
 }
 
-// ─── var → let/const ─────────────────────────────────
+// ─── var → let ────────────────────────────────────────
 function fixVar(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
   const fixed = line.replace(/\bvar\b/, 'let');
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'var → const/let' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'var → let' };
 }
 
 // ─── Loose Equality ───────────────────────────────────
 function fixEquality(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  let fixed = line.replace(/([^=!<>])==([^=])/g, '$1===$2').replace(/([^=!<>])!=([^=])/g, '$1!==$2');
-  // صلح رقم مقابل string: === "0" → === 0
-  fixed = fixed.replace(/===\s*"(\d+)"/g, '=== $1').replace(/!==\s*"(\d+)"/g, '!== $1');
+  let fixed = line
+    .replace(/([^=!<>])==([^=])/g, '$1===$2')
+    .replace(/([^=!<>])!=([^=])/g, '$1!==$2');
+  fixed = fixed
+    .replace(/===\s*"(\d+)"/g, '=== $1')
+    .replace(/!==\s*"(\d+)"/g, '!== $1');
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '== → === و string→number' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '== → ===' };
 }
 
 // ─── Accumulation ─────────────────────────────────────
 function fixAccumulation(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const m = line.match(/(\w+)\s*=\s*(.+)/);
-  if (!m) return null;
-  // صلح forEach arrow: total = x.y → total += x.y
   if (/=>/.test(line)) {
     const fm = line.match(/forEach\s*\(\s*\(?\w+\)?\s*=>\s*\{[^}]*(\w+)\s*=\s*(\w+\.\w+)/);
     if (!fm) return null;
-    const fixed2 = line.replace(`${fm[1]} = ${fm[2]}`, `${fm[1]} += ${fm[2]}`).replace(`${fm[1]}=${fm[2]}`, `${fm[1]} += ${fm[2]}`);
+    const fixed2 = line
+      .replace(`${fm[1]} = ${fm[2]}`, `${fm[1]} += ${fm[2]}`)
+      .replace(`${fm[1]}=${fm[2]}`, `${fm[1]} += ${fm[2]}`);
     if (fixed2 === line) return null;
     return { fixed: replaceLineInCode(code, issue.line, fixed2), patch: fixed2.trim(), reason: `${fm[1]} = → ${fm[1]} +=` };
   }
@@ -368,55 +341,121 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   const varMatch = line.match(/(\w+)\s*[:=]/);
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
   let fixed = line;
-  // idempotent — السطر مُصلَح سلفاً ⇒ لا نعيد تغليفه (يُنتج استدعاءات متداخلة)
-  if (ALREADY_ENV.test(line)) return null;
+
   if (ext === 'py') {
+    if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
   } else if (ext === 'php') {
-    fixed = line.replace(/(["'])[^"']+(["'])/, `getenv('${varName}')`);
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `getenv('${varName}')`);
   } else if (ext === 'java') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `System.getenv("${varName}")`);
   } else if (ext === 'cs') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `Environment.GetEnvironmentVariable("${varName}")`);
-  } else if (JS_EXT.test(ext || '')) {
+  } else if (ext === 'js' || ext === 'ts') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   } else {
-    // لغة بلا صياغة معروفة ⇒ لا نحقن صياغة JS في ملفها
     return null;
   }
+
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Secret moved to env variable' };
 }
 
-// ─── Log Secret ───────────────────────────────────────
+// ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
 function fixLogSecret(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const fixed = line.replace(/(console\.log|print|Log\.\w)\s*\(([^)]*(?:password|secret|token|key)[^)]*)\)/gi,
-    (_, fn) => `${fn}("[REDACTED]")`);
+  let fixed = line;
+
+  // helper: يستبدل قيمة حساسة واحدة بـ "[REDACTED]" ويحافظ على باقي arguments
+  function redactArg(str) {
+    return str.replace(
+      /\b(password|secret|token|key|apikey|api_key)\b\s*(?=[,)])/gi,
+      '"[REDACTED]"'
+    );
+  }
+
+  if (ext === 'java') {
+    // Log.d("TAG", sensitiveVar) → Log.d("TAG", "[REDACTED]")
+    // يحافظ على الوسيطة الأولى (TAG) ويستبدل الحساسة فقط
+    fixed = line.replace(
+      /((android\.util\.)?Log\.\w+\s*\()([^)]+)\)/,
+      (_, fn, _prefix, args) => {
+        const parts = args.split(/,(?![^(]*\))/); // split بـ comma خارج الأقواس
+        if (parts.length < 2) return _;
+        const tag = parts[0];
+        const rest = parts.slice(1).map(a =>
+          /password|secret|token|key/i.test(a) ? ' "[REDACTED]"' : a
+        );
+        return `${fn}${tag},${rest.join(',')})`;
+      }
+    );
+  } else if (ext === 'js' || ext === 'ts') {
+    // console.log("User:", password) → console.log("User:", "[REDACTED]")
+    fixed = line.replace(
+      /(console\.(?:log|error|warn|info)\s*\()([^)]+)\)/,
+      (_, fn, args) => {
+        const redacted = args.replace(
+          /(?<=[,\(]\s*)([A-Za-z_$][\w$]*)(?=\s*[,)])/g,
+          (m) => /password|secret|token|key/i.test(m) ? '"[REDACTED]"' : m
+        );
+        return `${fn}${redacted})`;
+      }
+    );
+  } else if (ext === 'py') {
+    // print(password) أو logging.info(secret)
+    fixed = line.replace(
+      /((?:print|logging\.\w+)\s*\()([^)]+)\)/,
+      (_, fn, args) => {
+        const redacted = args.replace(
+          /(?<=[,\(]\s*)([A-Za-z_$][\w$]*)(?=\s*[,)])/g,
+          (m) => /password|secret|token|key/i.test(m) ? '"[REDACTED]"' : m
+        );
+        return `${fn}${redacted})`;
+      }
+    );
+  }
+
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Sensitive data redacted from logs' };
 }
 
-// ─── Empty Catch ──────────────────────────────────────
+// ─── Empty Catch — مع import logging لـ Python ────────
 function fixEmptyCatch(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
   let fixed = line;
+
   if (ext === 'java') {
     fixed = line.replace(/catch\s*\((\w+)\s+(\w+)\)\s*\{\s*\}/, 'catch ($1 $2) { android.util.Log.e("Error", $2.getMessage()); }');
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ android.util.Log.e("Error", "exception occurred"); }');
   } else if (ext === 'py') {
-    fixed = line + '\n' + ' '.repeat(line.search(/\S/) + 4) + 'logging.error("Exception: %s", str(e))';
+    // استخدم splice لإضافة السطر الجديد بشكل صحيح
+    const catchLines = code.split('\n');
+    const catchLn = issue.line - 1;
+    if (catchLn < 0 || catchLn >= catchLines.length) return null;
+    const catchLine = catchLines[catchLn];
+    // استنتج الـindentation من السطر الحالي
+    const baseIndent = catchLine.match(/^(\s*)/)?.[1] || '';
+    const bodyIndent = baseIndent + '    ';
+    // أضف import logging لو غائب
+    if (!code.includes('import logging')) {
+      catchLines.unshift('import logging');
+    }
+    // أضف السطر بعد سطر except
+    const targetLn = catchLines.indexOf(catchLine, code.includes('import logging') ? 0 : 1);
+    if (targetLn < 0) return null;
+    catchLines.splice(targetLn + 1, 0, `${bodyIndent}logging.error("Exception: %s", str(e))`);
+    return { fixed: catchLines.join('\n'), patch: `${bodyIndent}logging.error(...)`, reason: 'Empty except now logs error' };
   } else if (ext === 'cs') {
     fixed = line.replace(/catch\s*(\([^)]*\))?\s*\{\s*\}/, 'catch (Exception ex) { Debug.LogError("Error: " + ex.Message); }');
-  } else if (JS_EXT.test(ext || '')) {
+  } else if (ext === 'js' || ext === 'ts') {
     fixed = line.replace(/catch\s*\(([^)]+)\)\s*\{\s*\}/, 'catch ($1) { console.error("Error:", $1); }');
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ console.error("unexpected error"); }');
   } else {
-    // لغة بلا صياغة معروفة ⇒ لا إصلاح
     return null;
   }
+
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Empty catch now logs error' };
 }
@@ -425,124 +464,57 @@ function fixEmptyCatch(code, issue, lines, ext) {
 function fixEmptyFunction(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
+  if (ext !== 'js' && ext !== 'ts' && ext !== 'py') return null;
+
   const indent = ' '.repeat(line.search(/\S/) + 4);
   const outerIndent = ' '.repeat(line.search(/\S/));
-
-  // استنتج نوع الدالة من اسمها
   const nameMatch = line.match(/function\s+(\w+)|def\s+(\w+)|(\w+)\s*[=(]/);
   const funcName = nameMatch ? (nameMatch[1] || nameMatch[2] || nameMatch[3]) : '';
 
   let body = '';
   if (/get|fetch|load|read/i.test(funcName)) {
-    body = ext === 'py' ? `${indent}return None  # TODO: implement fetch logic` :
-           `${indent}return null; // TODO: implement fetch logic`;
+    body = ext === 'py' ? `${indent}return None  # TODO: implement` : `${indent}return null; // TODO: implement`;
   } else if (/save|write|store|set/i.test(funcName)) {
-    body = ext === 'py' ? `${indent}pass  # TODO: implement save logic` :
-           `${indent}// TODO: implement save logic`;
+    body = ext === 'py' ? `${indent}pass  # TODO: implement` : `${indent}// TODO: implement`;
   } else if (/calculate|compute|sum|total/i.test(funcName)) {
-    body = ext === 'py' ? `${indent}return 0  # TODO: implement calculation` :
-           `${indent}return 0; // TODO: implement calculation`;
+    body = ext === 'py' ? `${indent}return 0  # TODO: implement` : `${indent}return 0; // TODO: implement`;
   } else if (/is|has|check|valid/i.test(funcName)) {
-    body = ext === 'py' ? `${indent}return False  # TODO: implement validation` :
-           `${indent}return false; // TODO: implement validation`;
+    body = ext === 'py' ? `${indent}return False  # TODO: implement` : `${indent}return false; // TODO: implement`;
   } else {
-    body = ext === 'py' ? `${indent}pass  # TODO: implement` :
-           `${indent}// TODO: implement`;
+    body = ext === 'py' ? `${indent}pass  # TODO: implement` : `${indent}// TODO: implement`;
   }
 
-  let fixed = line;
-  if (line.includes('{}')) {
-    fixed = line.replace('{}', `{\n${body}\n${outerIndent}}`);
-  }
+  if (!line.includes('{}')) return null;
+  const fixed = line.replace('{}', `{\n${body}\n${outerIndent}}`);
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: 'Added smart stub', reason: 'Empty function with smart placeholder' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: 'Added stub', reason: 'Empty function placeholder' };
 }
 
-
-// ─── Callback Hell → async/await ─────────────────────
-
+// ─── Callback Hell (autoFix: false) ──────────────────
 function fixCallbackHell(code, issue) {
-  const lines = code.split('\n');
-
-  // ابحث عن أول callback متداخل
-  const callbackPattern = /\w+\s*\(\s*function\s*\(/;
-  let cbStart = -1;
-  let cbEnd = -1;
-  let depth = 0;
-  const funcNames = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    if (callbackPattern.test(lines[i])) {
-      if (cbStart === -1) cbStart = i;
-      const m = lines[i].match(/(\w+)\s*\(/);
-      if (m) funcNames.push(m[1]);
-      depth++;
-    }
-    if ((lines[i].includes('});') || lines[i].includes('})')) && depth > 0) {
-      depth--;
-      if (depth === 0) { cbEnd = i; break; }
-    }
-  }
-
-  if (cbStart === -1 || funcNames.length < 2) return null;
-
-  // بناء async/await
-  const indent = ' '.repeat((lines[cbStart].match(/^(\s*)/)||['',''])[1].length);
-  const asyncCode = [
-    `${indent}async function processAll() {`,
-    `${indent}  try {`,
-    ...funcNames.map(n => `${indent}    const ${n}Result = await ${n}();`),
-    `${indent}  } catch (error) {`,
-    `${indent}    console.error('Error:', error);`,
-    `${indent}  }`,
-    `${indent}}`,
-    `${indent}processAll();`
-  ];
-
-  // استبدل فقط كود الـ callbacks مو كل الملف
-  const newLines = [
-    ...lines.slice(0, cbStart),
-    ...asyncCode,
-    ...lines.slice(cbEnd + 1)
-  ];
-
-  return {
-    fixed: newLines.join('\n'),
-    patch: asyncCode.join('\n'),
-    reason: 'Callback Hell → async/await'
-  };
+  return null;
 }
 
-// ─── Hardcoded API Keys (متقدم) ───────────────────────
+// ─── Hardcoded API Keys ───────────────────────────────
 function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  const ext = fileName ? detectExt(code, fileName) : detectExt(code);
-  if (ALREADY_ENV.test(line)) return null;
-  // امتداد بلا صياغة env معروفة ⇒ لا نلمس الملف
-  const fext = (ext2 || (fileName || '').split('.').pop() || '').toLowerCase();
-  if (fext && !ENV_FIX_EXT.test(fext)) return null;
+  const ext = detectExt(code, fileName);
 
-  // استخرج اسم المتغير والقيمة
   const m = line.match(/(?:const|let|var|private|public|string)?\s*(\w+)\s*[:=]\s*["']([^"']+)["']/);
   if (!m) return null;
-
   const varName = m[1];
   const envName = varName.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
 
   if (ext === 'py') {
     lines[ln] = line.replace(/["'][^"']+["']/, `os.environ.get('${envName}', '')`);
-    // أضف import os لو ما موجود
-    if (!code.includes('import os')) {
-      lines.unshift('import os');
-    }
-    // أضف .env example comment
-    lines.splice(ln + 2, 0, `# Add to .env file: ${envName}=your_value_here`);
+    if (!code.includes('import os')) lines.unshift('import os');
+    lines.splice(ln + 2, 0, `# Add to .env: ${envName}=your_value`);
   } else if (ext === 'js' || ext === 'ts') {
     lines[ln] = line.replace(/["'][^"']+["']/, `process.env.${envName}`);
-    lines.splice(ln + 1, 0, `// Add to .env file: ${envName}=your_value_here`);
+    lines.splice(ln + 1, 0, `// Add to .env: ${envName}=your_value`);
   } else if (ext === 'php') {
     lines[ln] = line.replace(/["'][^"']+["']/, `getenv('${envName}')`);
   } else if (ext === 'cs') {
@@ -550,102 +522,81 @@ function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   } else if (ext === 'java') {
     lines[ln] = line.replace(/["'][^"']+["']/, `System.getenv("${envName}")`);
   } else {
-    // لغة بلا صياغة معروفة ⇒ لا إصلاح
     return null;
   }
 
-  return {
-    fixed: lines.join('\n'),
-    patch: lines[ln].trim(),
-    reason: `Hardcoded secret → ${envName} env variable`
-  };
+  return { fixed: lines.join('\n'), patch: lines[ln].trim(), reason: `Secret → ${envName} env variable` };
 }
 
-// ─── Fix Accumulation (متقدم) ─────────────────────────
-function fixAccumulationAdvanced(code, issue) {
-  const lines = code.split('\n');
-  const ln = issue.line - 1;
-  if (ln < 0 || ln >= lines.length) return null;
-  const line = lines[ln];
-
-  // x = y.prop → x += y.prop داخل forEach أو عادي
-  // صلح forEach arrow: total = x.y → total += x.y
-  const forEachM = line.match(/forEach.*?\(?\w+\)?\s*=>\s*\{[^}]*(\w+)\s*=\s*(\w+\.\w+)[^}]*\}/);
-  if (forEachM) {
-    const fixed2 = line.replace(`${forEachM[1]} = ${forEachM[2]}`, `${forEachM[1]} += ${forEachM[2]}`);
-    if (fixed2 !== line) {
-      lines[ln] = fixed2;
-      return { fixed: lines.join('\n'), patch: fixed2.trim(), reason: `Accumulation: ${forEachM[1]} = → ${forEachM[1]} +=` };
-    }
-  }
-  const m = line.match(/(\s*)(\w+)\s*=\s*(\w+\.\w+)/);
-  if (!m) return null;
-  if (/=>/.test(line)) return null;
-
-  const [, indent, varName, value] = m;
-  lines[ln] = `${indent}${varName} += ${value};`;
-
-  return {
-    fixed: lines.join('\n'),
-    patch: lines[ln].trim(),
-    reason: `Accumulation: ${varName} = → ${varName} +=`
-  };
-}
-
-
-// ─── Command Injection Fix ───────────────────────────────
+// ─── Command Injection Python ─────────────────────────
 function fixCommandInjectionPy(code, issue) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
-  
   const m = line.match(/os\.system\s*\((.+)\)/);
   if (!m) return null;
-  
   const indent = ' '.repeat(line.search(/\S/));
   const arg = m[1].trim();
-  
-  // استبدل os.system بـ subprocess.run
   lines[ln] = `${indent}subprocess.run(shlex.split(${arg}), check=True, capture_output=True)`;
-  
-  // أضف imports لو ما موجودة
   let fixed = lines.join('\n');
   if (!fixed.includes('import subprocess')) fixed = 'import subprocess\nimport shlex\n' + fixed;
-  
   return { fixed, patch: lines[ln].trim(), reason: 'Command Injection → subprocess.run' };
 }
 
-// ─── Helpers ──────────────────────────────────────────
+// ─── detectStrategy — language-aware ─────────────────
+function detectStrategy(issue, lang) {
+  // لغة غير معروفة أو غير مدعومة = لا إصلاح
+  if (!lang || lang === 'unknown') return null;
 
-function detectExt(code, fileName) {
-  if (fileName && fileName.endsWith('.php')) return 'php';
-  if (fileName && fileName.endsWith('.py')) return 'py';
-  if (fileName && fileName.endsWith('.cs')) return 'cs';
-  if (fileName && fileName.endsWith('.java')) return 'java';
-  // امتداد معروف بلا فرع صياغة ⇒ أعِد الامتداد نفسه فلا يطابق أي فرع،
-  // بدل تخمينه Python وحقن cursor.execute/import ast في ملف Dart أو Kotlin
-  if (fileName) {
-    const _e = (fileName.split('.').pop() || '').toLowerCase();
-    if (UNSUPPORTED_EXT.test(_e)) return _e;
-  }
-  if (/def\s+\w+|import\s+\w+|print\s*\(|hashlib|os\.environ/.test(code)) return 'py';
-  if (/<\?php|mysqli|\$_GET|\$_POST/.test(code)) return 'php';
-  if (/using\s+System|namespace\s+\w+|public\s+class/.test(code) && !/def\s+\w+/.test(code)) return 'cs';
-  if (/public\s+class|System\.out\.println/.test(code)) return 'java';
-  return 'js';
+  const t = (issue.title || '').toLowerCase();
+  let stratKey = null;
+
+  if (t.includes('sql'))                                                    stratKey = 'SQL_INJECTION';
+  else if (t.includes('innerhtml') || t.includes('xss'))                   stratKey = 'XSS_INNER_HTML';
+  else if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('لتشفير') || t.includes('crypto')) stratKey = 'WEAK_CRYPTO';
+  else if (t.includes('command') || t.includes('os.system'))               stratKey = (lang === 'py') ? 'CMD_INJECTION_PY' : 'CMD_INJECTION';
+  else if (t.includes('eval'))                                              stratKey = 'EVAL_USAGE';
+  else if (t.includes('مرور') || t.includes('password'))                   stratKey = 'HARDCODED_PASS';
+  else if (t.includes('secret') || t.includes('مكشوف'))                    stratKey = 'HARDCODED_SECRET';
+  else if (t.includes('api key') || t.includes('google') || t.includes('stripe')) stratKey = 'API_KEY';
+  else if (t.includes('تراكم') || t.includes('+='))                        stratKey = 'ACCUMULATION';
+  else if (t.includes('مقارنة') || t.includes('string'))                   stratKey = 'LOOSE_EQUALITY';
+  else if (t.includes('===') || t.includes('=='))                          stratKey = 'LOOSE_EQUALITY';
+  else if (t.includes('var'))                                               stratKey = 'VAR_USAGE';
+  else if (t.includes('catch'))                                             stratKey = 'EMPTY_CATCH';
+  else if (t.includes('http'))                                              stratKey = 'HTTP_USAGE';
+  else if (t.includes('log') || t.includes('تسجيل'))                       stratKey = 'LOG_SECRET';
+  else if (t.includes('ناقصة') || t.includes('empty'))                     stratKey = 'EMPTY_FUNCTION';
+  else if (t.includes('none') || t.includes('is none'))                    stratKey = 'NONE_COMPARE';
+  else if (t.includes('nameerror') || t.includes('غير معرّف'))             stratKey = 'NAMEERROR';
+  else if (t.includes('callback'))                                          stratKey = 'CALLBACK_HELL';
+  else if (t.includes('auth') || t.includes('middleware'))                  stratKey = 'MISSING_AUTH';
+  else if (t.includes('cwe-798') || t.includes('credential'))              stratKey = 'HARDCODED_SECRET';
+
+  if (!stratKey) return null;
+
+  // تحقق من allowlist اللغة — بدون fallback
+  const allowed = STRATEGY_LANGS[stratKey];
+  if (!allowed || !allowed.includes(lang)) return null;
+
+  return stratKey;
 }
 
-function replaceLineInCode(code, lineNum, newLine) {
-  const lines = code.split('\n');
-  lines[lineNum - 1] = newLine;
-  return lines.join('\n');
+function getAIReason(strategy) {
+  const reasons = {
+    SQL_INJECTION:  'يحتاج تعديل query + execute() معاً',
+    EVAL_USAGE:     'يحتاج فهم السلوك المقصود',
+    CALLBACK_HELL:  'يحتاج مراجعة يدوية — إعادة هيكلة',
+    RETURN_NULL:    'يحتاج منطق الدالة الكامل',
+    NPE_CHAIN:      'يحتاج فهم السياق لإضافة null check',
+  };
+  return reasons[strategy] || 'يحتاج مراجعة يدوية';
 }
 
 // ─── Main repairCode ──────────────────────────────────
-
 function repairCode(code, issues, fileName) {
-  const ext = fileName.split('.').pop().toLowerCase();
+  const ext = detectExt(code, fileName);
   const repairs  = [];
   const aiNeeded = [];
   let repairedCode = code;
@@ -653,7 +604,7 @@ function repairCode(code, issues, fileName) {
   const sorted = [...issues].sort((a, b) => b.line - a.line);
 
   sorted.forEach(issue => {
-    const stratKey = detectStrategy(issue);
+    const stratKey = detectStrategy(issue, ext);
     const strat = STRATEGIES[stratKey];
     if (!strat) { return; }
 
@@ -666,22 +617,7 @@ function repairCode(code, issues, fileName) {
     }
 
     const lines = repairedCode.split('\n');
-    // بعض الاستراتيجيات تُدرج أسطراً في رأس الملف (import os / import ast)،
-    // فتُزيح كل الأسطر وتُبطل issue.line لبقية القائمة المشتقة من تحليل قديم.
-    // إذا لم يعد السطر المستهدف يطابق دليل الثغرة، اتركها للتحليل التالي
-    // بدل إصلاح سطر بريء.
-    const _ev = (issue.ev || '').trim();
-    if (_ev.length > 8) {
-      const _cur = (lines[issue.line - 1] || '').trim();
-      if (!_cur || (!_cur.includes(_ev.slice(0, 20)) && !_ev.includes(_cur.slice(0, 20)))) return;
-    }
-    let result;
-    try {
-      result = strat.fn(repairedCode, issue, lines, ext, fileName);
-    } catch(e) {
-      // استراتيجية انهارت ⇒ تخطَّ هذه الثغرة وأكمل الباقي، بدل إسقاط الإصلاح كله
-      return;
-    }
+    const result = strat.fn(repairedCode, issue, lines, ext, fileName);
     if (!result || result.fixed === repairedCode) { return; }
 
     repairs.push({
@@ -693,12 +629,7 @@ function repairCode(code, issues, fileName) {
     repairedCode = result.fixed;
   });
 
-  let reAnalysis = null;
-  // reAnalysis disabled to avoid recursive call issues
-
-
-
-  // AuthRepair — يصلح Auth Middleware للدوال الحساسة
+  // AuthRepair
   if (typeof AuthRepair !== 'undefined') {
     try {
       const ar = AuthRepair.fix(repairedCode, fileName);
@@ -706,12 +637,7 @@ function repairCode(code, issues, fileName) {
     } catch(e) {}
   }
 
-  // Self Fix — يصلح أخطاء المحرك
-  if (typeof GhostMode !== 'undefined' && GhostMode.selfFix) {
-    repairedCode = GhostMode.selfFix(repairedCode);
-  }
-
-  // Ghost Mode — يتحقق ويصلح بصمت
+  // Ghost Mode
   if (typeof GhostMode !== 'undefined') {
     try {
       const ghost = GhostMode.fix(code, repairedCode, fileName,
@@ -722,7 +648,7 @@ function repairCode(code, issues, fileName) {
 
   return {
     original: code, repaired: repairedCode,
-    repairs, aiNeeded, reAnalysis,
+    repairs, aiNeeded,
     summary: {
       total: issues.length,
       fixed: repairs.length,
@@ -730,42 +656,5 @@ function repairCode(code, issues, fileName) {
       score: Math.round((repairs.length / Math.max(issues.length, 1)) * 100),
     },
   };
-}
-
-// ─── Strategy Detection ───────────────────────────────
-
-function detectStrategy(issue) {
-  const t = (issue.title || '').toLowerCase();
-  if (t.includes('sql'))                                          return 'SQL_INJECTION';
-  if (t.includes('innerhtml') || t.includes('xss'))              return 'XSS_INNER_HTML';
-  if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('لتشفير') || t.includes('crypto')) return 'WEAK_CRYPTO';
-  if (t.includes('command') || t.includes('os.system'))          return 'CMD_INJECTION_PY';
-  if (t.includes('eval'))                                         return 'EVAL_USAGE';
-  if (t.includes('مرور') || t.includes('password'))              return 'HARDCODED_PASS';
-  if (t.includes('secret') || t.includes('مكشوف'))               return 'HARDCODED_SECRET';
-  if (t.includes('api key') || t.includes('google') || t.includes('stripe')) return 'API_KEY';
-  if (t.includes('تراكم') || t.includes('+='))                   return 'ACCUMULATION';
-  if (t.includes('مقارنة') || t.includes('string'))              return 'LOOSE_EQUALITY';
-  if (t.includes('===') || t.includes('=='))                     return 'LOOSE_EQUALITY';
-  if (t.includes('var'))                                          return 'VAR_USAGE';
-  if (t.includes('catch'))                                        return 'EMPTY_CATCH';
-  if (t.includes('http'))                                         return 'HTTP_USAGE';
-  if (t.includes('log') || t.includes('تسجيل'))                  return 'LOG_SECRET';
-  if (t.includes('ناقصة') || t.includes('empty'))                return 'EMPTY_FUNCTION';
-  if (t.includes('none') || t.includes('is none'))               return 'NONE_COMPARE';
-  if (t.includes('nameerror') || t.includes('غير معرّف'))        return 'NAMEERROR';
-  if (t.includes('callback'))                                     return 'CALLBACK_HELL';
-  if (t.includes('auth') || t.includes('middleware'))             return 'MISSING_AUTH';
-  if (t.includes('cwe-798') || t.includes('credential'))            return 'HARDCODED_SECRET';
-  return null;
-}
-function getAIReason(strategy) {
-  const reasons = {
-    SQL_INJECTION:  'يحتاج تعديل query + execute() معاً',
-    EVAL_USAGE:     'يحتاج فهم السلوك المقصود',
-    RETURN_NULL:    'يحتاج منطق الدالة الكامل',
-    NPE_CHAIN:      'يحتاج فهم السياق لإضافة null check',
-  };
-  return reasons[strategy] || 'يحتاج مراجعة يدوية';
 }
 
