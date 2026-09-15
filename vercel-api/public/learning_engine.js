@@ -209,6 +209,144 @@ var LearningEngine = (() => {
     return null;
   }
 
+
+  // ─── Generalized Pattern Learning ───────────────────
+  // يتعلم فكرة الإصلاح بدل نسخ السطر حرفياً.
+  function generalizeLinePair(before, after) {
+    if (!before || !after || before === after) return null;
+
+    const identifierRe = /\b[A-Za-z_$][\w$]*\b/g;
+
+    const KEYWORDS = new Set([
+      'const','let','var','function','def','return','new','this','self',
+      'class','public','private','protected','static','final','import',
+      'from','require','if','else','for','while','try','catch',
+      'async','await','true','false','null','undefined'
+    ]);
+
+    function maskStrings(source) {
+      let out = '';
+      let quote = null;
+      let escaped = false;
+
+      for (const ch of String(source)) {
+        if (quote !== null) {
+          out += ' ';
+
+          if (escaped) escaped = false;
+          else if (ch === '\\') escaped = true;
+          else if (ch === quote) quote = null;
+
+          continue;
+        }
+
+        if (ch === '"' || ch === "'" || ch === '`') {
+          quote = ch;
+          out += ' ';
+        } else {
+          out += ch;
+        }
+      }
+
+      return out;
+    }
+
+    const stringRe = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g;
+    const strings = [];
+    const beforeWithStringSlots = before.replace(stringRe, value => {
+      const id = `STR_${strings.length + 1}`;
+      strings.push({
+        id,
+        kind: 'string',
+        value
+      });
+      return `__LEARN_${id}__`;
+    });
+
+    const afterWithStringSlots = after.replace(stringRe, value => {
+      const found = strings.find(x => x.value === value);
+      return found ? `__LEARN_${found.id}__` : value;
+    });
+
+    const placeholderRe = /__LEARN_STR_\d+__/g;
+    const beforeForIds = maskStrings(
+      beforeWithStringSlots.replace(placeholderRe, ' ')
+    );
+
+    const beforeIds = [];
+    let m;
+
+    while ((m = identifierRe.exec(beforeForIds)) !== null) {
+      const id = m[0];
+
+      if (!KEYWORDS.has(id) && !beforeIds.includes(id)) {
+        beforeIds.push(id);
+      }
+    }
+
+    if (!beforeIds.length) return null;
+
+    const idSlots = beforeIds.map((value, i) => ({
+      id: `ID_${i + 1}`,
+      kind: 'identifier',
+      value
+    }));
+
+    const slots = [...strings, ...idSlots];
+
+    let beforeTemplate = beforeWithStringSlots;
+    let afterTemplate = afterWithStringSlots;
+
+    const sorted = [...beforeIds].sort((a, b) => b.length - a.length);
+
+    for (const value of sorted) {
+      const slot = idSlots.find(x => x.value === value);
+      const escaped = value.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
+      const re = new RegExp(`\\b${escaped}\\b`, 'g');
+
+      beforeTemplate = beforeTemplate.replace(
+        re,
+        `__LEARN_${slot.id}__`
+      );
+
+      afterTemplate = afterTemplate.replace(
+        re,
+        `__LEARN_${slot.id}__`
+      );
+    }
+
+    const fixedBefore = beforeTemplate
+      .replace(/__LEARN_ID_\d+__/g, '')
+      .replace(/\s+/g, '');
+
+    if (fixedBefore.length < 3) return null;
+
+    return {
+      beforeTemplate: beforeTemplate.replace(/\s+/g, ' ').trim(),
+      afterTemplate: afterTemplate.replace(/\s+/g, ' ').trim(),
+      beforeSlots: slots,
+      afterSlots: slots,
+      sharedTokens: beforeIds.filter(id => after.includes(id))
+    };
+  }
+
+  function isGeneralPatternUsable(pattern, language) {
+    if (!pattern || !language || language === 'unknown') return false;
+    if (!pattern.beforeTemplate || !pattern.afterTemplate) return false;
+    if (!Array.isArray(pattern.beforeSlots)) return false;
+
+    const count =
+      (pattern.beforeTemplate.match(/__LEARN_ID_\d+__/g) || []).length;
+
+    if (count > 8) return false;
+
+    const fixed = pattern.beforeTemplate
+      .replace(/__LEARN_ID_\d+__/g, '')
+      .replace(/\s+/g, '');
+
+    return fixed.length >= 3;
+  }
+
   // ─── Extract Pair (LCS + Fail Closed) ────────────────
   function extractPair(codeBefore, codeAfter, issue) {
     const linesBefore = codeBefore.split('\n');
@@ -356,6 +494,10 @@ var LearningEngine = (() => {
           context:     { functionName: ctx.functionName, scope: ctx.scope, fileName: fileName || '' },
           fingerprint: fp,
           fileName:    fileName || '',
+          generalized: (() => {
+            const g = generalizeLinePair(pair.before, pair.after);
+            return (g && isGeneralPatternUsable(g, lang)) ? g : null;
+          })(),
           observed:    1,
           verified:    0,
           failures:    0,
@@ -390,9 +532,15 @@ var LearningEngine = (() => {
     // calcConfidence هو المصدر النهائي — لا manual decay
     p.confidence = calcConfidence(p.verified || 0, p.failures || 0);
 
-    // موافقة تلقائية
-    if (p.verified >= THRESHOLDS.MIN_VERIFIED && p.confidence >= THRESHOLDS.MIN_CONFIDENCE) {
+    // موافقة تلقائية — الفشل المتكرر يمنع إعادة الاعتماد
+    if (
+      p.failures < 3 &&
+      p.verified >= THRESHOLDS.MIN_VERIFIED &&
+      p.confidence >= THRESHOLDS.MIN_CONFIDENCE
+    ) {
       p.approved = true;
+    } else if (p.failures >= 3) {
+      p.approved = false;
     }
 
     save(db);
@@ -406,43 +554,143 @@ var LearningEngine = (() => {
     console.warn('[LearningEngine] markResult deprecated. Use verify(patternId, success)');
   }
 
+
+  // ─── Generalized Pattern Matching ───────────────────
+  function matchGeneralPattern(line, pattern) {
+    if (!pattern || !pattern.beforeTemplate) return null;
+
+    const template = pattern.beforeTemplate;
+    const tokenRe = /__LEARN_(ID_[0-9]+|STR_[0-9]+)__/g;
+
+    let regex = "";
+    let last = 0;
+    let match;
+
+    while ((match = tokenRe.exec(template)) !== null) {
+      regex += template.slice(last, match.index)
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      const slotId = match[1];
+      const slot = (pattern.beforeSlots || []).find(x => x.id === slotId);
+
+      if (!slot) return null;
+
+      if (slot.kind === "string") {
+        regex += '((?:"(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'|`(?:\\\\.|[^`\\\\])*`))';
+      } else {
+        regex += "([A-Za-z_$][A-Za-z0-9_$]*)";
+      }
+
+      last = match.index + match[0].length;
+    }
+
+    regex += template.slice(last)
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const result = new RegExp("^" + regex + "$").exec(line);
+    if (!result) return null;
+
+    const values = {};
+    let group = 1;
+
+    for (const token of template.matchAll(tokenRe)) {
+      values[token[1]] = result[group++];
+    }
+
+    return { values };
+  }
+
+  function renderGeneralTemplate(template, values) {
+    if (!template || !values) return null;
+
+    return template.replace(
+      /__LEARN_(ID_[0-9]+|STR_[0-9]+)__/g,
+      function(token) {
+        const id = token.slice(8, -2);
+        return Object.prototype.hasOwnProperty.call(values, id)
+          ? values[id]
+          : token;
+      }
+    );
+  }
+
   // ─── Apply Learned ──────────────────────────────────
   function applyLearned(code, fileName) {
     const db = load();
     if (!db.patterns.length) return { fixed: code, applied: 0 };
 
     const fileLang = inferLanguage(fileName);
+
     const goodPatterns = db.patterns.filter(p =>
       p.approved &&
       p.confidence >= THRESHOLDS.MIN_CONFIDENCE &&
-      p.verified   >= THRESHOLDS.MIN_VERIFIED &&
-      // لا تطبق إذا اللغة مختلفة
+      p.verified >= THRESHOLDS.MIN_VERIFIED &&
       (!p.language || p.language === fileLang)
     );
 
-    if (!goodPatterns.length) return { fixed: code, applied: 0 };
+    if (!goodPatterns.length) {
+      return { fixed: code, applied: 0 };
+    }
 
     const lines = code.split('\n');
     let applied = 0;
 
-    lines.forEach((line, i) => {
-      const t = line.trim();
-      if (!t || t.startsWith('//') || t.startsWith('#')) return;
-      if (isSafe(t)) return;
+    for (let i = 0; i < lines.length; i++) {
+      const originalLine = lines[i];
+      const t = originalLine.trim();
 
-      goodPatterns.forEach(p => {
-        if (t !== p.before) return;
-        lines[i] = line.replace(p.before, p.after);
-        p.lastUsed = Date.now();
-        applied++;
-      });
-    });
+      if (!t || t.startsWith('//') || t.startsWith('#')) continue;
+      if (isSafe(t)) continue;
+
+      let selected = null;
+      let replacement = null;
+
+      // 1. Exact match first.
+      for (const p of goodPatterns) {
+        if (t === p.before) {
+          selected = p;
+          replacement = p.after;
+          break;
+        }
+      }
+
+      // 2. If exact match failed, try generalized learning.
+      if (!selected) {
+        for (const p of goodPatterns) {
+          if (!p.generalized) continue;
+
+          const match = matchGeneralPattern(t, p.generalized);
+          if (!match) continue;
+
+          const rendered = renderGeneralTemplate(
+            p.generalized.afterTemplate,
+            match.values
+          );
+
+          if (!rendered || rendered === t) continue;
+
+          selected = p;
+          replacement = rendered;
+          break;
+        }
+      }
+
+      if (!selected || !replacement || replacement === t) continue;
+
+      const leading = originalLine.match(/^\s*/)?.[0] || '';
+      lines[i] = leading + replacement;
+      selected.lastUsed = Date.now();
+      applied++;
+    }
 
     save(db);
-    return { fixed: lines.join('\n'), applied };
+
+    return {
+      fixed: lines.join('\n'),
+      applied
+    };
   }
 
-  // ─── Learn Safe ─────────────────────────────────────
   function learnSafe(code, fileName) {
     const db = load();
     db.safe = db.safe || [];
