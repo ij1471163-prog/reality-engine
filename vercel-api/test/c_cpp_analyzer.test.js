@@ -193,18 +193,105 @@ test('malloc: الفحص بأي صيغة يمنع البلاغ، وبلا فحص
 });
 
 // ═══ 9. double free ════════════════════════════════════
-test('double free: تحريران متتاليان بلا تفرّع يُبلَّغان، والفرعان المتنافيان لا', () => {
+// العقد: بلاغ حرج فقط حين يكون التحريران في نفس الكتلة وعلى مسار مستقيم.
+// أي قوس في الفجوة بينهما يعني عبور حدود كتلة ⇒ صمت، لا ادعاء.
+// نفس الكتلة مع تفرّع بينهما ⇒ إشارة متوسطة aiRequired لا بلاغ حرج.
+const CRIT = /🔴 Double Free/;
+const UNPROVEN = /غير مُثبت/;
+
+test('double free: مسار مستقيم في نفس الكتلة ⇒ بلاغ حرج يشير إلى التحرير الأول', () => {
   const real = A('char *p = malloc(10);\nfree(p);\nfree(p);\n', 'a.c');
-  const i1 = one(real, /Double Free/);
+  const i1 = one(real, CRIT);
   assertAiRequired(i1, 'double free');
-  assert.ok(/التحرير الأول/.test(String(i1.fixHint)), 'السبب لا يشير إلى موضع الإصلاح الصحيح: ' + i1.fixHint);
+  assert.strictEqual(i1.line, 3, 'يجب أن يُبلَّغ عند التحرير الثاني');
+  assert.ok(/التحرير الأول/.test(String(i1.fixHint)), 'السبب لا يشير إلى موضع الإصلاح: ' + i1.fixHint);
   assert.ok(String(i1.fixHint).includes('2'), 'لم يُذكر سطر التحرير الأول: ' + i1.fixHint);
-  // فرعان متنافيان: ليس double free
-  none(A('if (a) { free(p); }\nelse { free(p); }\n', 'a.c'), /Double Free/);
-  // إعادة ضبط المؤشر بين التحريرين
-  none(A('free(p);\np = NULL;\nfree(p);\n', 'a.c'), /Double Free/);
-  // مؤشران مختلفان
-  none(A('free(p);\nfree(q);\n', 'a.c'), /Double Free/);
+  // تحريران داخل نفس الفرع — يجب أن يبقى الكشف
+  const sameBranch = A('if (a) {\n    free(p);\n    free(p);\n}\n', 'a.c');
+  assert.strictEqual(one(sameBranch, CRIT).line, 3, 'ضاع الكشف داخل نفس الفرع');
+  // تحريران داخل جسم حلقة — نفس الكتلة أيضاً
+  const inLoop = A('while (node) {\n    free(node);\n    free(node);\n}\n', 'a.c');
+  assert.strictEqual(one(inLoop, CRIT).line, 3, 'ضاع الكشف داخل جسم الحلقة');
+});
+
+test('double free: تحريران على سطر واحد — كانا غير مرئيين تماماً', () => {
+  const i1 = one(A('free(p); free(p);\n', 'a.c'), CRIT);
+  assert.strictEqual(i1.line, 1);
+  assertAiRequired(i1, 'double free/سطر واحد');
+  // وعلى السطر نفسه لكن في فرعين متنافيين ⇒ لا ادعاء
+  none(A('if (a) { free(p); } else { free(p); }\n', 'a.c'), CRIT);
+  none(A('if (a) { free(p); } else { free(p); }\n', 'a.c'), UNPROVEN);
+});
+
+test('double free: عبور حدود كتلة ⇒ صمت — if/else و switch بأقواس و حدود الدوال', () => {
+  const cases = [
+    ['if/else سطران',        'if (a) { free(p); }\nelse { free(p); }\n'],
+    ['if/else موسّع',        'if (a) {\n    free(p);\n} else {\n    free(p);\n}\n'],
+    ['else سطر مستقل',       'if (a) {\n    free(p);\n}\nelse\n{\n    free(p);\n}\n'],
+    ['else if',              'if (a) {\n    free(p);\n} else if (b) {\n    free(p);\n}\n'],
+    ['else if مضغوط',        'if (a) { free(p); }\nelse if (b) { free(p); }\n'],
+    ['if/else متداخل',       'if (a) {\n    if (b) {\n        free(p);\n    } else {\n        free(p);\n    }\n}\n'],
+    ['switch بأقواس',        'switch (x) {\n    case 1: { free(p); break; }\n    case 2: { free(p); break; }\n}\n'],
+    ['حدود الدوال',          'void a(void) {\n    free(p);\n}\nvoid b(void) {\n    free(p);\n}\n'],
+    ['حلقة بين التحريرين',   'free(p);\nfor (i = 0; i < n; i++) { g(i); }\nfree(p);\n'],
+    ['if بلا else ثم free',  'if (a) {\n    free(p);\n}\nfree(p);\n'],
+  ];
+  for (const [label, code] of cases) {
+    const r = A(code, 'a.c');
+    none(r, CRIT);
+    none(r, UNPROVEN);
+  }
+});
+
+test('double free: نفس الكتلة مع تفرّع بينهما ⇒ إشارة متوسطة aiRequired لا بلاغ حرج', () => {
+  const cases = [
+    ['switch مع break',   'case 1: free(p); break;\ncase 2: free(p); break;\n'],
+    ['switch بلا break',  'case 1: free(p);\ncase 2: free(p);\n'],
+    ['قفز مشروط بينهما',  'free(p);\nif (x) return;\nfree(p);\n'],
+    ['goto بينهما',       'free(p);\ngoto done;\nfree(p);\n'],
+  ];
+  for (const [label, code] of cases) {
+    const r = A(code, 'a.c');
+    none(r, CRIT);
+    const adv = one(r, UNPROVEN);
+    assert.strictEqual(adv.sev, 'm', label + ': الشدة ليست متوسطة');
+    assert.strictEqual(adv.aiRequired, true, label + ': لم يُوسم AI_REQUIRED');
+    assert.ok(adv.conf < 82, label + ': الثقة ما زالت مرتفعة: ' + adv.conf);
+    assert.ok(String(adv.fixHint).includes('1'), label + ': لم يُذكر سطر التحرير الأول');
+  }
+});
+
+test('double free: القرار مستقل عن التنسيق — نفس الكود بفواصل أسطر مختلفة يعطي نفس النتيجة', () => {
+  // فرعان متنافيان: صامت في الأشكال الثلاثة
+  const exclusive = [
+    'if (a) { free(p); } else { free(p); }\n',
+    'if (a) { free(p); }\nelse { free(p); }\n',
+    'if (a)\n{\n    free(p);\n}\nelse\n{\n    free(p);\n}\n',
+  ];
+  for (const code of exclusive) { none(A(code, 'a.c'), CRIT); none(A(code, 'a.c'), UNPROVEN); }
+  // مسار مستقيم: بلاغ حرج في الشكلين
+  for (const code of ['free(p); free(p);\n', 'free(p);\nfree(p);\n']) {
+    assert.strictEqual(find(A(code, 'a.c'), CRIT).length, 1, 'اختلفت النتيجة بتغيّر التنسيق: ' + JSON.stringify(code));
+  }
+  // switch مع break: إشارة متوسطة في الشكلين
+  for (const code of ['case 1: free(p); break;\ncase 2: free(p); break;\n',
+                      'case 1:\n    free(p);\n    break;\ncase 2:\n    free(p);\n    break;\n']) {
+    none(A(code, 'a.c'), CRIT);
+    assert.strictEqual(find(A(code, 'a.c'), UNPROVEN).length, 1, 'اختلفت النتيجة بتغيّر التنسيق: ' + JSON.stringify(code));
+  }
+});
+
+test('double free: إعادة الإسناد أو اختلاف المؤشر ⇒ لا شيء', () => {
+  for (const code of [
+    'free(p);\np = NULL;\nfree(p);\n',
+    'free(p);\np = malloc(8);\nfree(p);\n',
+    'free(p);\nreset(&p);\nfree(p);\n',
+    'free(p);\nfree(q);\n',
+  ]) {
+    const r = A(code, 'a.c');
+    none(r, CRIT);
+    none(r, UNPROVEN);
+  }
 });
 
 // ═══ 10. سلاسل وتعليقات ═════════════════════════════════
