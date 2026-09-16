@@ -66,7 +66,8 @@ function scanSecurity(code, fileName) {
     }
 
     // ─── 5. Command Injection ───────────────────────
-    if (/exec|spawn|system|subprocess/i.test(t) && /\+|f"|f'|\$\{/.test(t)) {
+    if (/(?:\bexec\s*\(|\bspawn\s*\(|\bos\.system\s*\(|\bsubprocess\.(?:run|Popen|call|check_output)\s*\()/i.test(t) &&
+        /\+|f"|f'|\$\{/.test(t)) {
       issues.push({
         type: 'security', sev: 'c',
         title: '🔴 Command Injection محتمل',

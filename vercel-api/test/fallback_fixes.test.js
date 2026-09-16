@@ -400,8 +400,8 @@ test('تكامل analyzer.js: إصلاح SQL Python يُقبل والثغرة ت
 });
 
 // ═══ 14. applyFallbackToAll ═══════════════════════════════
-test('applyFallbackToAll: يعدّل F/R للملفات المُصلَحة فقط، يحفظ مفاتيح R الأخرى، ولا يلمس HTML أو اللغات غير المدعومة', () => {
-  const ctx = engine();
+test('applyFallbackToAll: اقتراحات فقط ثم تطبيق محكوم عبر FixVerifier', () => {
+  const ctx = loadContext(['analyzer.js', 'fix_verifier.js', 'fallback_fixes.js']);
   const F = {
     'a.py':   'import sqlite3\ncursor.execute("SELECT * FROM t WHERE id = " + uid)\n',
     'b.kt':   'val q = "SELECT * FROM t WHERE id = " + id\n',
@@ -415,23 +415,59 @@ test('applyFallbackToAll: يعدّل F/R للملفات المُصلَحة فق�
     'c.html': { issues: [issueAt(1, EVAL_JS)] },
     'd.js':   { issues: [issueAt(1, EVAL_JS)] },
   };
+
   const snapshot = JSON.stringify({ F, R });
+
+  // المرحلة الأولى: اقتراح فقط — ممنوع الكتابة المباشرة.
   const out = ctx.applyFallbackToAll(F, R);
-  assert.strictEqual(out.totalFixed, 1);
-  assert.deepStrictEqual(Object.keys(out.results), ['a.py']);
-  assert.strictEqual(F['a.py'].split('\n')[1], 'cursor.execute("SELECT * FROM t WHERE id = ?", (uid,))');
-  assert.strictEqual(R['a.py'].code, F['a.py']);
+
+  assert.strictEqual(out.totalFixed, 0);
+  assert.strictEqual(out.mode, 'proposal');
+  assert.ok(out.proposals && typeof out.proposals === 'object');
+  assert.ok(out.proposals['a.py']);
+  assert.strictEqual(out.proposals['a.py'].before, F['a.py']);
+  assert.strictEqual(
+    out.proposals['a.py'].after,
+    'import sqlite3\ncursor.execute("SELECT * FROM t WHERE id = ?", (uid,))\n'
+  );
+
+  const beforeApply = JSON.parse(snapshot);
+  assert.deepStrictEqual(F, beforeApply.F);
+  assert.deepStrictEqual(R, beforeApply.R);
+
+  // المرحلة الثانية: التطبيق يمر عبر FixVerifier.
+  const applied = ctx.applyFallbackProposals(F, R, out.proposals);
+
+  // Python بلا syntax checker موثوق => Fail-Closed.
+  assert.strictEqual(applied.applied.length, 0);
+  assert.strictEqual(applied.rejected.length, 1);
+  assert.strictEqual(applied.rejected[0].file, 'a.py');
+  assert.strictEqual(applied.rejected[0].syntaxStatus, 'no_checker');
+  assert.match(applied.rejected[0].reason, /REJECTED_NO_SYNTAX_CHECKER/);
+  assert.strictEqual(
+    F['a.py'],
+    beforeApply.F['a.py']
+  );
+  assert.deepStrictEqual(R['a.py'], beforeApply.R['a.py']);
   assert.strictEqual(R['a.py'].score, 42, 'مفاتيح R الأخرى ضاعت');
   assert.strictEqual(R['a.py'].extra, 'keep');
-  assert.deepStrictEqual(Array.from(R['a.py'].issues), [otherIssue], 'بلا محلل: تُزال الثغرة المُصلَحة فقط');
-  const after = JSON.parse(snapshot);
+  // الملفات غير القابلة للإصلاح لم تتغير.
   for (const fn of ['b.kt', 'c.html', 'd.js']) {
-    assert.strictEqual(F[fn], after.F[fn], fn + ': تغيّر');
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(R[fn])), after.R[fn], fn + ': تغيّر R');
+    assert.strictEqual(F[fn], beforeApply.F[fn], fn + ': تغيّر');
+    assert.deepStrictEqual(
+      JSON.parse(JSON.stringify(R[fn])),
+      beforeApply.R[fn],
+      fn + ': تغيّر R'
+    );
   }
+
   assert.ok(out.aiRequired['d.js'] && out.aiRequired['d.js'][0].status === 'AI_REQUIRED');
   assert.ok(out.aiRequired['b.kt'] && out.aiRequired['c.html']);
-  // F/R فارغان أو R غائب: لا انهيار
+
+  // F/R فارغان أو R غائب: لا انهيار.
   assert.deepStrictEqual(ctx.applyFallbackToAll({}, {}).totalFixed, 0);
-  assert.deepStrictEqual(ctx.applyFallbackToAll({ 'x.py': 'x = 1\n' }, undefined).totalFixed, 0);
+  assert.deepStrictEqual(
+    ctx.applyFallbackToAll({ 'x.py': 'x = 1\n' }, undefined).totalFixed,
+    0
+  );
 });
