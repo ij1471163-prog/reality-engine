@@ -1,11 +1,45 @@
-// fix_engine_pipeline.js — Ghost + Learning Pipeline
+// fix_engine_pipeline.js v2.0 — Ghost + Learning Pipeline
 // © 2025 Naif Lucena — Reality Engine
-// التدفق: Ghost PASS فقط → learn() → verify(patternId, true)
+//
+// ═══════════════════════════════════════════════════════
+// القاعدة الحاكمة: لا كتابة على F[fn] بلا بوابة.
+//
+// كل تعديل — من أي محرك كان — يمر عبر FixVerifier.verifyFix() قبل أن
+// يُكتب. لا استثناءات. المحركات التي تعدّل F/R بالمرجع (SmartRepair،
+// Fallback، Emergency) تُشغَّل على **نسخة مؤقتة**، ثم يُقارَن كل ملف تغيّر
+// ويُمرَّر عبر البوابة قبل الكتابة على F الحقيقي.
+//
+// ما كان يحدث في v1.0:
+//   [1] F[fn] = finalCode كان يُنفَّذ بغض النظر عن verdict الخاص بـGhost.
+//       شرط verdict==='pass' كان يحكم **التعلّم فقط**، لا الكتابة. فإذا
+//       رجع Ghost FAIL أو REGRESSION يُكتب الكود على أي حال ويصير أساس
+//       الـpass التالي. وإذا كان GhostMode غير معرّف أصلًا، يُكتب
+//       result.repaired مباشرة بلا أي حكم.
+//   [2] totalFixed كان يزيد حتى عند رفض التعديل ⇒ رقم مبالغ فيه للمستخدم.
+//   [3] RepairSQL كان يكتب F[fn] = r.code مباشرة.
+//   [4] SmartRepair/Fallback/Emergency تكتب داخليًا على F و R بالمرجع.
+//   [5] applyLearned كان المسار الوحيد الذي فيه تحقق فعلي.
+//
+// ⚠️ HTML: لا يوجد فاحص تركيبي موثوق لـHTML في FixVerifier، لذلك تعديلات
+//    HTMLRepair سترفضها البوابة حاليًا (Fail-Closed). هذا مقصود. المحرك
+//    يبقى يعمل ويقترح، ويُسجَّل الرفض في pipelineReport.rejected حتى
+//    يُضاف parser موثوق لاحقًا. لا نفعّل allowUnverifiedLanguages هنا
+//    إطلاقًا — تفعيله يهدم الـFail-Closed كله.
+//
+// ⚠️ Ghost أصبح مرحلة تحقق **إضافية** قبل البوابة، وليس تصريحًا بالكتابة.
+//    ترتيب الحكم: Ghost (إن وُجد) ← FixVerifier (إلزامي) ← كتابة.
+// ═══════════════════════════════════════════════════════
+
+// ─── ربط بوابة التحقق الوحيدة ───────────────────────────
+var _PFV = (typeof FixVerifier !== 'undefined') ? FixVerifier : null;
+if (!_PFV && typeof require === 'function') {
+    try { _PFV = require('./fix_verifier.js'); } catch (e) { _PFV = null; }
+}
+if (!_PFV && typeof globalThis !== 'undefined' && globalThis.FixVerifier) _PFV = globalThis.FixVerifier;
 
 // ─── Syntax Guard للإصلاح المتعلَّم ─────────────────────
-// acorn موجود أصلاً في الصفحة (acorn.min.js). لا يدعم TS ولا JSX،
-// لذلك يقتصر الفحص على JS النقي، ولا يُحاسَب الإصلاح إذا كان الأصل
-// نفسه غير قابل للتحليل (JSX/TS داخل .js) — تجنباً للرفض الكاذب.
+// يبقى كما هو: فحص إضافي رخيص خاص بـJS. ليس بديلاً عن FixVerifier،
+// بل طبقة مبكرة تمنع إهدار دورة تحقق كاملة على كود مكسور بوضوح.
 function learnedSyntaxOk(fileName, beforeCode, afterCode) {
     if (!/\.(js|mjs|cjs)$/i.test(fileName || '')) return true;
     if (typeof acorn === 'undefined' || typeof acorn.parse !== 'function') return true;
@@ -22,24 +56,135 @@ function learnedSyntaxOk(fileName, beforeCode, afterCode) {
     return parses(afterCode);
 }
 
+// ─── البوابة: نقطة الكتابة الوحيدة على F ────────────────
+/**
+ * مزامنة R لملف واحد دون أن يُسقط فشلُ التحليل العمليةَ كلها.
+ * عند الفشل نُبقي issues السابقة (إن وُجدت) ونسجّل تحذيرًا، بدل الانهيار
+ * أو ادّعاء "صفر مشاكل".
+ */
+function _safeSync(code, fn, prevEntry, report) {
+    try {
+        if (typeof analyzeCode !== 'function') {
+            report.warnings.push({ file: fn, reason: 'ANALYZER_UNAVAILABLE_ON_SYNC' });
+            return { code, issues: (prevEntry && prevEntry.issues) || [], staleIssues: true };
+        }
+        return { code, issues: analyzeCode(code, fn) };
+    } catch (e) {
+        report.warnings.push({ file: fn, reason: 'ANALYZER_THREW_ON_SYNC: ' + (e && e.message) });
+        return { code, issues: (prevEntry && prevEntry.issues) || [], staleIssues: true };
+    }
+}
+
+/**
+ * يحاول اعتماد تعديل مقترح على ملف واحد. **لا يكتب إلا بعد قبول البوابة.**
+ *
+ * @param {Object} F,R      الخرائط الحقيقية
+ * @param {string} fn       اسم الملف
+ * @param {string} candidate الكود المقترح
+ * @param {string} source   اسم المحرك المقترِح (للتقرير)
+ * @param {Object} report   تجميع النتائج
+ * @param {number} claimedCount عدد الإصلاحات التي يدّعيها المحرك
+ * @returns {boolean} هل قُبل التعديل وكُتب فعلاً
+ */
+function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
+    const before = F[fn];
+
+    if (typeof candidate !== 'string' || candidate === before) return false;
+
+    // Fail-Closed: بلا بوابة لا نكتب شيئًا إطلاقًا
+    if (!_PFV || typeof _PFV.verifyFix !== 'function') {
+        report.rejected.push({
+            file: fn, source,
+            reason: 'REJECTED_VERIFIER_UNAVAILABLE — fix_verifier.js غير محمّل'
+        });
+        return false;
+    }
+
+    const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+    // ملاحظة: لا نمرر allowUnverifiedLanguages إطلاقًا ⇒ HTML وأي لغة بلا
+    // فاحص تُرفض افتراضيًا. هذا مقصود.
+    const v = _PFV.verifyFix(before, candidate, fn, analyzer, {});
+
+    if (!v.accepted) {
+        report.rejected.push({ file: fn, source, reason: v.reason, syntaxStatus: v.syntaxStatus });
+        return false;
+    }
+
+    F[fn] = candidate;
+    R[fn] = { code: candidate, issues: v.afterIssues };
+    report.accepted.push({
+        file: fn, source,
+        removedIssues: v.removedCount,
+        claimedCount: claimedCount != null ? claimedCount : null,
+        syntaxStatus: v.syntaxStatus,
+        reason: v.reason
+    });
+    // العدّاد يزيد بما أزالته البوابة فعليًا، لا بما ادّعاه المحرك
+    report.totalFixed += (v.removedCount || 0);
+    return true;
+}
+
+/**
+ * يشغّل محركًا يعدّل F/R بالمرجع، على **نسخة مؤقتة**، ثم يمرر كل ملف تغيّر
+ * عبر البوابة. المحرك نفسه لا يُعدَّل، ولا يلمس F الحقيقي إطلاقًا.
+ */
+function _runIsolatedEngine(F, R, runner, source, report) {
+    const tmpF = {}, tmpR = {};
+    Object.keys(F).forEach(k => { tmpF[k] = F[k]; });
+    Object.keys(R).forEach(k => {
+        if (!R[k]) { tmpR[k] = R[k]; return; }
+        // نسخ عميق للـissues: النسخ السطحي كان يترك المصفوفة مشتركة بالمرجع،
+        // فمحرك يعدّل tmpR[fn].issues بالـmutation (push/splice/sort) يلوّث
+        // R الحقيقي رغم أننا "عزلناه". العناصر نفسها تُنسخ سطحيًا لأن
+        // المحركات تقرأ حقولها ولا تعيد بناءها.
+        const issues = Array.isArray(R[k].issues)
+            ? R[k].issues.map(it => (it && typeof it === 'object' && !Array.isArray(it)) ? Object.assign({}, it) : it)
+            : R[k].issues;
+        tmpR[k] = { code: R[k].code, issues };
+    });
+
+    let out = null;
+    try {
+        out = runner(tmpF, tmpR);
+    } catch (e) {
+        report.rejected.push({ file: '*', source, reason: 'ENGINE_THREW: ' + (e && e.message) });
+        return;
+    }
+
+    const claimed = (out && typeof out.totalFixed === 'number') ? out.totalFixed : null;
+
+    Object.keys(tmpF).forEach(fn => {
+        if (tmpF[fn] !== F[fn]) {
+            _gateAndCommit(F, R, fn, tmpF[fn], source, report, claimed);
+        }
+    });
+    // الملفات التي لم تتغيّر: لا شيء. والنسخة المؤقتة تُرمى بالكامل.
+}
+
 function fixAllEngine() {
     const origF = {};
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
 
+    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [] };
+
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
-        if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — تم الإصلاح تلقائياً');
+        if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — ستُفحص الإصلاحات قبل اعتمادها');
     }
-
-    let totalFixed = 0;
 
     Object.keys(R).forEach(fn => {
         if (typeof repairCode !== 'function') return;
 
         for (let pass = 0; pass < 2; pass++) {
             const beforeCode = F[fn];
-            const issues = analyzeCode(beforeCode, fn);
-            if (!issues.length) break;
+            let issues;
+            try {
+                issues = analyzeCode(beforeCode, fn);
+            } catch (e) {
+                report.warnings.push({ file: fn, reason: 'ANALYZER_THREW: ' + (e && e.message) });
+                break; // بلا تحليل لا نقترح إصلاحًا - Fail-Closed
+            }
+            if (!Array.isArray(issues) || !issues.length) break;
 
             let result;
             const _isHTMLFile = /\.html?$/i.test(fn);
@@ -58,86 +203,124 @@ function fixAllEngine() {
 
             if (!result || result.repaired === beforeCode) break;
 
-            // Ghost Mode
-            let finalCode = result.repaired;
+            // ─── Ghost Mode: مرحلة تحقق إضافية، لا تصريح بالكتابة ───
+            let candidate = result.repaired;
+            let ghostVerdict = null;
+
             if (typeof GhostMode !== 'undefined') {
                 // الملاحظات الإرشادية (sev='l') ليست هدف إصلاح — محرك الإصلاح
-                // لا يعالجها أصلاً (مثال: "احذف console.log قبل النشر")، فبقاؤها
-                // ضمن الهدف يمنع targetGone إلى الأبد فلا يصل أي ملف JS إلى PASS
-                // ولا يُتعلَّم منه شيء. كشف الارتداد يبقى على كل الشدّات بلا استثناء.
+                // لا يعالجها أصلاً، فبقاؤها ضمن الهدف يمنع targetGone فلا يصل
+                // أي ملف JS إلى PASS. كشف الارتداد يبقى على كل الشدّات.
                 const targetTypes = issues.filter(i => i.sev !== 'l')
                                           .map(i => i.cAct || i.type).filter(Boolean);
                 const ghostResult = GhostMode.fix(beforeCode, result.repaired, fn, analyzeCode, { targetTypes });
-                finalCode = ghostResult.code;
+                candidate = ghostResult.code;
+                ghostVerdict = ghostResult.verdict;
 
-                // PASS فقط → تعلم + verify
-                if (ghostResult.verdict === 'pass' && typeof LearningEngine !== 'undefined') {
-                    const patternIds = LearningEngine.learn(beforeCode, finalCode, issues, fn);
-                    if (Array.isArray(patternIds) && patternIds.length > 0) {
-                        patternIds.forEach(id => LearningEngine.verify(id, true));
-                    }
+                // Ghost رفض صراحةً ⇒ لا نمرره للبوابة أصلاً، ولا نكتب شيئًا
+                if (ghostVerdict === 'fail' || ghostVerdict === 'regression') {
+                    report.rejected.push({
+                        file: fn, source: 'Ghost/repairCode',
+                        reason: 'GHOST_' + String(ghostVerdict).toUpperCase()
+                    });
+                    break;
                 }
-                // FAIL / REGRESSION / PARTIAL → لا تعلم، لا verify
             }
 
-            F[fn] = finalCode;
-            totalFixed += result.repairs.length;
+            // ─── البوابة الإلزامية: هنا فقط تحدث الكتابة ───
+            const committed = _gateAndCommit(
+                F, R, fn, candidate, 'repairCode' + (ghostVerdict ? '+Ghost:' + ghostVerdict : ''),
+                report, (result.repairs || []).length
+            );
+
+            if (!committed) break; // رُفض ⇒ لا نبني pass تاليًا على كود غير معتمد
+
+            // التعلّم: فقط بعد Ghost PASS **و** قبول البوابة معًا
+            if (ghostVerdict === 'pass' && typeof LearningEngine !== 'undefined') {
+                const patternIds = LearningEngine.learn(beforeCode, F[fn], issues, fn);
+                if (Array.isArray(patternIds) && patternIds.length > 0) {
+                    patternIds.forEach(id => LearningEngine.verify(id, true));
+                }
+            }
         }
 
-        // applyLearned — لا يُقبل إلا بعد تحقق Ghost، وإلا rollback للكود الأصلي
+        // ─── applyLearned: Ghost ثم فحص نحوي ثم البوابة ───
         if (typeof LearningEngine !== 'undefined') {
             const beforeLearned = F[fn];
             const lr = LearningEngine.applyLearned(beforeLearned, fn);
             if (lr.applied > 0 && lr.fixed !== beforeLearned) {
-                // لا targetTypes هنا — الحكم على الإصلاح المتعلَّم وحده:
-                // REGRESSION (نوع جديد أو زيادة حرج/عالي) أو FAIL (بلا تحسّن) ⇒ رفض
-                let accepted = false;
+                let preApproved = true;
+
                 if (typeof GhostMode !== 'undefined') {
                     const lv = GhostMode.verdict(beforeLearned, lr.fixed, fn, analyzeCode);
-                    accepted = lv.verdict !== GhostMode.VERDICT.FAIL &&
-                               lv.verdict !== GhostMode.VERDICT.REGRESSION;
+                    preApproved = lv.verdict !== GhostMode.VERDICT.FAIL &&
+                                  lv.verdict !== GhostMode.VERDICT.REGRESSION;
+                    if (!preApproved) {
+                        report.rejected.push({ file: fn, source: 'applyLearned', reason: 'GHOST_' + lv.verdict });
+                    }
                 }
-                // فحص نحوي — يمنع قبول إصلاح متعلَّم يكسر صياغة الملف
-                if (accepted && !learnedSyntaxOk(fn, beforeLearned, lr.fixed)) accepted = false;
-                // Fail Closed: بدون مُحكِّم متاح لا نقبل تعديلاً متعلَّماً
-                F[fn] = accepted ? lr.fixed : beforeLearned;
+
+                if (preApproved && !learnedSyntaxOk(fn, beforeLearned, lr.fixed)) {
+                    preApproved = false;
+                    report.rejected.push({ file: fn, source: 'applyLearned', reason: 'LEARNED_SYNTAX_BROKEN' });
+                }
+
+                if (preApproved) {
+                    _gateAndCommit(F, R, fn, lr.fixed, 'applyLearned', report, lr.applied);
+                }
+                // مرفوض ⇒ F[fn] لم يُمَس أصلاً (لا كتابة إلا داخل البوابة)
             }
         }
 
-        R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
+        // مزامنة R مع الحالة النهائية المعتمدة.
+        // محاطة بـtry: إذا رمى analyzeCode هنا كان ينهار fixAllEngine بالكامل
+        // بعد انتهاء الإصلاحات فعليًا، فيضيع التقرير ولا يُعرض شيء للمستخدم.
+        // الكود في F مُعتمَد أصلًا من البوابة، فالفشل هنا فشل تحليل لا فشل إصلاح.
+        R[fn] = _safeSync(F[fn], fn, R[fn], report);
     });
 
-    // RepairSQL
+    // ─── RepairSQL: عبر البوابة، لا كتابة مباشرة ───
     if (typeof RepairSQL !== 'undefined') {
         Object.keys(F).forEach(fn => {
             const r = RepairSQL.fix(F[fn], fn);
-            if (r.count > 0 && r.code !== F[fn]) {
-                F[fn] = r.code;
-                totalFixed += r.count;
-                R[fn] = { code: r.code, issues: analyzeCode(r.code, fn) };
+            if (r && r.count > 0 && r.code !== F[fn]) {
+                _gateAndCommit(F, R, fn, r.code, 'RepairSQL', report, r.count);
             }
         });
     }
 
-    // Smart Repair
+    // ─── محركات تعدّل F/R بالمرجع: تُشغَّل معزولة ثم تمر بالبوابة ───
     if (typeof SmartRepairEngine !== 'undefined') {
-        const sr = SmartRepairEngine.applySmartRepair(F, R);
-        if (sr && sr.totalFixed > 0) totalFixed += sr.totalFixed;
+        _runIsolatedEngine(F, R,
+            (tF, tR) => SmartRepairEngine.applySmartRepair(tF, tR), 'SmartRepair', report);
     }
 
-    // Fallback
     if (typeof applyFallbackToAll === 'function') {
-        const fb = applyFallbackToAll(F, R);
-        if (fb && fb.totalFixed > 0) totalFixed += fb.totalFixed;
+        _runIsolatedEngine(F, R,
+            (tF, tR) => applyFallbackToAll(tF, tR), 'Fallback', report);
     }
 
-    // Emergency
     if (typeof applyEmergencyToAll === 'function') {
-        const em = applyEmergencyToAll(F, R);
-        if (em && em.totalFixed > 0) totalFixed += em.totalFixed;
+        _runIsolatedEngine(F, R,
+            (tF, tR) => applyEmergencyToAll(tF, tR), 'Emergency', report);
     }
 
-    toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
+    // ─── التقرير ───
+    // totalFixed يعكس ما أزالته البوابة فعليًا، لا ما ادّعته المحركات.
+    const rejectedCount = report.rejected.length;
+    let msg = '✅ تم إصلاح ' + report.totalFixed + ' مشكلة';
+    if (rejectedCount > 0) msg += ' • ' + rejectedCount + ' تعديل مرفوض (لم يجتز التحقق)';
+    toast(msg);
+
+    if (typeof globalThis !== 'undefined') globalThis.lastPipelineReport = report;
+
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
+
+    return report;
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { fixAllEngine, learnedSyntaxOk, _gateAndCommit, _runIsolatedEngine };
+}
+
