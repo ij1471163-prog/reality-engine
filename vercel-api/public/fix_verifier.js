@@ -63,7 +63,7 @@ var FixVerifier = (() => {
       }
 
     } catch(e) {
-      result.valid = true; // في حالة خطأ = نقبل الإصلاح
+      result.valid = false; // Fail-Closed: تعذر التحقق = لا نقبل الإصلاح
       result.reason = 'تعذر التحقق';
     }
 

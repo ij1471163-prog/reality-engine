@@ -690,7 +690,19 @@ function repairCode(code, issues, fileName) {
       return;
     }
 
-    if (!result || result.fixed === repairedCode) { return; }
+    if (!result || result.fixed === repairedCode) {
+      // eval() الغامض يحتاج فهم السلوك المقصود — لا نخترع إصلاحاً.
+      if (stratKey === 'EVAL_USAGE') {
+        aiNeeded.push({
+          line: issue.line,
+          title: issue.title,
+          strategy: stratKey,
+          reason: getAIReason(stratKey),
+          ev: issue.ev,
+        });
+      }
+      return;
+    }
 
     repairs.push({
       line: issue.line, title: issue.title, strategy: stratKey,

@@ -419,14 +419,16 @@ var RealityOrchestrator = (() => {
       const stage   = { engineId: engine.id, attempted: true, succeeded: false,
                         verifyResult: null, error: attempt ? attempt.error : 'null result' };
 
+      // Collect AI_REQUIRED even when no deterministic patch was produced.
+      if (attempt && Array.isArray(attempt.aiNeeded)) {
+        allAiNeeded = [...allAiNeeded, ...attempt.aiNeeded];
+      }
+
       if (!attempt || attempt.error || !attempt.hasChanges) {
         stage.error = (attempt && attempt.error) || 'No changes produced';
         stages.push(_deepFreeze(stage));
         continue;
       }
-
-      // Collect AI_REQUIRED regardless of verify outcome
-      allAiNeeded = [...allAiNeeded, ...attempt.aiNeeded];
 
       // Verify this engine's patch against ORIGINAL
       const vr = runVerification(code, attempt.repairedCode, fileName);
