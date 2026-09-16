@@ -40,7 +40,7 @@ const STRATEGIES = {
   LOG_SECRET:       { fn: fixLogSecret,          autoFix: true,  confidence: 0.90 },
   EMPTY_CATCH:      { fn: fixEmptyCatch,         autoFix: true,  confidence: 0.80 },
   EMPTY_FUNCTION:   { fn: fixEmptyFunction,      autoFix: true,  confidence: 0.70 },
-  CALLBACK_HELL:    { fn: fixCallbackHell,       autoFix: false, confidence: 0.75 },
+  CALLBACK_HELL:    { fn: null,                  autoFix: false, confidence: 0.75 },
   MISSING_AUTH:     { fn: null,                  autoFix: false, confidence: 0.70 },
   API_KEY:          { fn: fixApiKeyAdvanced,     autoFix: true,  confidence: 0.90 },
   SQL_INJECTION:    { fn: fixSQLInjection,       autoFix: true,  confidence: 0.75 },
