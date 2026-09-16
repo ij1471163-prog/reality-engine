@@ -1,19 +1,52 @@
 // ═══════════════════════════════════════════════════════
-// fallback_fixes.js v3.0 — الخط الثاني للإصلاح (محافظ ومُتحقَّق)
+// fallback_fixes.js v3.1 — الخط الثاني للإصلاح (محافظ ومُتحقَّق)
 //
 // القاعدة: لا يُطبَّق إلا إصلاح deterministic مؤكد لا يغيّر دلالة الكود.
 // كل ما عداه لا يُلمس ويُعاد كـ AI_REQUIRED مع سبب واضح.
 // كل إصلاح يمر بتحقق بنيوي + idempotency + المحلل (إن وُجد)، وعند فشل
 // أي فحص يُرجَع هذا الإصلاح وحده إلى حالته الأصلية.
 //
-// الواجهة العامة (بلا تغيير للمستهلكين الحاليين):
-//   fallbackFix(code, fileName, issues)
+// ═══ تغييرات v3.1 — حدود المسؤولية فقط، بلا مساس بخوارزميات الإصلاح ═══
+//
+//   [1] applyFallbackToAll لم تعد تكتب على F افتراضيًا.
+//       كانت تنفّذ F[fn] = r.fixed مباشرة، فأي استدعاء خارج الـPipeline
+//       يتجاوز FixVerifier تمامًا — وهذا يناقض "البوابة الوحيدة".
+//       الآن: بلا opts.viaGate ⇒ وضع اقتراح (proposal-only) لا يكتب شيئًا.
+//       مع opts.viaGate:true (يمرره _runIsolatedEngine على نسخة مؤقتة)
+//       ⇒ تكتب، لكن بعد المرور بـFixVerifier إن كان متاحًا (حزام إضافي).
+//
+//   [2] fbHasRegression و targetGone يستخدمان FixVerifier عند توفره
+//       (diffCounts / issueKey) بدل منطق محلي موازٍ. المنطق المحلي يبقى
+//       احتياطًا فقط عند غياب FixVerifier، فلا يتنازع محركان على القرار.
+//
+//   [3] targetGone لم يعد يطابق على title النصي (هش: تغيّر صياغة العنوان
+//       يجعل الهدف يبدو باقيًا). صار على هوية FixVerifier المستقرة عند توفرها.
+//
+//   [4] فحص idempotency يحسب الإزاحة التراكمية لأسطر التعديل، فـe.idx
+//       لم يعد يشير لسطر خاطئ بعد تعديل يغيّر عدد الأسطر.
+//
+// ⚠️ التحقق داخل هذا الملف تحقق **محلي مبدئي**، لا اعتماد نهائي.
+//    الاعتماد النهائي لـFixVerifier عبر الـPipeline.
+//
+// الواجهة العامة:
+//   fallbackFix(code, fileName, issues)            [بلا تغيير]
 //     → { fixed, repairs, aiRequired, skipped, lang, verification }
-//   applyFallbackToAll(F, R)
-//     → { totalFixed, results, aiRequired, rolledBack }
+//   applyFallbackToAll(F, R, opts)                 [سلوك افتراضي جديد]
+//     → { totalFixed, results, aiRequired, rolledBack, proposals, mode }
+//   applyFallbackProposals(F, R, proposals)        [جديد]
+//     → { applied, rejected }
 // ═══════════════════════════════════════════════════════
 
 "use strict";
+
+// ─── 0. ربط FixVerifier (اختياري) ───────────────────────────
+// عند توفره يصير المرجع المركزي للانحدار وهوية المشاكل. عند غيابه يعمل
+// الملف بمنطقه المحلي كاحتياط — لكنه حينها لا يكتب شيئًا إلا عبر viaGate.
+var _FBV = (typeof FixVerifier !== 'undefined') ? FixVerifier : null;
+if (!_FBV && typeof require === 'function') {
+  try { _FBV = require('./fix_verifier.js'); } catch (e) { _FBV = null; }
+}
+if (!_FBV && typeof globalThis !== 'undefined' && globalThis.FixVerifier) _FBV = globalThis.FixVerifier;
 
 // ─── 1. هوية اللغة: من الامتداد فقط — لا تخمين من المحتوى ─────
 // أي امتداد خارج هذه القائمة ⇒ لا يُلمس الملف إطلاقاً (html/kt/java/go/…)
@@ -641,7 +674,9 @@ function fbWithImports(lines, importsSet) {
   return out.join('\n');
 }
 
-// ─── 11. التحقق: بنيوي + idempotency + المحلل ─────────────────
+// ─── 11. التحقق المحلي: بنيوي + idempotency + المحلل ──────────
+// ⚠️ هذا تحقق مبدئي يمنع اقتراحًا فاسدًا من الانتشار. الاعتماد النهائي
+//    لـFixVerifier عبر الـPipeline، لا هنا.
 const FB_FOREIGN = {
   js:  [/\bos\.environ\b/, /^\s*import\s+os\b/m, /\bsubprocess\b/, /\bshlex\b/, /\bast\.literal_eval\b/, /<\?php/, /\$stmt\b/, /->/],
   py:  [/\bprocess\.env\b/, /\brequire\(/, /\b(?:const|let|var)\s+[\w$]+\s*=/, /===/, /\$stmt\b/, /->/, /\bconsole\./],
@@ -666,6 +701,19 @@ function fbApplyEdits(lines, edits) {
   const out = lines.slice();
   edits.slice().sort((a, b) => b.idx - a.idx).forEach(e => out.splice(e.idx, 1, ...e.text.split('\n')));
   return out;
+}
+
+/**
+ * [v3.1 إصلاح] موضع تعديل بعد تطبيق كل التعديلات.
+ * fbApplyEdits قد يستبدل سطرًا واحدًا بعدة أسطر، فـidx الأصلي لم يعد يشير
+ * للسطر نفسه في الناتج. نحسب الإزاحة التراكمية من التعديلات الأسبق فقط.
+ */
+function fbShiftedIdx(edits, targetIdx) {
+  let shift = 0;
+  for (const e of edits) {
+    if (e.idx < targetIdx) shift += (e.text.split('\n').length - 1);
+  }
+  return targetIdx + shift;
 }
 
 function fbStructuralProblem(beforeLines, afterLines, edits, lang) {
@@ -693,11 +741,46 @@ function fbAnalyzeSafe(analyze, code, fileName) {
   catch (e) { return null; }
 }
 
-function fbHasRegression(before, after) {
+/**
+ * [v3.1] كشف الانحدار: FixVerifier هو المرجع عند توفره (يقارن كل الهويات
+ * والعدادات)، والمنطق المحلي احتياط فقط عند غيابه. هذا يمنع تنازع محركين
+ * على القرار كما كان في v3.0.
+ */
+function fbHasRegression(before, after, fileName) {
+  if (_FBV && typeof _FBV.diffCounts === 'function') {
+    try {
+      const d = _FBV.diffCounts(before, after, fileName);
+      return d.worsened.length > 0;
+    } catch (e) { /* يسقط للاحتياط المحلي */ }
+  }
+  // احتياط محلي (أضعف): حرج/عالي فقط
   const ch = arr => arr.filter(i => i && (i.sev === 'c' || i.sev === 'h')).length;
   if (ch(after) > ch(before)) return true;
   const types = new Set(before.map(i => (i && (i.cAct || i.type)) || ''));
   return after.some(i => i && (i.sev === 'c' || i.sev === 'h') && !types.has(i.cAct || i.type || ''));
+}
+
+/**
+ * [v3.1] هل انخفض عدد المشاكل ذات هوية المشكلة المستهدفة؟
+ *
+ * ⚠️ دلالة مقصودة: يُرجع true عند **انخفاض عدد الفئة** (مثال: SQL×2 ⟶ SQL×1)،
+ * وليس بالضرورة أن هذه المشكلة بعينها اختفت. لا يمكن تمييز مشكلتين بنفس
+ * الهوية دون موضع، والموضع غير مستقر بعد التعديل. هذه إشارة تقريرية فقط
+ * ولا تُبنى عليها قرارات — القرار النهائي لـFixVerifier.
+ *
+ * كان يطابق على issue.title النصي وهو أهش: تغيّر صياغة العنوان من المحلل
+ * يجعل الهدف يبدو باقيًا. الآن على هوية FixVerifier المستقرة عند توفرها.
+ */
+function fbTargetGone(beforeIssues, afterIssues, issue, fileName) {
+  if (_FBV && typeof _FBV.issueKey === 'function') {
+    try {
+      const key = _FBV.issueKey(issue, fileName);
+      const cnt = arr => arr.filter(i => _FBV.issueKey(i, fileName) === key).length;
+      return cnt(afterIssues) < cnt(beforeIssues);
+    } catch (e) { /* يسقط للاحتياط المحلي */ }
+  }
+  const cnt = arr => arr.filter(i => i && i.title === issue.title).length;
+  return cnt(afterIssues) < cnt(beforeIssues);
 }
 
 // ─── 12. الواجهة: fallbackFix ────────────────────────────────
@@ -748,15 +831,18 @@ function fallbackFix(code, fileName, issues) {
     if (out.skip)   { skip(issue, cat, out.skip); continue; }
     if (out.reason) { ai(issue, cat, out.reason); continue; }
 
-    // ── تحقق ──
+    // ── تحقق محلي مبدئي ──
     result.verification.checked++;
     const next = fbApplyEdits(lines, out.edits);
     let problem = fbStructuralProblem(lines, next, out.edits, lang);
     if (!problem) {
-      // idempotency: إعادة تشغيل الـfixer نفسه على الناتج يجب ألا تنتج تعديلاً
+      // idempotency: إعادة تشغيل الـfixer نفسه على الناتج يجب ألا تنتج تعديلاً.
+      // [v3.1] نستخدم الموضع المُزاح، لأن تعديلاً أسبق قد يغيّر عدد الأسطر.
       for (const e of out.edits) {
+        const shifted = fbShiftedIdx(out.edits, e.idx);
+        if (shifted < 0 || shifted >= next.length) { problem = 'idempotency_index_out_of_range'; break; }
         let again = null;
-        try { again = fixer(next, e.idx, env, issue); } catch (err) { again = { edits: [] }; }
+        try { again = fixer(next, shifted, env, issue); } catch (err) { again = { edits: [] }; }
         if (again && again.edits) { problem = 'not_idempotent'; break; }
       }
     }
@@ -767,10 +853,9 @@ function fallbackFix(code, fileName, issues) {
         const nextImports = new Set([...env.imports, ...(out.imports || [])]);
         const afterIssues = fbAnalyzeSafe(analyze, fbWithImports(next, nextImports), fileName);
         if (!afterIssues) problem = 'analysis_failed';
-        else if (fbHasRegression(baseIssues, afterIssues)) problem = 'regression';
+        else if (fbHasRegression(baseIssues, afterIssues, fileName)) problem = 'regression';
         else {
-          const cnt = arr => arr.filter(i => i && i.title === issue.title).length;
-          targetGone = cnt(afterIssues) < cnt(baseIssues);
+          targetGone = fbTargetGone(baseIssues, afterIssues, issue, fileName);
           baseIssues = afterIssues;
         }
       }
@@ -789,10 +874,28 @@ function fallbackFix(code, fileName, issues) {
 }
 
 // ─── 13. الواجهة: applyFallbackToAll ────────────────────────
-function applyFallbackToAll(F, R) {
-  const results = {}, aiRequired = {};
-  let totalFixed = 0, rolledBack = 0;
-  if (!F || typeof F !== 'object') return { totalFixed, results, aiRequired, rolledBack };
+/**
+ * [v3.1] لم تعد تكتب على F افتراضيًا.
+ *
+ * @param {Object} opts
+ *   opts.viaGate {boolean}  الافتراضي false.
+ *     false ⇒ وضع اقتراح: لا كتابة إطلاقًا على F أو R. تُرجع proposals
+ *              و totalFixed:0 (لأنه لم يُطبَّق شيء فعلًا).
+ *     true  ⇒ تكتب على ما مُرِّر إليها (يمرر الـPipeline نسخة مؤقتة)، بعد
+ *              المرور بـFixVerifier إن كان متاحًا.
+ *
+ * لماذا: الاستدعاء المباشر كان يتجاوز البوابة تمامًا. الآن الاستدعاء المباشر
+ * لا يلمس شيئًا، ومن أراد التطبيق يستخدم applyFallbackProposals.
+ */
+function applyFallbackToAll(F, R, opts) {
+  opts = opts || {};
+  const viaGate = opts.viaGate === true;
+  const results = {}, aiRequired = {}, proposals = {};
+  let totalFixed = 0, rolledBack = 0, gateRejected = 0;
+
+  if (!F || typeof F !== 'object') {
+    return { totalFixed, results, aiRequired, rolledBack, proposals, gateRejected, mode: viaGate ? 'apply' : 'proposal' };
+  }
 
   Object.keys(F).forEach(fn => {
     const code = F[fn];
@@ -809,19 +912,73 @@ function applyFallbackToAll(F, R) {
     rolledBack += r.verification.rolledBack;
     if (!r.repairs.length || r.fixed === code) return;
 
+    // المقترح يُسجَّل دائمًا، طُبِّق أو لا
+    proposals[fn] = { before: code, after: r.fixed, repairs: r.repairs, fixedIssues: r.fixedIssues };
+
+    if (!viaGate) return;   // وضع الاقتراح: لا كتابة إطلاقًا
+
+    // viaGate: الكتابة تمر بالبوابة حصرًا.
+    // ⚠️ بلا FixVerifier لا كتابة إطلاقًا (Fail-Closed). كان هنا سابقًا فرع
+    // يكتب اعتمادًا على التحقق المحلي وحده، وهو يناقض قاعدة "البوابة الوحيدة":
+    // لو غاب الملف لأي سبب (ترتيب تحميل، مسار خاطئ) كانت الكتابة تمر بلا بوابة.
+    if (!_FBV || typeof _FBV.verifyFix !== 'function') {
+      gateRejected++;
+      (aiRequired[fn] = aiRequired[fn] || []).push({
+        status: 'GATE_REJECTED',
+        reason: 'VERIFIER_UNAVAILABLE — Fail-Closed: لا كتابة بلا بوابة تحقق'
+      });
+      return;
+    }
+
+    const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+    const v = _FBV.verifyFix(code, r.fixed, fn, analyzer, {});
+    if (!v.accepted) {
+      gateRejected++;
+      (aiRequired[fn] = aiRequired[fn] || []).push({ status: 'GATE_REJECTED', reason: v.reason });
+      return;
+    }
+
     F[fn] = r.fixed;
-    let newIssues = null;
-    if (typeof analyzeCode === 'function') {
-      try { const a = analyzeCode(r.fixed, fn); newIssues = Array.isArray(a) ? a : null; } catch (e) { newIssues = null; }
-    }
-    if (!newIssues) {
-      const done = new Set(r.fixedIssues);
-      newIssues = issues.filter(i => !done.has(i));       // بلا محلل: أزل ما أُصلح فعلاً فقط (بالهوية)
-    }
-    R[fn] = Object.assign({}, entry, { code: r.fixed, issues: newIssues });
+    R[fn] = Object.assign({}, entry, { code: r.fixed, issues: v.afterIssues });
     totalFixed += r.repairs.length;
     results[fn] = r.repairs;
   });
 
-  return { totalFixed, results, aiRequired, rolledBack };
+  return { totalFixed, results, aiRequired, rolledBack, proposals, gateRejected, mode: viaGate ? 'apply' : 'proposal' };
 }
+
+// ─── 14. [جديد] تطبيق المقترحات عبر البوابة ──────────────────
+/**
+ * المسار الصريح لمن يريد تطبيق نتائج applyFallbackToAll من خارج الـPipeline.
+ * لا يكتب إلا بعد قبول FixVerifier. بلا FixVerifier لا يكتب شيئًا (Fail-Closed).
+ */
+function applyFallbackProposals(F, R, proposals) {
+  const applied = [], rejected = [];
+  if (!proposals || typeof proposals !== 'object') return { applied, rejected };
+
+  if (!_FBV || typeof _FBV.verifyFix !== 'function') {
+    Object.keys(proposals).forEach(fn => rejected.push({ file: fn, reason: 'VERIFIER_UNAVAILABLE — Fail-Closed' }));
+    return { applied, rejected };
+  }
+
+  const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+  Object.keys(proposals).forEach(fn => {
+    const p = proposals[fn];
+    if (!p || typeof p.after !== 'string') return;
+    if (F[fn] !== p.before) { rejected.push({ file: fn, reason: 'STALE_PROPOSAL — تغيّر الملف بعد توليد الاقتراح' }); return; }
+
+    const v = _FBV.verifyFix(p.before, p.after, fn, analyzer, {});
+    if (!v.accepted) { rejected.push({ file: fn, reason: v.reason, syntaxStatus: v.syntaxStatus }); return; }
+
+    F[fn] = p.after;
+    R[fn] = Object.assign({}, R[fn], { code: p.after, issues: v.afterIssues });
+    applied.push({ file: fn, removedIssues: v.removedCount, repairs: p.repairs });
+  });
+
+  return { applied, rejected };
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { fallbackFix, applyFallbackToAll, applyFallbackProposals };
+}
+
