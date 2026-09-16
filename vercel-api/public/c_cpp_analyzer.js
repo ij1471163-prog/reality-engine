@@ -118,6 +118,37 @@ function ccDeclaredCharPointers(cleanLines) {
   return set;
 }
 
+// كل نداءات free(ident) بمواضعها. نداءان على سطر واحد كلاهما مرئي.
+function ccFreeCalls(cleanLines) {
+  const out = [];
+  const re  = /\bfree\s*\(\s*([A-Za-z_]\w*)\s*\)/g;
+  cleanLines.forEach((line, idx) => {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(line)) !== null) {
+      const before = line.slice(0, m.index);
+      if (/[.]\s*$/.test(before) || /->\s*$/.test(before)) continue;   // استدعاء عضو
+      if (CC_TYPE_WORD.test(before)) continue;                          // تصريح
+      out.push({ line: idx, start: m.index, end: m.index + m[0].length, ptr: m[1] });
+    }
+  });
+  return out;
+}
+
+// نص ما بين نداءين على مستوى المحارف — لا يتأثر بمكان فواصل الأسطر.
+function ccGapText(cleanLines, a, b) {
+  if (a.line === b.line) return cleanLines[a.line].slice(a.end, b.start);
+  const parts = [cleanLines[a.line].slice(a.end)];
+  for (let k = a.line + 1; k < b.line; k++) parts.push(cleanLines[k]);
+  parts.push(cleanLines[b.line].slice(0, b.start));
+  return parts.join('\n');
+}
+
+// أقصى مسافة نقبل عندها اقتران نداءين، حدّ كلفة لا حدّ دلالي.
+const CC_FREE_WINDOW = 10;
+// أي رمز يجعل المسار بين النداءين غير مستقيم. التسمية (label) هدف goto.
+const CC_CONTROL = /\b(?:if|else|switch|case|default|while|for|do|goto|return|break|continue)\b|\?|(?:^|[;}])\s*[A-Za-z_]\w*\s*:(?!:)/;
+
 // ─── 2. بناء الثغرة ──────────────────────────────────────────
 // إصلاح لا يُقبل إلا إذا كان نصاً حقيقياً مختلفاً عن السطر المصاب وليس تعليقاً.
 function ccIssue(o) {
@@ -325,31 +356,7 @@ function analyzeCCpp(code, fileName) {
       }
     }
 
-    // ─── double free ──────────────────────────────────────────
-    const fm = c.match(/\bfree\s*\(\s*([A-Za-z_]\w*)\s*\)/);
-    if (fm) {
-      const ptr    = fm[1];
-      const e      = ccEsc(ptr);
-      const prevRe = new RegExp('\\bfree\\s*\\(\\s*' + e + '\\s*\\)');
-      let prevIdx  = -1;
-      for (let k = i - 1; k >= 0 && k >= i - 10; k--) if (prevRe.test(clean[k])) { prevIdx = k; break; }
-      if (prevIdx >= 0) {
-        const between  = clean.slice(prevIdx + 1, i).join('\n');
-        const branched = /\b(?:if|else|switch|case|while|for|do|goto|return)\b/.test(between);
-        const reset    = new RegExp('\\b' + e + '\\s*=(?!=)').test(between);
-        if (!branched && !reset) {
-          issues.push(ccIssue({
-            sev: 'c', line: ln, ev: t,
-            title: '🔴 Double Free — Use After Free (CWE-415)',
-            fix: null,
-            fixHint: 'الإصلاح الصحيح عند التحرير الأول في السطر ' + (prevIdx + 1) +
-                     ' بحذفه أو بضبط "' + ptr + '" على NULL بعده، لا عند التحرير الثاني.',
-            conf: 82, cIcon: '🔴', cAct: 'CWE-415 Double Free',
-            cEv: ['اضبط المؤشر على NULL بعد free()'],
-          }));
-        }
-      }
-    }
+    // double free — في مرور مستقل بعد الحلقة، لأنه يقارن نداءات لا أسطراً
 
     // ─── int = sizeof ─────────────────────────────────────────
     const szM = c.match(/\bint\s+([A-Za-z_]\w*)\s*=\s*sizeof\b/);
@@ -366,7 +373,7 @@ function analyzeCCpp(code, fileName) {
       }));
     }
 
-    // ─── C++ ──────────────────────────────────────────────────
+    // ─── C++ ───────────────────────────────────────────────────
     if (isCpp) {
       if (/\bnew\s+[A-Za-z_]/.test(c) && !/unique_ptr|shared_ptr|make_unique|make_shared/.test(c)) {
         issues.push(ccIssue({
@@ -452,6 +459,48 @@ function analyzeCCpp(code, fileName) {
       }));
     }
   });
+
+  // ─── double free — مرور مستقل ────────────────────────────
+  // القرار يُبنى على نص الفجوة بين نداءي free على مستوى المحارف، فلا يتغيّر
+  // بتحريك فواصل الأسطر. أي قوس في الفجوة يعني أننا عبرنا حدود كتلة — وهذا
+  // يشمل if/else وswitch بأقواس والحلقات وحدود الدوال — ولا شيء يمكن إثباته
+  // نصياً هناك، فنصمت بدل ادعاء حرج. لا استنتاج لتدفق التحكم ولا للحلقات.
+  const freeCalls = ccFreeCalls(clean);
+  const lastOf    = new Map();
+  for (const cur of freeCalls) {
+    const prev = lastOf.get(cur.ptr);
+    lastOf.set(cur.ptr, cur);
+    if (!prev) continue;
+    if (cur.line - prev.line > CC_FREE_WINDOW) continue;
+
+    const e   = ccEsc(cur.ptr);
+    const gap = ccGapText(clean, prev, cur);
+
+    // إعادة إسناد أو تمرير بالعنوان ⇒ المؤشر قد يكون تغيّر، فلا ادعاء
+    if (new RegExp('\\b' + e + '\\s*(?:=(?!=)|\\+\\+|--|\\+=|-=)|(?:\\+\\+|--)\\s*\\b' + e + '\\b|&\\s*' + e + '\\b').test(gap)) continue;
+    // عبور حدود كتلة ⇒ غير قابل للإثبات نصياً
+    if (/[{}]/.test(gap)) continue;
+
+    const ev    = lines[cur.line].trim();
+    const straight = !CC_CONTROL.test(gap);
+    issues.push(ccIssue(straight ? {
+      sev: 'c', line: cur.line + 1, ev,
+      title: '🔴 Double Free — Use After Free (CWE-415)',
+      fix: null,
+      fixHint: 'التحريران في نفس الكتلة وعلى مسار مستقيم. الإصلاح عند التحرير الأول في السطر ' +
+               (prev.line + 1) + ' بحذفه أو بضبط "' + cur.ptr + '" على NULL بعده، لا عند التحرير الثاني.',
+      conf: 82, cIcon: '🔴', cAct: 'CWE-415 Double Free',
+      cEv: ['اضبط المؤشر على NULL بعد free()'],
+    } : {
+      sev: 'm', line: cur.line + 1, ev,
+      title: '🟡 تحريران لنفس المؤشر — المسار غير مُثبت (CWE-415)',
+      fix: null,
+      fixHint: 'المؤشر "' + cur.ptr + '" يُحرَّر أيضاً في السطر ' + (prev.line + 1) +
+               ' داخل نفس الكتلة، لكن بينهما تفرّع أو قفز فلا يمكن إثبات وقوع التحريرين معاً نصياً. يحتاج مراجعة.',
+      conf: 55, cIcon: '🟡', cAct: 'CWE-415 Double Free (غير مُثبت)',
+      cEv: ['تحريران لنفس المؤشر في نفس الكتلة مع تفرّع بينهما'],
+    }));
+  }
 
   return result();
 }
