@@ -28,7 +28,7 @@ module.exports = async (req, res) => {
     const ctx = vm.createContext({ console, window: {}, global: {}, F: {}, R: {} });
 
     const engines = [
-      'engine_java.js', 'analyzer.js', 'security_scanner.js',
+      'engine_java.js', 'c_cpp_analyzer.js', 'analyzer.js', 'security_scanner.js',
       'secret_detector.js', 'taint_core.js', 'taint_js.js',
       'taint_py.js', 'taint_php.js', 'context_analyzer.js',
       'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
