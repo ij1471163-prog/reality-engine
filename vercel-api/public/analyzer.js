@@ -79,11 +79,159 @@ function leadingSpaces(line) {
     return n;
 }
 
-/** Check if parens/brackets are balanced in a string */
+/** Blank out quoted literals (and, optionally, a trailing # comment) in ONE line.
+ *  Length is preserved so column offsets stay valid. */
+function maskLiterals(line, hashComment) {
+    const src = String(line ?? '');
+    let out = '', q = null;
+    for (let i = 0; i < src.length; i++) {
+        const c = src[i];
+        if (q) {
+            out += ' ';
+            if (c === '\\') { out += ' '; i++; continue; }
+            if (c === q) q = null;
+            continue;
+        }
+        if (c === '"' || c === "'" || c === '`') { q = c; out += ' '; continue; }
+        if (c === '/' && src[i + 1] === '/') { out += ' '.repeat(src.length - i); break; }
+        if (hashComment && c === '#')          { out += ' '.repeat(src.length - i); break; }
+        out += c;
+    }
+    return out;
+}
+
+/** true when the whole snippet is nothing but a comment */
+function isCommentOnly(str) {
+    const t = String(str ?? '').trim();
+    return t.startsWith('//') || t.startsWith('#') || t.startsWith('/*');
+}
+
+/** Check if parens/brackets are balanced — brackets inside literals are ignored */
 function isBalanced(str) {
-    const open  = (str.match(/[{[(]/g) ?? []).length;
-    const close = (str.match(/[}\])]/g) ?? []).length;
+    const clean = maskLiterals(str, false);
+    const open  = (clean.match(/[{[(]/g) ?? []).length;
+    const close = (clean.match(/[}\])]/g) ?? []).length;
     return open === close;
+}
+
+/** Extension of a file name, '' when there is none. Never throws. */
+function extOf(fileName) {
+    const name = (typeof fileName === 'string') ? fileName : '';
+    const dot  = name.lastIndexOf('.');
+    return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+}
+
+/** Per-line flag: 1 = the line starts inside a template literal or block comment.
+ *  Line-based detectors skip those lines so prose is not reported as code. */
+function maskedLines(code) {
+    const src    = String(code ?? '');
+    const masked = new Uint8Array(src.split('\n').length);
+    let line = 0, state = 0;                      // 0 none · 1 template · 2 block comment
+    for (let i = 0; i < src.length; i++) {
+        const c = src[i], d = src[i + 1];
+        if (c === '\n') { line++; if (state) masked[line] = 1; continue; }
+        if (state === 1) { if (c === '\\') i++; else if (c === '`') state = 0; continue; }
+        if (state === 2) { if (c === '*' && d === '/') { i++; state = 0; } continue; }
+        if (c === '/' && d === '/') { while (i < src.length && src[i] !== '\n') i++; i--; continue; }
+        if (c === '/' && d === '*') { state = 2; i++; continue; }
+        if (c === '`') { state = 1; continue; }
+        if (c === '"' || c === "'") {
+            const q = c; i++;
+            while (i < src.length && src[i] !== q && src[i] !== '\n') { if (src[i] === '\\') i++; i++; }
+            continue;
+        }
+    }
+    return masked;
+}
+
+/** Keep only <script> bodies; everything else becomes spaces so LINE NUMBERS stay real. */
+function htmlScriptOnly(html) {
+    const src = String(html ?? '');
+    const out = src.split('');
+    for (let i = 0; i < out.length; i++) if (out[i] !== '\n') out[i] = ' ';
+    const re = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+        const start = m.index + m[0].indexOf('>') + 1;
+        for (let i = start; i < start + m[1].length && i < src.length; i++) out[i] = src[i];
+    }
+    return out.join('');
+}
+
+/** Accept both detector shapes: an array, or { issues: [...] }. */
+function engineList(result) {
+    if (Array.isArray(result)) return result;
+    if (result && Array.isArray(result.issues)) return result.issues;
+    return [];
+}
+
+/** Run one external detector in isolation — a broken engine must not lose the whole file. */
+function runEngine(name, fn) {
+    try { return engineList(fn()); }
+    catch (e) {
+        if (typeof console !== 'undefined' && console.warn)
+            console.warn('analyzer: ' + name + ' failed — ' + (e && e.message));
+        return [];
+    }
+}
+
+/** Per-line flag: 1 = the line sits inside a loop body (braces for JS, indent for Python). */
+function loopLines(code, ext) {
+    const lines  = String(code ?? '').split('\n');
+    const inLoop = new Uint8Array(lines.length);
+    const isPy   = ext === 'py';
+    const stack  = [];
+    let depth = 0;
+    for (let i = 0; i < lines.length; i++) {
+        const raw   = lines[i];
+        const clean = maskLiterals(raw, isPy);
+        const t     = clean.trim();
+        if (isPy) {
+            const ind = raw.length - raw.replace(/^[ \t]*/, '').length;
+            if (t) while (stack.length && ind <= stack[stack.length - 1]) stack.pop();
+            inLoop[i] = stack.length ? 1 : 0;
+            if (/^(?:for|while)\b.*:\s*$/.test(t)) stack.push(ind);
+        } else {
+            const opensLoop = /(^|[^\w$])(?:for|while)\s*\(/.test(clean) || /\.forEach\s*\(/.test(clean);
+            inLoop[i] = stack.length ? 1 : 0;
+            if (opensLoop) stack.push(depth);
+            depth += (clean.match(/\{/g) ?? []).length - (clean.match(/\}/g) ?? []).length;
+            while (stack.length && depth <= stack[stack.length - 1]) stack.pop();
+        }
+    }
+    return inLoop;
+}
+
+// ── Vulnerability classes — used by the final de-duplication ──────────────
+// The key must describe WHAT the problem is, never which language the file is
+// written in: two different vulnerabilities on one line have to survive.
+const VULN_CLASSES = [
+    ['sql_params', /params mismatch|ناقص params|بدون params|missing params/i],
+    ['sqli',       /sql injection|cwe-?89|sqli\b/i],
+    ['xss',        /\bxss\b|cwe-?79/i],
+    ['cmd',        /command injection|cwe-?78|os\.system/i],
+    ['code_exec',  /\beval\b|new Function|cwe-?0?94|code injection/i],
+    ['weak_hash',  /\bmd5\b|\bsha-?1\b|cwe-?327|cwe-?916|weak hash/i],
+    ['accum',      /تراكم|accumulation/i],
+    ['stub',       /دالة ناقصة|\bstub\b/i],
+    ['secret',     /secret|credential|hardcoded|cwe-?798|jwt|api[_ -]?key|مكشوف/i],
+];
+function vulnClass(issue) {
+    const raw = [issue && issue.cwe, issue && issue.cAct, issue && issue.title].filter(Boolean).join(' ');
+    for (const [name, re] of VULN_CLASSES) if (re.test(raw)) return name;
+    return 't:' + String((issue && issue.title) || '').trim().toLowerCase();
+}
+
+/** Merge reports of the SAME problem on the same line, keeping the most confident one. */
+function dedupeIssues(issues) {
+    const byKey = new Map();
+    issues.forEach(issue => {
+        if (!issue || typeof issue !== 'object') return;
+        const key      = (issue.line || 0) + ':' + vulnClass(issue);
+        const existing = byKey.get(key);
+        if (!existing || (issue.conf || 0) > (existing.conf || 0)) byKey.set(key, issue);
+    });
+    return Array.from(byKey.values());
 }
 
 // ═══════════════════════════════════════════════════════
@@ -93,18 +241,20 @@ function isBalanced(str) {
 function calcConf(issue, code) {
     let score = SCORE.BASE;
     const ev  = ['النمط مكتشف +' + SCORE.BASE];
+    issue = issue || {};
+    const title = String(issue.title ?? '');
 
     // نوع المشكلة
     if (issue.type === 'stub') {
         score += SCORE.STUB_CONFIRMED;
         ev.push('pass مؤكد +' + SCORE.STUB_CONFIRMED);
-    } else if (issue.title.includes('forEach') && PATTERNS.jsForEach.test(code)) {
+    } else if (title.includes('forEach') && PATTERNS.jsForEach.test(code)) {
         score += SCORE.CONTEXT_MATCH;
         ev.push('forEach موجود +' + SCORE.CONTEXT_MATCH);
-    } else if (issue.title.includes('None') && PATTERNS.pyNoneCompare.test(code)) {
+    } else if (title.includes('None') && PATTERNS.pyNoneCompare.test(code)) {
         score += SCORE.CONTEXT_MATCH;
         ev.push('None موجودة +' + SCORE.CONTEXT_MATCH);
-    } else if (issue.title.includes('التراكم')) {
+    } else if (title.includes('التراكم') || title.includes('تراكم')) {
         const varName = issue.ev?.match(/^(\w+)\s*=/)?.[1];
         if (varName) {
             const zeroPattern = new RegExp('\\b' + escapeRegex(varName) + '\\s*=\\s*0\\b');
@@ -121,12 +271,14 @@ function calcConf(issue, code) {
         ev.push('سياق جزئي +' + SCORE.PARTIAL_CONTEXT);
     }
 
-    // جودة الـ fix
-    if (issue.fix && issue.fix.length < 120 && !issue.fix.startsWith('#')) {
+    // جودة الـ fix — تعليق ليس إصلاحاً، فلا يأخذ نقاط إصلاح
+    const fixText  = (typeof issue.fix === 'string') ? issue.fix : '';
+    const realFix  = fixText && !isCommentOnly(fixText);
+    if (realFix && fixText.length < 120) {
         score += SCORE.SHORT_FIX;
         ev.push('إصلاح مباشر +' + SCORE.SHORT_FIX);
     }
-    if (issue.fix && isBalanced(issue.fix)) {
+    if (realFix && isBalanced(fixText)) {
         score += SCORE.BALANCED_PARENS;
         ev.push('أقواس متوازنة +' + SCORE.BALANCED_PARENS);
     }
@@ -185,18 +337,31 @@ function extractKeys(code, varName) {
 // ═══════════════════════════════════════════════════════
 
 function analyzeCode(code, fileName) {
-    if (typeof analyzeJava !== 'undefined' && fileName.endsWith('.java'))
-        return analyzeJava(code, fileName);
+    // مُدخلات غير صالحة لا تُسقط التحليل كله — الاسم المفقود يعني "لغة مجهولة"
+    if (typeof code !== 'string') code = (code == null) ? '' : String(code);
+    fileName = (typeof fileName === 'string') ? fileName : '';
+    const ext = extOf(fileName);
+    if (!code.trim()) return [];
+
+    if (typeof analyzeJava !== 'undefined' && ext === 'java') {
+        const javaIssues = runEngine('analyzeJava', () => analyzeJava(code, fileName));
+        finalizeIssues(javaIssues, code);
+        return dedupeIssues(javaIssues);
+    }
 
     const issues = [];
-    const ext    = fileName.split('.').pop().toLowerCase();
+    const masked = maskedLines(code);
+    const lineIsNoise = i => masked[i] === 1;
 
     if (ext === 'py') {
         analyzePython(code, issues);
         analyzePythonSecurity(code, issues);
 
         // اكتشف query معرّف كـ comment
-        if (code.includes('cursor.execute(query') && !code.match(/^\s*query\s*=/m)) {
+        const queryBound = /^\s*query\s*=/m.test(code) || /\bdef\s+\w+\s*\([^)]*\bquery\b/.test(code) ||
+                           /\bfor\s+query\b/.test(code) || /\bas\s+query\b/.test(code) ||
+                           /\bquery\s*:/.test(code);
+        if (code.includes('cursor.execute(query') && !queryBound) {
             const qLine = code.split('\n').findIndex(l => l.includes('cursor.execute(query')) + 1;
             if (qLine > 0) {
                 issues.push({ type:'py', sev:'c', line:qLine, ev:'cursor.execute(query, ...)',
@@ -209,21 +374,22 @@ function analyzeCode(code, fileName) {
     if (['js','ts','jsx','html'].includes(ext)) analyzeJS(code, fileName, ext, issues);
 
     enhanceStubs(issues, code);
-    finalizeIssues(issues, code);
+    // ملاحظة: finalizeIssues يعمل في النهاية فقط — قبل ذلك تبقى issues بلا conf/cEv
+    // وكل ما يُضاف بعده كان يخرج بلا دليل ثقة إطلاقاً.
     // Crypto scan
     if (typeof scanCrypto === 'function') {
-        const cryptoIssues = scanCrypto(code, fileName);
+        const cryptoIssues = runEngine('scanCrypto', () => scanCrypto(code, fileName));
         cryptoIssues.forEach(ci => {
             const dup = issues.some(x => x.line === ci.line && x.title === ci.title);
             if (!dup) issues.push(ci);
         });
     }
     // TypeScript/Kotlin/PHP analysis
-    const ext2 = fileName.split('.').pop().toLowerCase();
+    const ext2 = ext;
     if (ext2 === 'ts' || ext2 === 'tsx') {
         if (typeof analyzeTypeScript === 'function') {
-            const tsResult = analyzeTypeScript(code, fileName);
-            tsResult.issues.forEach(i => {
+            const tsResult = runEngine('analyzeTypeScript', () => analyzeTypeScript(code, fileName));
+            tsResult.forEach(i => {
                 const dup = issues.some(x => x.line === i.line && x.title === i.title);
                 if (!dup) issues.push(i);
             });
@@ -231,8 +397,8 @@ function analyzeCode(code, fileName) {
     }
     if (ext2 === 'kt') {
         if (typeof analyzeKotlin === 'function') {
-            const ktResult = analyzeKotlin(code, fileName);
-            ktResult.issues.forEach(i => {
+            const ktResult = runEngine('analyzeKotlin', () => analyzeKotlin(code, fileName));
+            ktResult.forEach(i => {
                 const dup = issues.some(x => x.line === i.line && x.title === i.title);
                 if (!dup) issues.push(i);
             });
@@ -240,26 +406,24 @@ function analyzeCode(code, fileName) {
     }
     if (ext2 === 'php') {
         if (typeof analyzePHP === 'function') {
-            const phpResult = analyzePHP(code, fileName);
-            phpResult.issues.forEach(i => {
+            const phpResult = runEngine('analyzePHP', () => analyzePHP(code, fileName));
+            phpResult.forEach(i => {
                 const dup = issues.some(x => x.line === i.line && x.title === i.title);
                 if (!dup) issues.push(i);
             });
         }
     }
     // C/C++ Analysis
-    if ((fileName.endsWith('.c') || fileName.endsWith('.cpp') ||
-         fileName.endsWith('.cc') || fileName.endsWith('.h') ||
-         fileName.endsWith('.hpp')) && typeof analyzeCCpp === 'function') {
-        const cResult = analyzeCCpp(code, fileName);
-        cResult.issues.forEach(i => {
+    if (['c','cpp','cc','h','hpp'].includes(ext) && typeof analyzeCCpp === 'function') {
+        const cResult = runEngine('analyzeCCpp', () => analyzeCCpp(code, fileName));
+        cResult.forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title))
                 issues.push(i);
         });
     }
-    // Secret Detection
+    // Secret Detection — النداء الوحيد (كان مكرراً مرتين على نفس الملف)
     if (typeof detectSecrets === 'function') {
-        const secrets = detectSecrets(code, fileName);
+        const secrets = runEngine('detectSecrets', () => detectSecrets(code, fileName));
         secrets.forEach(s => {
             if (!issues.some(x => x.line === s.line && x.title === s.title))
                 issues.push(s);
@@ -267,7 +431,7 @@ function analyzeCode(code, fileName) {
     }
     // Security scan
     if (typeof scanSecurity === 'function') {
-        const secIssues = scanSecurity(code, fileName);
+        const secIssues = runEngine('scanSecurity', () => scanSecurity(code, fileName));
         secIssues.forEach(si => {
             const dup = issues.some(x => x.line === si.line && x.title === si.title);
             if (!dup) issues.push(si);
@@ -275,7 +439,7 @@ function analyzeCode(code, fileName) {
     }
     // Pattern detection
     if (typeof detectPatterns === 'function') {
-        const patternIssues = detectPatterns(code, fileName);
+        const patternIssues = runEngine('detectPatterns', () => detectPatterns(code, fileName));
         patternIssues.forEach(pi => {
             const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
             if (!dup) issues.push(pi);
@@ -288,105 +452,78 @@ function analyzeCode(code, fileName) {
       'totalValue','totalSales','total_value','total_cost','total_weight',
       'category_revenue','weight_report','capacity_report'];
     const _lines2 = code.split('\n');
-    let _inLoop2 = false, _loopDepth2 = 0;
+    // نطاق الحلقة يُحسب بالأقواس (JS) أو بالإزاحة (Python) بدل عدّاد تقريبي كان
+    // يبقى مفتوحاً بعد نهاية الحلقة فيبلّغ عن أسطر خارجها.
+    const _inLoopFlags = loopLines(code, ext);
     const _declaredVars2 = new Set();
     _lines2.forEach((_ln, _i) => {
         const _t = _ln.trim();
         if (_t.startsWith('//') || _t.startsWith('#')) return;
+        if (lineIsNoise(_i)) return;
         const _dm = _t.match(/(?:let|var|const|int|double|float)\s+(\w+)\s*=\s*0/) || _t.match(/(\w+)\s*=\s*0$/);
         if (_dm) _declaredVars2.add(_dm[1]);
-        if (_t.includes('.forEach(') || /for\s*\(/.test(_t) || /^for\s+\w+\s+in\s+/.test(_t)) {
-            _inLoop2=true;
-            // عدد { في هذا السطر بس ما نحسب الأقواس التابعة
-            const _openInLine = (_t.match(/\{/g)||[]).length;
-            const _closeInLine = (_t.match(/\}/g)||[]).length;
-            _loopDepth2 += Math.max(1, _openInLine - _closeInLine);
-        }
-        if (_inLoop2 && !_t.includes('.forEach(') && !(/for\s*\(/.test(_t)) && (_t==='}' || _t==='});' || _t==='})'||_t.startsWith('});'))) {
-            _loopDepth2=Math.max(0,_loopDepth2-1);
-            if(_loopDepth2===0) _inLoop2=false;
-        }
-        if (_inLoop2) {
-            _accumVars.forEach(_v => {
-                const _p = new RegExp('\\b'+_v+'\\s*=(?!=|\\+|-)\\s*\\S');
-                if (_p.test(_t) && !/(?:let|var|const)\s+/.test(_t)) {
-                    const _known = _declaredVars2.has(_v) || 
-                        _lines2.slice(0,_i).some(_l=>new RegExp('\\b'+_v+'\\s*=\\s*0').test(_l));
-                    if (_known) {
-                        const _dup = issues.some(_x=>Math.abs(_x.line-(_i+1))<=1&&_x.title.includes(_v));
-                        if (!_dup) issues.push({type:'bug',sev:'c',
-                            title:'خطأ تراكم: '+_v+' = بدل +=',
-                            line:_i+1,ev:_t,
-                            fix:_t.replace(new RegExp('('+_v+')\\s*=(?!=)'),'$1 +='),
-                            conf:90,cIcon:'🟢',cAct:'خطأ تراكم مؤكد',
-                            cEv:[_v+' مُهيَّأ بـ 0 قبل الحلقة']});
-                    }
+        if (!_inLoopFlags[_i]) return;
+        _accumVars.forEach(_v => {
+            const _esc = escapeRegex(_v);
+            const _p = new RegExp('\\b'+_esc+'\\s*=(?!=|\\+|-)\\s*\\S');
+            if (_p.test(_t) && !/(?:let|var|const)\s+/.test(_t)) {
+                const _known = _declaredVars2.has(_v) ||
+                    _lines2.slice(0,_i).some(_l=>new RegExp('\\b'+_esc+'\\s*=\\s*0').test(_l));
+                if (_known) {
+                    // نفس السطر فقط، وبأي عنوان تراكم — بدل مطابقة اسم جزئية
+                    const _dup = issues.some(_x=>_x.line===(_i+1) && /تراكم/.test(String(_x.title)));
+                    if (!_dup) issues.push({type:'bug',sev:'c',
+                        title:'خطأ تراكم: '+_v+' = بدل +=',
+                        line:_i+1,ev:_t,
+                        fix:_t.replace(new RegExp('('+_esc+')\\s*=(?!=)'),'$1 +='),
+                        conf:90,cIcon:'🟢',cAct:'خطأ تراكم مؤكد',
+                        cEv:[_v+' مُهيَّأ بـ 0 قبل الحلقة']});
                 }
-            });
-        }
+            }
+        });
     });
 
-    // ─── Secret Detection (all files) ───────────────
-    if (typeof detectSecrets === 'function') {
-        detectSecrets(code, fileName).forEach(s => {
-            if (!issues.some(x => x.line === s.line && x.title === s.title))
-                issues.push(s);
-        });
-    }
-
-    // ─── PHP Analysis ────────────────────────────────
-    const _ext = fileName.split('.').pop().toLowerCase();
-    if (_ext === 'php' && typeof analyzePHP === 'function') {
-        analyzePHP(code, fileName).issues.forEach(i => {
-            if (!issues.some(x => x.line === i.line && x.title === i.title))
-                issues.push(i);
-        });
-    }
+    // ملاحظة: نداءا detectSecrets و analyzePHP المكرران أُزيلا — النداء الأول
+    // أعلاه يغطيهما بالكامل (كان كل واحد يمسح الملف مرة ثانية ثم يُلغى بالـdedup).
 
     // Dart/Flutter Analysis
-    if (fileName.endsWith('.dart') && typeof analyzeDart === 'function') {
-        analyzeDart(code, fileName).forEach(i => {
+    if (ext === 'dart' && typeof analyzeDart === 'function') {
+        runEngine('analyzeDart', () => analyzeDart(code, fileName)).forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title))
                 issues.push(i);
         });
     }
 
     // C# / Unity Analysis
-    if (fileName.endsWith('.cs') && typeof analyzeCSharp === 'function') {
-        analyzeCSharp(code, fileName).forEach(i => {
+    if (ext === 'cs' && typeof analyzeCSharp === 'function') {
+        runEngine('analyzeCSharp', () => analyzeCSharp(code, fileName)).forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title))
                 issues.push(i);
         });
     }
 
         // AST Deep Analysis (JS only)
-    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts','jsx','tsx'].includes(ext)) {
         if (typeof analyzeJSWithAST === 'function') {
-            try {
-                const astIssues = analyzeJSWithAST(code, fileName);
-                if (astIssues && astIssues.length) {
-                    astIssues.forEach(i => {
-                        if (!issues.some(x => x.line === i.line && x.title === i.title))
-                            issues.push(i);
-                    });
-                }
-            } catch(e) { console.warn('AST analysis failed:', e.message); }
+            runEngine('analyzeJSWithAST', () => analyzeJSWithAST(code, fileName)).forEach(i => {
+                if (!issues.some(x => x.line === i.line && x.title === i.title))
+                    issues.push(i);
+            });
         }
     }
 
         // Deep Analysis (Type Inference + Data Flow + Call Graph + Scope)
     if (typeof deepAnalyze === 'function') {
-        try {
-            deepAnalyze(code, fileName).forEach(i => {
-                if (!issues.some(x => x.line === i.line && x.title === i.title))
-                    issues.push(i);
-            });
-        } catch(e) { console.warn('deepAnalyze:', e.message); }
+        runEngine('deepAnalyze', () => deepAnalyze(code, fileName)).forEach(i => {
+            if (!issues.some(x => x.line === i.line && x.title === i.title))
+                issues.push(i);
+        });
     }
 
         // var usage detection
-    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts','jsx','tsx'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (/^\s*var\s+\w+/.test(line) && !line.trim().startsWith('//')) {
                 issues.push({ type:'js', sev:'l', line:i+1, ev:line.trim(),
                     title:'🔵 استخدام var — استخدم let أو const',
@@ -397,8 +534,9 @@ function analyzeCode(code, fileName) {
     }
 
     // String vs Number comparison
-    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts','jsx','tsx'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (/===\s*["']\d+["']|!==\s*["']\d+["']/.test(line) && !line.trim().startsWith('//')) {
                 issues.push({ type:'js', sev:'m', line:i+1, ev:line.trim(),
                     title:'🟡 مقارنة رقم مع string — استخدم === بدون quotes',
@@ -409,14 +547,21 @@ function analyzeCode(code, fileName) {
     }
 
         // Callback Hell Detection
-        if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+        if (['js','ts','jsx','tsx'].includes(ext)) {
+            // العدّاد القديم كان ينقص فقط عند "})" فلا يُغلق أبداً عند "};"
+            // فتُحسب دوال متتالية غير متداخلة كأنها تداخل. الآن العمق من الأقواس.
+            const cbStack = [];
             let cbDepth = 0, cbMax = 0, cbStart = 0;
             code.split('\n').forEach((line, i) => {
-                if (/function\s*\(|=>\s*\{/.test(line)) {
-                    if (cbDepth === 0) cbStart = i + 1;
-                    cbDepth++; cbMax = Math.max(cbMax, cbDepth);
+                if (lineIsNoise(i)) return;
+                const clean = maskLiterals(line, false);
+                if (/function\s*\(|=>\s*\{/.test(clean)) {
+                    if (!cbStack.length) cbStart = i + 1;
+                    cbStack.push(cbDepth);
+                    if (cbStack.length > cbMax) cbMax = cbStack.length;
                 }
-                if (/\}\s*\)/.test(line)) cbDepth = Math.max(0, cbDepth - 1);
+                cbDepth += (clean.match(/\{/g) ?? []).length - (clean.match(/\}/g) ?? []).length;
+                while (cbStack.length && cbDepth <= cbStack[cbStack.length - 1]) cbStack.pop();
             });
             if (cbMax >= 3) {
                 issues.push({ type:'js', sev:'h', line:cbStart, ev:'Nested callbacks',
@@ -427,12 +572,14 @@ function analyzeCode(code, fileName) {
 
 
     // TypeScript any detection
-    if (['ts','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['ts','tsx'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (/:\s*any\b/.test(line) && !line.trim().startsWith('//')) {
                 issues.push({ type:'ts', sev:'m', line:i+1, ev:line.trim(),
                     title:'🟡 TypeScript any — استخدم unknown أو type محدد',
-                    fix: line.replace(/:\s*any\b/g, ': unknown').trim(),
+                    fix: null, aiRequired: true,
+                    fixHint: 'unknown يتطلب narrowing عند كل استخدام — التحويل الأعمى يكسر الترجمة.',
                     conf:85, cIcon:'🟡', cAct:'TypeScript Safety' });
             }
         });
@@ -441,61 +588,69 @@ function analyzeCode(code, fileName) {
 
 
     // SQL Injection JS — يدعم quotes مضمّنة
-    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts','jsx','tsx'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
-            if (line.trim().startsWith('//')) return;
+            if (lineIsNoise(i) || line.trim().startsWith('//')) return;
             // SELECT + concatenation بأي شكل
             if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']/.test(line) && /\+\s*\w+|\w+\s*\+/.test(line)) {
                 issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
                     title:'🔴 SQL Injection — String Concatenation في JS',
-                    fix: line.trim(),
+                    fix: null, aiRequired: true,
+                    fixHint: 'يحتاج parameterization بحسب driver قاعدة البيانات (؟ أو $n) — ' +
+                             'الإصلاح السابق كان نسخة من السطر المصاب نفسه.',
                     conf:90, cIcon:'🔴', cAct:'CWE-89 SQL Injection' });
             }
         });
     }
 
     // eval() detection
-    if (['js','ts','jsx','tsx'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts','jsx','tsx'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (/\beval\s*\(/.test(line) && !line.trim().startsWith('//')) {
                 const m = line.match(/eval\s*\(([^)]+)\)/);
                 const arg = m ? m[1].trim() : 'input';
                 issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
                     title:'🔴 eval() خطير — تنفيذ كود مباشر',
-                    fix: /json|data|response|result/i.test(arg) ? 
-                        line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`).trim() :
-                        `// SECURITY: eval() removed — validate ${arg} before use`,
+                    fix: null, aiRequired: true,
+                    fixHint: 'لا يوجد بديل يحفظ الدلالة: JSON.parse يفترض أن ' + arg +
+                             ' نص JSON، واستبدال السطر بتعليق يُسقط الإسناد نفسه.',
                     conf:95, cIcon:'🔴', cAct:'CWE-94 Code Injection' });
             }
         });
     }
 
     // db.query بدون params array
-    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (/(?:db|conn|pool)\.query\s*\(\s*\w+\s*,\s*function/.test(line) && !/\[/.test(line.split(',')[1] || '')) {
                 issues.push({ type:'js', sev:'h', line:i+1, ev:line.trim(),
                     title:'🟠 db.query ناقص params array',
-                    fix: line.replace(/\.query\s*\((\w+)\s*,\s*function/, '.query($1, [/* params */], function').trim(),
+                    fix: null, aiRequired: true,
+                    fixHint: 'مصفوفة الـparams يجب أن تُملأ بالقيم الفعلية — [/* params */] تترك الكود غير عامل.',
                     conf:85, cIcon:'🟠', cAct:'SQL Missing Params' });
             }
         });
     }
 
     // XSS في res.send
-    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (/res\.send\s*\(.*\+/.test(line) && !line.trim().startsWith('//')) {
                 issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
                     title:'🔴 XSS في res.send — user input مباشر',
-                    fix: line.replace(/res\.send\s*\((.+)\)/, 'res.json({ message: $1 })').trim(),
+                    fix: null, aiRequired: true,
+                    fixHint: 'res.json يغيّر نوع الاستجابة وشكلها (كسر عقد الـAPI) ولا يُرمِّز المخرج؛ ' +
+                             'الإصلاح الصحيح هو escape للمخرج مع إبقاء res.send.',
                     conf:88, cIcon:'🔴', cAct:'CWE-79 XSS' });
             }
         });
     }
 
     // Python cursor.execute params mismatch
-    if (['py'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (ext === 'py') {
         let lastQuery = null;
         code.split('\n').forEach((line, i) => {
             // تتبع query = "SELECT...?"
@@ -518,8 +673,9 @@ function analyzeCode(code, fileName) {
     }
 
     // db.query("SELECT...?") بدون params array
-    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (!/db\.query|pool\.query|conn\.query/.test(line)) return;
             const hasQuestion = /\?/.test(line);
             const hasArray = /\[/.test(line);
@@ -527,146 +683,96 @@ function analyzeCode(code, fileName) {
             if (hasQuestion && !hasArray && hasCallback) {
                 issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
                     title:'🔴 db.query فيه ? بدون params array',
-                    fix: line.replace(/\.query\s*\((".*"),\s*function/, '.query($1, [/* params */], function').trim(),
+                    fix: null, aiRequired: true,
+                    fixHint: 'مصفوفة الـparams يجب أن تُملأ بالقيم الفعلية — [/* params */] تترك الكود غير عامل.',
                     conf:88, cIcon:'🔴', cAct:'SQL Missing Params' });
             }
         });
     }
 
     // JWT weak secret
-    if (['js','ts'].includes(fileName.split('.').pop().toLowerCase())) {
+    if (['js','ts'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
+            if (lineIsNoise(i)) return;
             if (/(?:JWT_SECRET|jwtSecret|JWT_KEY)\s*=\s*["'][^"']{4,}["']/.test(line)) {
+                const jwtVar  = (line.match(/(JWT_SECRET|jwtSecret|JWT_KEY)/) || [])[1] || 'JWT_SECRET';
+                const jwtEnv  = jwtVar.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
                 issues.push({ type:'js', sev:'h', line:i+1, ev:line.trim(),
                     title:'🟠 JWT Secret مكشوف — استخدم process.env',
-                    fix: line.replace(/=\s*["'][^"']+["']/, '= process.env.JWT_SECRET').trim(),
+                    fix: line.replace(/=\s*["'][^"']+["']/, '= process.env.' + jwtEnv).trim(),
                     conf:90, cIcon:'🟠', cAct:'CWE-798 JWT' });
             }
         });
     }
 
         // Taint Analysis
-    const ext3 = fileName.split('.').pop().toLowerCase();
+    const ext3 = ext;
     if ((ext3 === 'js' || ext3 === 'ts') && typeof analyzeTaintJS === 'function') {
-        analyzeTaintJS(code, fileName).forEach(i => {
+        runEngine('analyzeTaintJS', () => analyzeTaintJS(code, fileName)).forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
         });
     }
     if (ext3 === 'py' && typeof analyzeTaintPY === 'function') {
-        analyzeTaintPY(code, fileName).forEach(i => {
+        runEngine('analyzeTaintPY', () => analyzeTaintPY(code, fileName)).forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
         });
     }
     if (ext3 === 'php' && typeof analyzeTaintPHP === 'function') {
-        analyzeTaintPHP(code, fileName).forEach(i => {
+        runEngine('analyzeTaintPHP', () => analyzeTaintPHP(code, fileName)).forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
         });
     }
 
-                // DeepAnalyzer - Call Graph + Type Inference + SQL Flow
-  if (typeof deepAnalyze !== 'undefined') {
-    try {
-      const deep = deepAnalyze(code, fileName);
-      deep.forEach(i => {
-        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
-          issues.push(i);
-        }
-      });
-    } catch(e) {}
-  }
+  // ملاحظة: النداء الثاني لـ deepAnalyze أُزيل — النداء الأول أعلاه يغطيه.
 
   // SmartContext — يدرس الكود قبل التحليل
-  let smartCtx = null;
-  if (typeof SmartContext !== 'undefined') {
-    try {
-      smartCtx = SmartContext.analyze(code, fileName);
-      if (smartCtx && smartCtx.issues) {
-        smartCtx.issues.forEach(i => {
-          if (!issues.some(x => x.line === i.line && x.type === i.type)) {
-            issues.push(i);
-          }
-        });
-      }
-    } catch(e) {}
+  if (typeof SmartContext !== 'undefined' && SmartContext && typeof SmartContext.analyze === 'function') {
+    runEngine('SmartContext', () => SmartContext.analyze(code, fileName)).forEach(i => {
+      if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+    });
   }
 
   // SemanticLayer — فهم النية والسياق
-  if (typeof SemanticLayer !== 'undefined') {
-    try {
-      const sl = SemanticLayer.analyze(code, fileName);
-      sl.issues.forEach(i => {
-        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
-          issues.push(i);
-        }
-      });
-    } catch(e) {}
+  if (typeof SemanticLayer !== 'undefined' && SemanticLayer && typeof SemanticLayer.analyze === 'function') {
+    runEngine('SemanticLayer', () => SemanticLayer.analyze(code, fileName)).forEach(i => {
+      if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+    });
   }
 
   // ProjectIntelligence — فهم السياق الكامل
   if (typeof analyzeProject !== 'undefined') {
-    try {
-      const pi = analyzeProject(code, fileName, issues);
-      if (pi && pi.issues) {
-        pi.issues.forEach(i => {
-          if (!issues.some(x => x.line === i.line && x.type === i.type)) {
-            issues.push(i);
-          }
-        });
-      }
-    } catch(e) {}
+    runEngine('analyzeProject', () => analyzeProject(code, fileName, issues)).forEach(i => {
+      if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+    });
   }
 
   // ExtendedPatterns Analysis
-  if (typeof ExtendedPatterns !== 'undefined') {
-    try {
-      const ep = ExtendedPatterns.analyze(code, fileName);
-      ep.forEach(i => {
-        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
-          issues.push(i);
-        }
-      });
-    } catch(e) {}
+  if (typeof ExtendedPatterns !== 'undefined' && ExtendedPatterns && typeof ExtendedPatterns.analyze === 'function') {
+    runEngine('ExtendedPatterns', () => ExtendedPatterns.analyze(code, fileName)).forEach(i => {
+      if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+    });
   }
 
   // CVEPatterns Analysis
-  if (typeof CVEPatterns !== 'undefined') {
-    try {
-      const cve = CVEPatterns.analyze(code, fileName);
-      cve.forEach(i => {
-        const key = `${i.line}:${i.cwe||i.type}`;
-        if (!issues.some(x => `${x.line}:${x.cwe||x.type}` === key)) {
-          issues.push(i);
-        }
-      });
-    } catch(e) {}
+  if (typeof CVEPatterns !== 'undefined' && CVEPatterns && typeof CVEPatterns.analyze === 'function') {
+    runEngine('CVEPatterns', () => CVEPatterns.analyze(code, fileName)).forEach(i => {
+      const key = `${i.line}:${i.cwe||i.type}`;
+      if (!issues.some(x => `${x.line}:${x.cwe||x.type}` === key)) issues.push(i);
+    });
   }
 
   // KnowledgeBase Analysis
-  if (typeof KnowledgeBase !== 'undefined') {
-    try {
-      const kb = KnowledgeBase.analyze(code, fileName);
-      kb.forEach(i => {
-        if (!issues.some(x => x.line === i.line && x.type === i.type)) {
-          issues.push(i);
-        }
-      });
-    } catch(e) {}
+  if (typeof KnowledgeBase !== 'undefined' && KnowledgeBase && typeof KnowledgeBase.analyze === 'function') {
+    runEngine('KnowledgeBase', () => KnowledgeBase.analyze(code, fileName)).forEach(i => {
+      if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
+    });
   }
 
-  // Final dedup - يأخذ أعلى confidence
-  const dedupMap = new Map();
-  issues.forEach(issue => {
-    const t = (issue.type||issue.cAct||issue.cwe||'').toLowerCase()
-      .replace(/sql.*/,'sql').replace(/xss.*/,'xss')
-      .replace(/secret|credential|hardcoded/,'secret')
-      .replace(/cmd|command/,'cmd').replace(/eval|code.injection/,'code');
-    const key = (issue.line||0) + ':' + t;
-    const existing = dedupMap.get(key);
-    if (!existing || (issue.conf||0) > (existing.conf||0)) {
-      dedupMap.set(key, issue);
-    }
-  });
-  return Array.from(dedupMap.values());
+  // كل ثغرة — مهما تأخّر المحرك الذي أضافها — تحصل على conf/cIcon/cAct/cEv
+  finalizeIssues(issues, code);
+
+  // Final dedup — بمفتاح نوع الثغرة لا لغة الملف
+  return dedupeIssues(issues);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -686,7 +792,9 @@ function analyzePythonSecurity(code, issues) {
             const arg = m ? m[1] : 'cmd';
             issues.push({ type:'py', sev:'c', line:ln, ev:t,
                 title:'🔴 Command Injection Python — os.system خطير',
-                fix: `subprocess.run(shlex.split(${arg}), check=True)`,
+                fix: null, aiRequired: true,
+                fixHint: 'subprocess.run يتطلب import إضافي وقائمة argv؛ و shlex.split على نص مدموج ' +
+                         'لا يمنع حقن الوسائط ويغيّر دلالة القيمة المرجعة.',
                 conf:92, cIcon:'🔴', cAct:'CWE-78 Command Injection' });
         }
 
@@ -695,6 +803,7 @@ function analyzePythonSecurity(code, issues) {
             issues.push({ type:'py', sev:'c', line:ln, ev:t,
                 title:'🔐 ' + (t.match(/^(\w+)/)?.[1] || 'Secret') + ' مكشوف في الكود',
                 fix: t.replace(/["'][^"']+["']/, "os.environ.get('" + (t.match(/^(\w+)/)?.[1] || 'SECRET') + "', '')"),
+                fixHint: 'يتطلب import os في الملف — محرك الإصلاح يضيفه، والتطبيق اليدوي يجب أن يضيفه.',
                 conf:92, cIcon:'🔐', cAct:'CWE-798' });
         }
 
@@ -703,7 +812,8 @@ function analyzePythonSecurity(code, issues) {
             /["']\s*UPDATE.*["']\s*\+/.test(t) || /["']\s*DELETE.*["']\s*\+/.test(t)) {
             issues.push({ type:'py', sev:'c', line:ln, ev:t,
                 title:'🔴 SQL Injection — String Concatenation في Python',
-                fix: t.replace(/["'][^"']*["']\s*\+\s*\w+/, '"?" # use cursor.execute(query, (param,))'),
+                fix: null, aiRequired: true,
+                fixHint: 'يحتاج cursor.execute(query, params) بحسب الـdriver؛ إدراج # داخل التعبير يكسر الصياغة.',
                 conf:90, cIcon:'🔴', cAct:'CWE-89' });
         }
 
@@ -711,7 +821,9 @@ function analyzePythonSecurity(code, issues) {
         if (/hashlib\s*\.\s*md5\s*\(/.test(t) || /hashlib\s*\.\s*sha1\s*\(/.test(t)) {
             issues.push({ type:'py', sev:'h', line:ln, ev:t,
                 title:'🟠 MD5/SHA1 ضعيف — استخدم SHA256',
-                fix: t.replace(/hashlib\s*\.\s*md5\s*\(/, 'hashlib.sha256(').replace(/hashlib\s*\.\s*sha1\s*\(/, 'hashlib.sha256('),
+                fix: null, aiRequired: true,
+                fixHint: 'SHA256 ليس بديلاً عاماً: كلمات المرور تحتاج bcrypt/argon2، ' +
+                         'وchecksum أو توافق بروتوكول قد ينكسر بالاستبدال.',
                 conf:90, cIcon:'🟠', cAct:'CWE-327' });
         }
 
@@ -783,7 +895,7 @@ function analyzePython(code, issues) {
         if (PATTERNS.pyNoneCompare.test(line)) {
             issues.push({
                 type:'bug', sev:'m', title:'قارن بـ is None', line:i+1, ev:t,
-                fix: t.replace('== None', 'is None').replace('!= None', 'is not None'),
+                fix: t.replace(/!=\s*None/g, 'is not None').replace(/==\s*None/g, 'is None'),
             });
         }
 
@@ -799,16 +911,12 @@ function analyzePython(code, issues) {
 // ═══════════════════════════════════════════════════════
 
 function analyzeJS(code, fileName, ext, issues) {
-    let work = code;
-    if (ext === 'html') {
-        const scripts = [];
-        const re = /<script[^>]*>([\s\S]*?)<\/script>/gi;
-        let m;
-        while ((m = re.exec(code)) !== null) scripts.push(m[1]);
-        work = scripts.join('\n') || code;
-    }
+    // HTML: نُبقي أجسام <script> فقط ونستبدل الباقي بفراغات — عدد الأسطر يبقى
+    // كما هو فتظل أرقام الأسطر مطابقة للملف الأصلي (الدمج القديم كان يزيحها).
+    const work = (ext === 'html') ? htmlScriptOnly(code) : code;
 
-    const lines = work.split('\n');
+    const lines  = work.split('\n');
+    const noise  = maskedLines(work);
 
     // Stack-based loop tracking بدل flag واحد
     // نعدّ depth الـ braces — لو دخلنا loop نسجّل depth
@@ -817,10 +925,11 @@ function analyzeJS(code, fileName, ext, issues) {
 
     lines.forEach((line, i) => {
         const t = line.trim();
-        if (!t || t.startsWith('//')) return;
+        if (!t || t.startsWith('//') || noise[i] === 1) return;
+        const clean = maskLiterals(line, false);
 
-        const openBraces  = (line.match(/\{/g)  ?? []).length;
-        const closeBraces = (line.match(/\}/g)  ?? []).length;
+        const openBraces  = (clean.match(/\{/g)  ?? []).length;
+        const closeBraces = (clean.match(/\}/g)  ?? []).length;
 
         // forEach detection
         if (PATTERNS.jsForEach.test(line)) {
@@ -861,8 +970,8 @@ function analyzeJS(code, fileName, ext, issues) {
             issues.push({ type:'bug', sev:'c', title:'خطأ في التراكم: = بدل +=', line:i+1, ev:t, fix });
         }
 
-        // == بدل ===
-        if (PATTERNS.jsLooseEq.test(line) && /if\s*\(/.test(line)) {
+        // == بدل === — يُقرأ من السطر بعد إخفاء السلاسل والتعليقات
+        if (PATTERNS.jsLooseEq.test(clean) && /if\s*\(/.test(clean)) {
             issues.push({
                 type:'bug', sev:'m', title:'استخدم ===', line:i+1, ev:t,
                 fix: t.replace(/([^=!<>])==([^=])/g, '$1===$2'),
@@ -1003,7 +1112,8 @@ function suggestFix(funcName, params, code) {
             return `return next((x for x in ${c} if x.get("${customerKey}") == ${scalar}), None)`;
     }
 
-    if (n.includes('count')) {
+    // "discount" يحتوي "count" — بلا هذا الاستثناء يُرجَع len() لدالة خصم
+    if (n.includes('count') && !n.includes('discount')) {
         return activeKey
             ? `return sum(1 for x in ${c} if x.get("${activeKey}"))`
             : `return len(${c})`;
@@ -1054,7 +1164,11 @@ function enhanceStubs(issues, code) {
             .filter(Boolean);
         const fix = suggestFix(funcName, params, code);
         if (fix) {
-            issue.fix   = fix;
+            // اقتراح مبني على اسم الدالة ومفاتيح مُستنتَجة — ليس إصلاحاً مُتحقَّقاً
+            issue.fix        = fix;
+            issue.suggestion = true;
+            issue.aiRequired = true;
+            issue.fixHint    = 'اقتراح من اسم الدالة ومفاتيح مُستنتَجة من الكود — يجب مراجعته قبل التطبيق.';
             issue.conf  = SCORE.MIN_CONF;
             issue.cIcon = '🟡';
             issue.cAct  = 'اقتراح محرك';
