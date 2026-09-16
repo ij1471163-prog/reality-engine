@@ -461,6 +461,61 @@ var RealityOrchestrator = (() => {
     });
   }
 
+  // ─── AI phase — routes AI_REQUIRED issues to registered AI engines ──
+  // AI engines may return suggestions only. No patch is applied here.
+  async function runAI(aiNeeded, code, fileName, options) {
+    if (!Array.isArray(aiNeeded) || aiNeeded.length === 0 ||
+        typeof code !== 'string' || !code.trim() || !fileName) {
+      return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
+        null, 'runAI: invalid arguments');
+    }
+
+    const engines = listEngines(EngineType.AI);
+    if (engines.length === 0) {
+      return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
+        null, 'No AI engine registered — Fail-Closed');
+    }
+
+    const errors = [];
+
+    for (const engine of engines) {
+      try {
+        const result = await engine.fn(aiNeeded, code, fileName, options);
+
+        if (result == null) {
+          errors.push({ engine: engine.id, error: 'null result' });
+          continue;
+        }
+
+        return _deepFreeze({
+          phase: 'AI',
+          engine: engine.id,
+          result,
+          errors,
+        });
+      } catch (e) {
+        errors.push({
+          engine: engine.id,
+          error: String(e.message)
+        });
+      }
+    }
+
+    return _deepFreeze({
+      phase: 'AI',
+      engine: null,
+      result: null,
+      errors,
+      decision: _makeResult(
+        _INTERNAL,
+        Decision.PENDING_REVIEW,
+        Source.ORCHESTRATOR,
+        null,
+        'All AI engines failed — Fail-Closed'
+      ),
+    });
+  }
+
   // ─── DECIDE phase (Policy gated) ─────────────────────
   function decide(repairOrFallback, verifyPhase, aiPhase) {
     const phase = repairOrFallback && repairOrFallback.phase;
@@ -641,6 +696,7 @@ var RealityOrchestrator = (() => {
     runVerification,
     runFallbackChain,
     recordAISuggestion,
+    runAI,
     decide,
     // Public approval factory (replaces makeResult)
     makeApproval,
