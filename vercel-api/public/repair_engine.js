@@ -128,7 +128,9 @@ function fixEval(code, issue, lines2, ext2, fileName) {
     if (/json|data|response|result/i.test(arg)) {
       lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
     } else {
-      lines[ln] = `${indent}// SECURITY: eval() removed. Validate ${arg} before use`;
+      // لا نحذف السطر ولا نغيّر معناه عندما لا يكون المقصود JSON واضحًا.
+      // الإصلاح الدلالي يُترك لمسار AI_REQUIRED.
+      return null;
     }
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'eval() replaced with safe alternative' };
   } else if (ext === 'py') {

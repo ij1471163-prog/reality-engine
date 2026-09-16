@@ -57,6 +57,29 @@ const SECRET_LINE = {
 };
 
 // ═══ 1. fixHardcodedSecret — صياغة env لكل لغة ═══════
+test('fixEval: لا يحذف السطر كاملًا عند eval غير واضح', () => {
+  const ctx = loadContext(serverEngineList());
+  assert.deepStrictEqual(ctx.__loadErrors, []);
+  const A = ctx.repairCode;
+  const code = 'const x = eval(userInput);';
+  const issues = [{
+    title: '🔴 eval() خطير جداً',
+    line: 1,
+    sev: 'c',
+    type: 'security',
+    ev: 'eval(userInput)'
+  }];
+
+  const result = A(code, issues, 'test.js');
+
+  assert.ok(result, 'repairCode لم يرجع نتيجة');
+  assert.strictEqual(
+    result.repaired,
+    code,
+    'eval غير الواضح يجب ألا يحذف السطر أو يبدل معناه تلقائيًا'
+  );
+});
+
 test('fixHardcodedSecret: يستخدم صياغة اللغة الصحيحة', () => {
   const ctx = loadContext(['repair_engine.js']);
   const expected = {
