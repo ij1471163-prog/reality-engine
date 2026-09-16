@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { RealityOrchestrator } = require('../public/server_engine_registration.js');
 
 const analyzeLimits = new Map();
 
@@ -20,6 +21,31 @@ module.exports = async (req, res) => {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Session authentication — same rotating HMAC token used by /api/chat.
+  const auth = req.headers['authorization'] || '';
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return res.status(401).json({ error: 'No token' });
+
+  const master = process.env.MASTER_SECRET || '';
+  if (!master) return res.status(500).json({ error: 'Server authentication is not configured' });
+
+  const crypto = require('crypto');
+  let valid = false;
+
+  for (let w = 0; w <= 1; w++) {
+    const window = Math.floor(Date.now() / (10 * 60 * 1000)) - w;
+    const expected = crypto.createHmac('sha256', master)
+      .update('web_' + window)
+      .digest('hex');
+
+    if (token === expected) {
+      valid = true;
+      break;
+    }
+  }
+
+  if (!valid) return res.status(401).json({ error: 'Invalid token' });
 
   const { code, fileName, fix } = req.body;
   if (!code || !fileName) return res.status(400).json({ error: 'code and fileName required' });
@@ -84,56 +110,33 @@ module.exports = async (req, res) => {
     const score = Math.max(0, Math.round(100 - Math.min(90, c*10+h*5+m*2+l*1)));
 
       let fixed = code;
-      let healingResult = null;
+    let healingResult = null;
+    let orchestratorResult = null;
+
     if (fix) {
-      const SH = ctx.SelfHealing;
-      const sqlIssues = issues.filter(i => (i.type||i.cAct||'').toUpperCase().includes('SQL'));
+      // Central repair pipeline:
+      // Analyzer -> deterministic repair/fallback -> verification -> Claude fallback.
+      // Claude suggestions are NEVER auto-applied.
+      orchestratorResult = await RealityOrchestrator.runPipelineAsync(
+        code,
+        fileName,
+        { useFallbackChain: true }
+      );
 
-      let usedSelfHealing = false;
+      const decision = orchestratorResult && orchestratorResult.decision;
 
-      if (SH && sqlIssues.length > 0) {
-        for (const issue of sqlIssues) {
-          const problem = {
-            type: 'SQL_INJECTION', engine: 'repair_sql',
-            fileName, code: ctx.F[fileName],
-            detail: issue.title || '',
-            targetIssues: [issue]
-          };
-          const healed = SH.heal(problem);
-          if (healed && healed.status === 'PENDING_REVIEW' && healed.result === 'PASS') {
-            ctx.F[fileName] = healed.patchedCode;
-            healingResult = { id: healed.id, status: 'PENDING_REVIEW', result: 'PASS' };
-            usedSelfHealing = true;
-            break;
-          } else if (healed && healed.status === 'ROLLED_BACK') {
-            healingResult = { id: healed.id, status: 'ROLLED_BACK', result: 'FAIL' };
-            usedSelfHealing = true;
-            break;
-          }
-        }
+      if (decision && decision.decision === RealityOrchestrator.Decision.SAFE_AUTO_FIX) {
+        fixed = decision.patch || code;
       }
 
-      if (!usedSelfHealing) {
-        // مسار الإصلاح القديم
-        for (let p = 0; p < 5; p++) {
-          const iss = vm.runInContext(`analyzeCode(F[__name], __name)`, ctx);
-          if (!iss.length) break;
-          ctx.tmpI = iss;
-          const r = vm.runInContext(`repairCode(F[__name], tmpI, __name)`, ctx);
-          if (!r || r.repaired === ctx.F[fileName] || !r.repairs.length) break;
-          ctx.F[fileName] = r.repaired;
-        }
-        ctx.R[fileName] = { issues: vm.runInContext(`analyzeCode(F[__name], __name)`, ctx) };
-        vm.runInContext('applyFallbackToAll(F, R)', ctx);
-        vm.runInContext('SmartRepairEngine.applySmartRepair(F, R)', ctx);
-        vm.runInContext('applyEmergencyToAll(F, R)', ctx);
-      }
+      // Preserve the existing healing field while exposing the new
+      // orchestrator decision for the client.
+      healingResult = {
+        status: decision ? decision.decision : 'PENDING_REVIEW',
+        result: decision ? decision.reason : 'No orchestrator decision',
+      };
+    }
 
-      fixed = ctx.F[fileName];
-      // أضف healingResult للـresponse لاحقاً
-      ctx._healingResult = healingResult;
-
-      }
     res.status(200).json({ healing: healingResult || null,
       success: true,
       fileName,
@@ -144,7 +147,12 @@ module.exports = async (req, res) => {
       })),
       score,
       stats: { critical: c, high: h, medium: m, low: l, total: issues.length },
-      fixed: fix ? fixed : undefined,
+      fixed: fix && orchestratorResult &&
+        orchestratorResult.decision &&
+        orchestratorResult.decision.decision === RealityOrchestrator.Decision.SAFE_AUTO_FIX
+          ? fixed
+          : undefined,
+      orchestrator: fix ? orchestratorResult : undefined,
     });
 
   } catch(e) {

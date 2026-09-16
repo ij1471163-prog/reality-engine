@@ -249,6 +249,85 @@ var RealityOrchestrator = (() => {
     );
   }
 
+  // ─── Apply approved Claude suggestion ──────────────────
+  // Human approval is required, then the patch is re-verified
+  // immediately before application.
+  function applyApprovedSuggestion(approvedResult, originalCode, fileName) {
+    if (!approvedResult ||
+        approvedResult.decision !== Decision.AI_SUGGESTION) {
+      return _makeResult(
+        _INTERNAL,
+        Decision.REJECTED,
+        Source.ORCHESTRATOR,
+        null,
+        'applyApprovedSuggestion: input must be an AI_SUGGESTION result'
+      );
+    }
+
+    if (!approvedResult.meta ||
+        !approvedResult.meta.approvedBy ||
+        typeof approvedResult.meta.approvedBy !== 'string') {
+      return _makeResult(
+        _INTERNAL,
+        Decision.PENDING_REVIEW,
+        Source.ORCHESTRATOR,
+        null,
+        'applyApprovedSuggestion: explicit human approval is required'
+      );
+    }
+
+    if (typeof originalCode !== 'string' ||
+        !originalCode.trim() ||
+        typeof approvedResult.patch !== 'string' ||
+        !approvedResult.patch.trim() ||
+        !fileName) {
+      return _makeResult(
+        _INTERNAL,
+        Decision.REJECTED,
+        Source.ORCHESTRATOR,
+        null,
+        'applyApprovedSuggestion: missing originalCode, patch, or fileName'
+      );
+    }
+
+    // Re-run verification immediately before application.
+    const verifyResult = runVerification(
+      originalCode,
+      approvedResult.patch,
+      fileName
+    );
+
+    if (verifyResult.valid !== true || verifyResult.improved !== true) {
+      return _makeResult(
+        _INTERNAL,
+        Decision.REJECTED,
+        Source.ORCHESTRATOR,
+        null,
+        'Approved Claude suggestion failed final verification',
+        {
+          approvedBy: approvedResult.meta.approvedBy,
+          verifyResult,
+        }
+      );
+    }
+
+    // Return the verified patch as APPLY-READY.
+    // The caller performs the actual persistence/write.
+    return _makeResult(
+      _INTERNAL,
+      Decision.SAFE_AUTO_FIX,
+      Source.ORCHESTRATOR,
+      approvedResult.patch,
+      `Approved by "${approvedResult.meta.approvedBy}" and passed final verification`,
+      {
+        approvedBy: approvedResult.meta.approvedBy,
+        approvedAt: approvedResult.meta.approvedAt,
+        verifyResult,
+        applied: false,
+      }
+    );
+  }
+
   // ─── ANALYZE phase ────────────────────────────────────
   function runAnalysis(code, fileName) {
     if (typeof code !== 'string' || !fileName) {
@@ -672,6 +751,139 @@ var RealityOrchestrator = (() => {
     return _deepFreeze({ version: VERSION, fileName, phases, decision });
   }
 
+  // Async pipeline for AI fallback.
+  // Claude suggestions are verified and never auto-applied.
+  async function runPipelineAsync(code, fileName, options) {
+    options = options || {};
+
+    if (typeof code !== 'string' || !code.trim() || !fileName) {
+      return _deepFreeze({
+        version: VERSION,
+        fileName: fileName || null,
+        phases: {},
+        decision: _makeResult(
+          _INTERNAL,
+          Decision.PENDING_REVIEW,
+          Source.ORCHESTRATOR,
+          null,
+          'runPipelineAsync: invalid arguments'
+        ),
+      });
+    }
+
+    const phases = {};
+
+    // 1. Analyze
+    const analyzeResult = runAnalysis(code, fileName);
+    phases.analyze = analyzeResult;
+
+    const issues = analyzeResult.issues || [];
+
+    if (issues.length === 0 && !(analyzeResult.errors || []).length) {
+      const decision = _makeResult(
+        _INTERNAL,
+        Decision.REJECTED,
+        Source.ORCHESTRATOR,
+        null,
+        'No issues found'
+      );
+
+      phases.decision = decision;
+
+      return _deepFreeze({
+        version: VERSION,
+        fileName,
+        phases,
+        decision,
+      });
+    }
+
+    // 2. Deterministic repair first.
+    const fallback = runFallbackChain(code, issues, fileName);
+    phases.fallback = fallback;
+
+    // Never give Claude an unverified patch.
+    const aiBaseCode = fallback.verifiedCode || code;
+
+    // 3. Send only unresolved AI_REQUIRED issues to Claude.
+    if (Array.isArray(fallback.aiNeeded) && fallback.aiNeeded.length > 0) {
+      const aiResult = await runAI(
+        fallback.aiNeeded,
+        aiBaseCode,
+        fileName,
+        options
+      );
+
+      phases.ai = aiResult;
+
+      const suggestions =
+        aiResult && Array.isArray(aiResult.result)
+          ? aiResult.result
+          : [];
+
+      const firstSuggestion = suggestions.find(
+        item =>
+          item &&
+          item.status === 'SUGGESTION' &&
+          typeof item.suggestion === 'string' &&
+          item.suggestion.trim()
+      );
+
+      if (firstSuggestion) {
+        // Claude may return Markdown code fences. Strip them before verification.
+        const patch = firstSuggestion.suggestion
+          .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, '')
+          .replace(/\n?```\s*$/, '')
+          .trim();
+
+        if (patch) {
+          // 4. Verify Claude's suggestion against the verified deterministic base.
+          const aiVerify = runVerification(
+            aiBaseCode,
+            patch,
+            fileName
+          );
+
+          phases.aiVerify = aiVerify;
+
+          // 5. Convert to the shape expected by decide().
+          const aiPhase = {
+            decision: Decision.AI_SUGGESTION,
+            patch,
+          };
+
+          phases.aiPhase = aiPhase;
+
+          const decision = decide(
+            fallback,
+            aiVerify,
+            aiPhase
+          );
+
+          phases.decision = decision;
+
+          return _deepFreeze({
+            version: VERSION,
+            fileName,
+            phases,
+            decision,
+          });
+        }
+      }
+    }
+
+    // Claude failed, returned no usable suggestion, or no AI issue existed.
+    const decision = decide(fallback, null, null);
+    phases.decision = decision;
+
+    return _deepFreeze({
+      version: VERSION,
+      fileName,
+      phases,
+      decision,
+    });
+  }
+
   // ─── Public API ───────────────────────────────────────
   // makeResult is NOT exported — use makeApproval() for external approvals.
   return Object.freeze({
@@ -702,11 +914,13 @@ var RealityOrchestrator = (() => {
     decide,
     // Public approval factory (replaces makeResult)
     makeApproval,
+    applyApprovedSuggestion,
     // Full pipeline
     runPipeline,
+    runPipelineAsync,
   });
 
 })();
 
-if (typeof window !== 'undefined') window.RealityOrchestrator = RealityOrchestrator;
+if (typeof globalThis !== 'undefined' && typeof globalThis.window !== 'undefined') globalThis.window.RealityOrchestrator = RealityOrchestrator;
 if (typeof module !== 'undefined') module.exports = RealityOrchestrator;

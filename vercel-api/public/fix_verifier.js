@@ -146,5 +146,5 @@ var FixVerifier = (() => {
   return { verify, quickCheck, fullVerify };
 })();
 
-if (typeof window !== 'undefined') window.FixVerifier = FixVerifier;
+if (typeof globalThis !== 'undefined' && typeof globalThis.window !== 'undefined') globalThis.window.FixVerifier = FixVerifier;
 if (typeof module !== 'undefined') module.exports = FixVerifier;

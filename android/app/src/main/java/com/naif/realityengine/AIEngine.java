@@ -222,6 +222,14 @@ public class AIEngine {
                 java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
+
+                String session = fetchSessionToken();
+                if (session == null || session.isEmpty()) {
+                    callback.onError("خطأ: تعذر الحصول على Session Token");
+                    return;
+                }
+                conn.setRequestProperty("Authorization", "Bearer " + session);
+
                 conn.setDoOutput(true);
                 conn.setConnectTimeout(15000);
                 conn.setReadTimeout(30000);

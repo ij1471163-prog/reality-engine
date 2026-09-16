@@ -169,5 +169,5 @@ var ClaudeEngine = (() => {
 
 })();
 
-if (typeof window !== 'undefined') window.ClaudeEngine = ClaudeEngine;
+if (typeof globalThis !== 'undefined' && typeof globalThis.window !== 'undefined') globalThis.window.ClaudeEngine = ClaudeEngine;
 if (typeof module !== 'undefined') module.exports = ClaudeEngine;
