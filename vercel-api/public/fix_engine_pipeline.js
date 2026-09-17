@@ -31,11 +31,43 @@
 // ═══════════════════════════════════════════════════════
 
 // ─── ربط بوابة التحقق الوحيدة ───────────────────────────
-var _PFV = (typeof FixVerifier !== 'undefined') ? FixVerifier : null;
-if (!_PFV && typeof require === 'function') {
-    try { _PFV = require('./fix_verifier.js'); } catch (e) { _PFV = null; }
+// [v2.1] Lazy Resolver — يبحث عن FixVerifier **وقت الاستخدام** لا وقت التحميل.
+//
+// كان: var _PFV = (typeof FixVerifier !== 'undefined') ? FixVerifier : null;
+// يُنفَّذ مرة واحدة عند تحميل الملف. فإذا حُمِّل fix_engine_pipeline.js قبل
+// fix_verifier.js يبقى _PFV = null إلى الأبد، ويصير كل إصلاح مرفوضًا بـ
+// REJECTED_VERIFIER_UNAVAILABLE. النتيجة تعطّل صامت: المحرك لا يصلح شيئًا
+// ولا يظهر خطأ — يبدو كأنه "لم يجد مشاكل". أُثبت ذلك بالتشغيل.
+//
+// الآن البحث يتكرر عند كل استدعاء، فوصول الـVerifier متأخرًا يُلتقط.
+// التخزين المؤقت يحدث بعد أول نجاح فقط — لا يُخزَّن الفشل إطلاقًا.
+var _PFV = null;
+
+function _getFixVerifier() {
+    if (_PFV && typeof _PFV.verifyFix === 'function') return _PFV;
+    _PFV = null;
+
+    // 1) متغير عام في نفس النطاق (ترتيب سكربتات المتصفح)
+    if (typeof FixVerifier !== 'undefined' && FixVerifier
+        && typeof FixVerifier.verifyFix === 'function') {
+        _PFV = FixVerifier;
+        return _PFV;
+    }
+    // 2) globalThis (window.FixVerifier أو بيئة أخرى)
+    if (typeof globalThis !== 'undefined' && globalThis.FixVerifier
+        && typeof globalThis.FixVerifier.verifyFix === 'function') {
+        _PFV = globalThis.FixVerifier;
+        return _PFV;
+    }
+    // 3) CommonJS
+    if (typeof require === 'function') {
+        try {
+            const m = require('./fix_verifier.js');
+            if (m && typeof m.verifyFix === 'function') { _PFV = m; return _PFV; }
+        } catch (e) { /* غير متاح الآن — Fail-Closed لدى المستدعي */ }
+    }
+    return null;   // قد يتوفر في استدعاء لاحق
 }
-if (!_PFV && typeof globalThis !== 'undefined' && globalThis.FixVerifier) _PFV = globalThis.FixVerifier;
 
 // ─── Syntax Guard للإصلاح المتعلَّم ─────────────────────
 // يبقى كما هو: فحص إضافي رخيص خاص بـJS. ليس بديلاً عن FixVerifier،
@@ -92,7 +124,8 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
     if (typeof candidate !== 'string' || candidate === before) return false;
 
     // Fail-Closed: بلا بوابة لا نكتب شيئًا إطلاقًا
-    if (!_PFV || typeof _PFV.verifyFix !== 'function') {
+    const _fv = _getFixVerifier();
+    if (!_fv) {
         report.rejected.push({
             file: fn, source,
             reason: 'REJECTED_VERIFIER_UNAVAILABLE — fix_verifier.js غير محمّل'
@@ -103,7 +136,7 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
     const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
     // ملاحظة: لا نمرر allowUnverifiedLanguages إطلاقًا ⇒ HTML وأي لغة بلا
     // فاحص تُرفض افتراضيًا. هذا مقصود.
-    const v = _PFV.verifyFix(before, candidate, fn, analyzer, {});
+    const v = _fv.verifyFix(before, candidate, fn, analyzer, {});
 
     if (!v.accepted) {
         report.rejected.push({ file: fn, source, reason: v.reason, syntaxStatus: v.syntaxStatus });
@@ -236,7 +269,21 @@ function fixAllEngine() {
             if (!committed) break; // رُفض ⇒ لا نبني pass تاليًا على كود غير معتمد
 
             // التعلّم: فقط بعد Ghost PASS **و** قبول البوابة معًا
-            if (ghostVerdict === 'pass' && typeof LearningEngine !== 'undefined') {
+            // [v2.1] التعلّم مشروط بقبول البوابة، لا بحكم Ghost.
+            //
+            // كان: if (ghostVerdict === 'pass' && …) وله عيبان مُثبتان:
+            //   (أ) بلا GhostMode يبقى ghostVerdict = null، فلا يحدث تعلّم
+            //       إطلاقًا رغم أن البوابة قبلت التعديل وكُتب فعلاً.
+            //   (ب) بعد GhostMode v2.2 لم تعد fix() تُرجع 'partial'، فصار
+            //       'pass' يعني "قبلته بوابة Ghost الداخلية" لا "إصلاح مكتمل"
+            //       — أي أن الشرط يقيس شيئًا غير الذي يبدو أنه يقيسه.
+            //
+            // الوصول إلى هنا يعني committed === true بالضرورة (بسبب
+            // `if (!committed) break;` أعلاه)، أي أن FixVerifier قبل التعديل
+            // وكُتب فعلاً. Ghost يبقى مرحلة تحقق سابقة لا تمنح قبولاً.
+            // ⚠️ رفض FixVerifier ⇒ لا learn() ولا verify() — الكود لا يصل هنا.
+            if (typeof LearningEngine !== 'undefined') {
+                // F[fn] هنا هو الكود المعتمد من البوابة حصرًا
                 const patternIds = LearningEngine.learn(beforeCode, F[fn], issues, fn);
                 if (Array.isArray(patternIds) && patternIds.length > 0) {
                     patternIds.forEach(id => LearningEngine.verify(id, true));
@@ -323,4 +370,5 @@ function fixAllEngine() {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { fixAllEngine, learnedSyntaxOk, _gateAndCommit, _runIsolatedEngine };
 }
+
 
