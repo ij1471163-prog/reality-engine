@@ -177,12 +177,12 @@ function analyzeCCpp(code, fileName) {
       const hits = ccFindCalls(c, fn);
       if (!hits.length) return undefined;
       const split = ccSplitArgsAt(c, line, hits[0].openIdx);
-      return split ? { hit: hits[0], split } : null;
+      return { hit: hits[0], split };
     };
 
     const gets = callOf('gets');
     if (gets !== undefined) {
-      const arg = (gets && gets.split.args.length === 1) ? ccTrim(gets.split.args[0].text) : null;
+      const arg = (gets && gets.split && gets.split.args.length === 1) ? ccTrim(gets.split.args[0].text) : null;
       const ok  = !!(arg && plainIdent(arg) && isArray(arg));
       issues.push(ccIssue({
         sev: 'c', line: ln, ev: t,
@@ -190,7 +190,7 @@ function analyzeCCpp(code, fileName) {
         fix: ok ? line.slice(0, gets.hit.nameStart) + 'fgets(' + arg + ', sizeof(' + arg + '), stdin)' +
                   line.slice(gets.split.closeIdx + 1) : null,
         fixHint: ok ? 'fgets تُبقي محرف السطر الجديد بينما gets تحذفه — راجع من يقرأ المخزن.'
-                    : (gets === null ? SPANS
+                    : (!gets.split ? SPANS
                                      : 'الهدف ليس مصفوفة مُعلَنة في هذا الملف، فـsizeof عليه يعطي حجم المؤشر لا حجم المخزن.'),
         conf: 97, cIcon: '🔴', cAct: 'CWE-120 Buffer Overflow',
         cEv: ['gets() لا تتحقق من حجم المخزن — استخدم fgets()'],
@@ -199,7 +199,7 @@ function analyzeCCpp(code, fileName) {
 
     const scpy = callOf('strcpy');
     if (scpy !== undefined) {
-      const a   = (scpy && scpy.split.args.length === 2) ? scpy.split.args : null;
+      const a   = (scpy && scpy.split && scpy.split.args.length === 2) ? scpy.split.args : null;
       const dst = a ? ccTrim(a[0].text) : null;
       const ok  = !!(dst && plainIdent(dst) && isArray(dst));
       // [BUG-1 fix] The strcpy→strncpy fix emits TWO statements (strncpy + NULL-terminator).
@@ -257,7 +257,7 @@ function analyzeCCpp(code, fileName) {
 
     const scat = callOf('strcat');
     if (scat !== undefined) {
-      const a   = (scat && scat.split.args.length === 2) ? scat.split.args : null;
+      const a   = (scat && scat.split && scat.split.args.length === 2) ? scat.split.args : null;
       const dst = a ? ccTrim(a[0].text) : null;
       const ok  = !!(dst && plainIdent(dst) && isArray(dst));
       issues.push(ccIssue({
@@ -276,7 +276,7 @@ function analyzeCCpp(code, fileName) {
 
     const spf = callOf('sprintf');
     if (spf !== undefined) {
-      const a   = (spf && spf.split.args.length >= 2) ? spf.split.args : null;
+      const a   = (spf && spf.split && spf.split.args.length >= 2) ? spf.split.args : null;
       const dst = a ? ccTrim(a[0].text) : null;
       const ok  = !!(dst && plainIdent(dst) && isArray(dst));
       issues.push(ccIssue({
