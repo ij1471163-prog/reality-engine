@@ -112,6 +112,11 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/code_converter.js"></script>
 <script src="/test_generator.js"></script>
 <script src="/engine_ast.js"></script>
+<!-- ═══ المعمارية المركزية ═══
+     FixVerifier = بوابة التحقق الوحيدة، RealityOrchestrator = المدير المركزي.
+     يُحمَّلان قبل السكربت المضمَّن حتى تكون الدوال متاحة عند أول استخدام. -->
+<script src="/fix_verifier.js"></script>
+<script src="/reality_orchestrator.js"></script>
 </head>
 <body>
 <div class="header">
@@ -180,6 +185,129 @@ setTimeout(() => {
 }, 1000);
 const R = {}; // filename → { code, issues }
 let _toastTimer = null;
+
+// ═══════════════════════════════════════════════════════
+// ═══ طبقة المعمارية المركزية — UI adapters فقط ═══
+//
+//   UI (هذا الملف)
+//      ↓
+//   RealityOrchestrator   ← المدير المركزي الوحيد
+//      ↓
+//   Repair Engines / Claude
+//      ↓
+//   FixVerifier           ← بوابة التحقق الوحيدة
+//      ↓
+//   ACCEPT → كتابة F/R    |    REJECT → لا كتابة إطلاقًا
+//
+// قاعدة صارمة: NO VERIFIED PATCH = NO WRITE.
+// أي تعديل ناتج عن إصلاح يمر عبر _gateApply() حصرًا.
+// الاستثناءات (ليست إصلاحًا): رفع ملف، حذف ملف، تنزيل، تحليل بلا إصلاح.
+// ═══════════════════════════════════════════════════════
+
+function _hasVerifier() {
+    return typeof FixVerifier !== 'undefined' && FixVerifier
+        && typeof FixVerifier.verifyFix === 'function';
+}
+function _hasOrchestrator() {
+    return typeof RealityOrchestrator !== 'undefined' && RealityOrchestrator
+        && typeof RealityOrchestrator.runPipeline === 'function';
+}
+function _safeEngineMissing() {
+    toast('❌ محرك الإصلاح الآمن غير متوفر', 'e');
+}
+
+/**
+ * نقطة الكتابة الوحيدة لأي إصلاح.
+ * candidate → FixVerifier.verifyFix(الكود الموثوق الحالي, candidate) → ACCEPT/REJECT.
+ * عند الرفض: F و R لا يتغيران إطلاقًا (لا partial write).
+ *
+ * @returns {{applied:boolean, reason:string, verify:object|null}}
+ */
+function _gateApply(fn, candidate, label) {
+    if (!_hasVerifier()) {
+        return { applied: false, reason: 'VERIFIER_UNAVAILABLE', verify: null };
+    }
+    const current = F[fn];
+    if (typeof candidate !== 'string' || candidate === current) {
+        return { applied: false, reason: 'NO_CHANGE', verify: null };
+    }
+    const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+    let v;
+    try {
+        v = FixVerifier.verifyFix(current, candidate, fn, analyzer, {});
+    } catch (e) {
+        return { applied: false, reason: 'VERIFIER_THREW: ' + (e && e.message), verify: null };
+    }
+    if (!v || v.accepted !== true) {
+        return { applied: false, reason: (v && v.reason) || 'REJECTED', verify: v || null };
+    }
+    // ✅ مقبول — الكتابة الوحيدة المسموح بها
+    F[fn] = candidate;
+    R[fn] = { code: candidate, issues: v.afterIssues || (analyzer ? analyzer(candidate, fn) : []) };
+    return { applied: true, reason: v.reason || 'ACCEPTED', verify: v };
+}
+
+/**
+ * تسجيل المحركات في المنسّق، مرة واحدة وعند الحاجة فقط (يُستدعى من
+ * fixAllEngineUI لا عند تحميل الصفحة).
+ *
+ * ⚠️ حدّ معماري مُعلن: قيم `priority` أدناه هي قرار ترتيب، وهي مكتوبة هنا.
+ * هذا أقرب ما يمكن بلوغه بلا نقل ملفات: الواجهة **تُسجِّل** المحركات
+ * المتاحة في هذه الصفحة (وهي وحدها من تعرف أيّها حُمِّل فعلاً عبر وسوم
+ * <script>)، لكنها **لا تُشغِّلها ولا تسلسلها**. الاختيار والتسلسل وقرار
+ * Fallback/Claude كلها داخل RealityOrchestrator.runPipeline.
+ *
+ * النقل الصحيح لاحقًا: ملف تسجيل مستقل (engines_registry.js) يستدعيه
+ * المنسّق. مؤجَّل لأنه يتطلب إنشاء ملف جديد، وهو خارج نطاق هذه الدفعة.
+ */
+let _enginesRegistered = false;
+function _registerEngines() {
+    if (_enginesRegistered || !_hasOrchestrator()) return _enginesRegistered;
+    const RO = RealityOrchestrator;
+    const reg = (id, type, fn, caps, meta) => {
+        try { if (!RO.hasEngine(id)) RO.registerEngine(id, type, fn, caps, meta || {}); }
+        catch (e) { /* تسجيل مكرر أو غير صالح — يتجاهله المنسّق */ }
+    };
+
+    if (typeof analyzeCode === 'function') {
+        reg('ui-analyzer', RO.EngineType.ANALYZER, (code, fileName) => analyzeCode(code, fileName), ['*']);
+    }
+    if (typeof repairCode === 'function') {
+        reg('repair-engine', RO.EngineType.REPAIR, (code, issues, fileName) => {
+            const r = repairCode(code, issues, fileName);
+            return { repaired: r && r.repaired, repairs: (r && r.repairs) || [], aiNeeded: [] };
+        }, ['*'], { priority: 40 });
+    }
+    if (typeof AdvancedRepair !== 'undefined' && AdvancedRepair && typeof AdvancedRepair.fix === 'function') {
+        reg('advanced-repair', RO.EngineType.REPAIR, (code, issues, fileName) => {
+            const r = AdvancedRepair.fix(code, fileName);
+            return { repaired: r && r.fixed, repairs: (r && r.repairs) || [], aiNeeded: (r && r.aiRequired) || [] };
+        }, ['*'], { priority: 30 });
+    }
+    if (typeof HTMLRepair !== 'undefined' && HTMLRepair && typeof HTMLRepair.fix === 'function') {
+        reg('html-repair', RO.EngineType.REPAIR, (code, issues, fileName) => {
+            if (!/\.html?$/i.test(fileName || '')) return { repaired: code, repairs: [], aiNeeded: [] };
+            const r = HTMLRepair.fix(code, fileName);
+            return { repaired: r && r.fixed, repairs: (r && r.repairs) || [], aiNeeded: [] };
+        }, ['*'], { priority: 20 });
+    }
+    if (typeof RepairSQL !== 'undefined' && RepairSQL && typeof RepairSQL.fix === 'function') {
+        reg('repair-sql', RO.EngineType.REPAIR, (code, issues, fileName) => {
+            const r = RepairSQL.fix(code, fileName);
+            return { repaired: r && r.code, repairs: (r && r.count) ? new Array(r.count).fill('sql') : [], aiNeeded: [] };
+        }, ['*'], { priority: 10 });
+    }
+    // VERIFIER: غلاف رفيع حول FixVerifier — لا منطق تحقق خاص بالواجهة.
+    if (_hasVerifier()) {
+        reg('fix-verifier', RO.EngineType.VERIFIER, (before, after, fileName) => {
+            const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+            const v = FixVerifier.verifyFix(before, after, fileName, analyzer, {});
+            return { valid: !!(v && v.accepted), improved: !!(v && v.accepted), reason: (v && v.reason) || '' };
+        }, ['*']);
+    }
+    _enginesRegistered = true;
+    return true;
+}
 
 // ═══════════════════════════════════════════════════════
 // Init
@@ -360,10 +488,12 @@ function renderResults(tot, st, bg) {
 }
 
 // ═══════════════════════════════════════════════════════
-// Apply Fix — من الأسفل للأعلى (no index drift)
+// Apply Fix — المرشّح يُبنى هنا، لكن الاعتماد عبر FixVerifier فقط
 // ═══════════════════════════════════════════════════════
 
 function applyFix(fn, li, oldLine, newLine, idx) {
+    if (!_hasVerifier()) { _safeEngineMissing(); return; }
+
     const lines = F[fn].split('\n');
     if (li < 0 || li >= lines.length) return;
     const ind = lines[li].match(/^(\s*)/)[1];
@@ -380,17 +510,17 @@ function applyFix(fn, li, oldLine, newLine, idx) {
             || lines[endLine].trim().startsWith('#'))) endLine++;
 
     const fixLines = newLine.split('\n').map(l => ind + l.trimStart());
-    // ✅ splice يعمل صح لأننا نعالج issue واحدة في كل مرة
+    // ✅ يُبنى المرشّح على نسخة — لا كتابة على F قبل التحقق
     lines.splice(defLine, endLine - defLine, lines[defLine], ...fixLines);
-    F[fn] = lines.join('\n');
+    const candidate = lines.join('\n');
 
-    const newIss = analyzeCode(F[fn], fn);
-    const gone   = !newIss.some(ni =>
-        ni.title === R[fn].issues.find(oi => oi.line === li + 1)?.title
-        && Math.abs(ni.line - (li + 1)) <= 2
-    );
-    R[fn] = { code: F[fn], issues: newIss };
-    toast(gone ? '✅ تم التحقق — المشكلة اختفت' : '⚠️ تم التطبيق — راجع النتيجة', gone ? 's' : 'w');
+    // ⛔ analyzeCode وحده ليس بوابة تحقق — القرار لـFixVerifier حصرًا
+    const res = _gateApply(fn, candidate, 'applyFix');
+    if (!res.applied) {
+        toast('❌ رُفض الإصلاح: ' + res.reason, 'e');
+        return;                                   // F و R لم يتغيرا
+    }
+    toast('✅ تم التحقق واعتماد الإصلاح', 's');
     refreshStats();
 }
 
@@ -403,10 +533,12 @@ async function askAI(fn, ev, title, btn) {
     btn.innerHTML = '⏳'; btn.disabled = true;
     try {
         const token = await getToken();
+        // ✅ سياق الملف المطلوب نفسه — لا أول ملف في المشروع
+        const fileContext = (F[fn] || '').slice(0, 500);
         const pr = `أكمل هذه الدالة الناقصة بكود صحيح فقط بدون شرح:
 الملف: ${fn}
 البيانات المتاحة:
-${Object.values(F)[0]?.slice(0, 500) || ''}
+${fileContext}
 الدالة:
 ${ev}
 
@@ -417,9 +549,8 @@ AFTER:
 \`\`\``;
         const result = await chatAPI(token, pr);
         const after  = result.match(/```(?:python|js)?\n([\s\S]*?)```/)?.[1]?.trim() || result;
-        if (confirm('🤖 AI اقترح:\n\n' + after.slice(0, 200) + (after.length > 200 ? '\n...' : '') + '\n\nهل تطبق الإصلاح؟')) {
-            applyAIResult(fn, ev, after);
-        }
+        // اقتراح Claude — لا يُطبَّق هنا. applyAIResult هو من يمرره للبوابة.
+        applyAIResult(fn, ev, after);
     } catch (e) {
         alert('❌ ' + e.message);
     } finally {
@@ -428,26 +559,30 @@ AFTER:
 }
 
 // ═══════════════════════════════════════════════════════
-// Fix All with AI
+// Fix All with AI — Claude مصدر اقتراح فقط
 // ═══════════════════════════════════════════════════════
 
 async function fixAllWithAI() {
+    // Fail-Closed: بلا بوابة تحقق لا يُطبَّق أي اقتراح
+    if (!_hasVerifier()) { _safeEngineMissing(); return; }
+
     // فحص typos أولاً
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
-        if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — تم الإصلاح تلقائياً');
+        if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — ستُفحص الاقتراحات قبل اعتمادها');
     }
 
     const btn = document.getElementById('btn-aiall');
     btn.innerHTML = '⏳ جاري...'; btn.disabled = true;
 
+    let applied = 0, rejected = 0;
     try {
         const token = await getToken();
         // ✅ انتظر كل ملف بشكل متسلسل — مو داخل forEach
         // اجمع كل الملفات اللي فيها مشاكل
         const filesToFix = Object.keys(F).filter(fn => R[fn]?.issues?.length > 0);
         if (filesToFix.length === 0) { toast('✅ ما في مشاكل للإصلاح'); return; }
-        
+
         for (const fn of filesToFix) {
             const issues = R[fn]?.issues?.map(i => `- ${i.title} (السطر ${i.line})`).join('\n') || '';
             const prompt = `أنت مبرمج أمان خبير. مهمتك إصلاح الثغرات الأمنية فقط.
@@ -482,13 +617,17 @@ ${F[fn]}
             const fixed  = result.match(/```(?:\w+)?\n([\s\S]*?)```/)?.[1]?.trim();
             if (!fixed) continue;
 
-            // تطبيق مباشر بدون diff
-            F[fn] = fixed;
-            R[fn] = { code: fixed, issues: analyzeCode(fixed, fn) };
+            // ⛔ ممنوع: F[fn] = fixed مباشرة.
+            // كل candidate يُقاس ضد الكود الموثوق الحالي لهذا الملف، وحده،
+            // ولا يتراكم على candidate آخر لم يُعتمد.
+            const res = _gateApply(fn, fixed, 'claude-fixAll');
+            if (res.applied) applied++; else rejected++;
         }
         refreshStats();
         document.getElementById('btn-dl').style.display = 'inline-block';
-        toast('✅ تم إصلاح المشروع بـ AI');
+        let msg = '✅ اعتُمد ' + applied + ' ملف بعد التحقق';
+        if (rejected) msg += ' • رُفض ' + rejected + ' (لم يجتز التحقق)';
+        toast(msg, rejected && !applied ? 'w' : 's');
     } catch (e) {
         toast('❌ ' + e.message, 'e');
     } finally {
@@ -497,147 +636,68 @@ ${F[fn]}
 }
 
 // ═══════════════════════════════════════════════════════
-// Fix All Engine — من الأسفل للأعلى لكل ملف
+// Fix All Engine — UI adapter للمسار المركزي فقط
+//
+// ⚠️ لم تعد الواجهة تدير سلسلة إصلاح خاصة بها. اختيار المحركات وترتيبها
+// وقرار Fallback/Claude كلها مسؤولية RealityOrchestrator.
 // ═══════════════════════════════════════════════════════
 
-function fixAllEngine() {
-    // حفظ الكود الأصلي للـ learning
-    const origF = {};
-    Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
+function fixAllEngineUI() {
+    if (!_hasOrchestrator() || !_hasVerifier()) { _safeEngineMissing(); return; }
+    if (!_registerEngines())                    { _safeEngineMissing(); return; }
+
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
-        if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — تم الإصلاح تلقائياً');
+        if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — ستُفحص الإصلاحات قبل اعتمادها');
     }
-    let totalFixed = 0;
-    Object.keys(R).forEach(fn => {
-        if (typeof repairCode !== 'function') return;
-        for (let pass = 0; pass < 2; pass++) {
-            const issues = analyzeCode(F[fn], fn);
-            if (!issues.length) break;
-            // استخدم HTMLRepair للـ HTML و repairCode للباقي
-            let result;
-            const _isHTMLFile = /\.html?$/i.test(fn);
-            if (_isHTMLFile && typeof HTMLRepair !== 'undefined') {
-              const hr = HTMLRepair.fix(F[fn], fn);
-              result = { repaired: hr.fixed, repairs: hr.repairs };
-            } else {
-              result = repairCode(F[fn], issues, fn);
-              // AdvancedRepair — يصلح حتى لو ما في issues
-              if (typeof AdvancedRepair !== 'undefined') {
-                const ar = AdvancedRepair.fix(result.repaired || F[fn], fn);
-                if (ar.changed) {
-                  result = { repaired: ar.fixed, repairs: [...(result.repairs||[]), ...ar.repairs] };
-                }
-              }
-            }
-            if (!result || result.repaired === F[fn]) break;
 
-            // Ghost Mode — يتحقق من الإصلاح (بعد آخر pass فقط)
-            let finalCode = result.repaired;
-            if (typeof GhostMode !== 'undefined') {
-              const origIssues = analyzeCode(origF[fn] || F[fn], fn);
-              const targetTypes = origIssues.map(i => i.cAct || i.type).filter(Boolean);
-              const ghostResult = GhostMode.fix(F[fn], result.repaired, fn, analyzeCode, { targetTypes });
-              finalCode = ghostResult.code;
+    const RO = RealityOrchestrator;
+    let applied = 0, rejected = 0, aiNeeded = 0;
 
-              // verify مرة واحدة فقط — بعد آخر pass
-              const isLastPass = analyzeCode(finalCode, fn).filter(i=>i.sev==='c'||i.sev==='h').length === 0
-                              || pass === 1;
-              if (isLastPass && typeof LearningEngine !== 'undefined') {
-                const ghostSuccess = ghostResult.verdict === 'pass' || ghostResult.verdict === 'partial';
-                // verify فقط patterns اللي before موجود في الكود الأصلي
-                LearningEngine.getStats().patterns
-                  .filter(p => !p.approved && p.before && (origF[fn]||'').includes(p.before))
-                  .forEach(p => LearningEngine.verify(p.id, ghostSuccess));
-              }
-            }
-
-            F[fn] = finalCode;
-            totalFixed += result.repairs.length;
+    Object.keys(F).forEach(fn => {
+        let out;
+        try {
+            out = RO.runPipeline(F[fn], fn, { useFallbackChain: true });
+        } catch (e) {
+            rejected++; return;
         }
-        // LearningEngine — يطبق ما تعلمه
-        if (typeof LearningEngine !== 'undefined') {
-          const lr = LearningEngine.applyLearned(F[fn], fn);
-          if (lr.applied > 0) {
-            F[fn] = lr.fixed;
-          }
+        const d = out && out.decision;
+        if (!d) { rejected++; return; }
+
+        if (d.decision === RO.Decision.SAFE_AUTO_FIX && typeof d.patch === 'string') {
+            // المنسّق تحقق أصلًا، والبوابة تتحقق مرة أخيرة قبل الكتابة (حزام إضافي)
+            const res = _gateApply(fn, d.patch, 'orchestrator');
+            if (res.applied) applied++; else rejected++;
+            if (d.meta && d.meta.aiRequiredCount) aiNeeded += d.meta.aiRequiredCount;
+        } else if (d.decision === RO.Decision.AI_SUGGESTION) {
+            // Claude مصدر اقتراح — لا يُطبَّق من هنا إطلاقًا
+            aiNeeded += (d.meta && d.meta.aiNeeded ? d.meta.aiNeeded.length : 1);
+        } else if (d.decision === RO.Decision.REJECTED || d.decision === RO.Decision.PENDING_REVIEW) {
+            rejected++;
         }
-        R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
     });
-    // RepairSQL — الخط الخامس المتخصص بـ SQL
-    if (typeof RepairSQL !== 'undefined') {
-        Object.keys(F).forEach(fn => {
-            const r = RepairSQL.fix(F[fn], fn);
-            if (r.count > 0 && r.code !== F[fn]) {
-                F[fn] = r.code;
-                totalFixed += r.count;
-                R[fn] = { code: r.code, issues: analyzeCode(r.code, fn) };
-            }
-        });
-    }
-    // Smart Repair — الخط الذكي
-    // Smart Repair — الخط الذكي
-    if (typeof SmartRepairEngine !== 'undefined') {
-        const sr = SmartRepairEngine.applySmartRepair(F, R);
-        if (sr.totalFixed > 0) totalFixed += sr.totalFixed;
-    }
-    // Fallback — لو المحرك ما صلح كل شيء
-    if (typeof applyFallbackToAll === 'function') {
-        const fb = applyFallbackToAll(F, R);
-        if (fb.totalFixed > 0) totalFixed += fb.totalFixed;
-    }
-    // Specialized Fixers — الخط الرابع
-    if (typeof applySpecializedFixers === 'function') {
-        const sf = applySpecializedFixers(F, R);
-        if (sf.totalFixed > 0) totalFixed += sf.totalFixed;
-    }
-    // Emergency fixes — الخط الثالث
-    if (typeof applyEmergencyToAll === 'function') {
-        const em = applyEmergencyToAll(F, R);
-        if (em.totalFixed > 0) totalFixed += em.totalFixed;
-    }
-    // learnSafe — يتعلم من الكود الآمن
-    if (typeof LearningEngine !== 'undefined') {
-        Object.keys(F).forEach(fn => {
-            const issues = R[fn]?.issues || [];
-            if (issues.length === 0) {
-                // كود نظيف → يتعلم منه
-                LearningEngine.learnSafe(F[fn], fn);
-            }
-        });
-    }
 
-    // Learning — يتعلم من الإصلاحات
-    if (typeof LearningEngine !== 'undefined') {
-        Object.keys(F).forEach(fn => {
-            // يتعلم من الكود قبل وبعد
-            const orig = origF[fn] || F[fn];
-            const fixed = F[fn];
-            if (orig !== fixed) {
-                const origIssues = analyzeCode(orig, fn);
-                LearningEngine.learn(orig, fixed, origIssues, fn);
-            }
-            // يتعلم من الكود الأصلي حتى لو ما تغير
-            // else removed - was learning from unchanged code
-        });
-    }
-    // طباعة إحصائيات التعلم في console
-    if (typeof LearningEngine !== 'undefined') {
-        const stats = LearningEngine.getStats();
-        if (stats.totalPatterns > 0) {
-            console.group('🧠 Reality Engine — Learning Stats');
-            console.log('Patterns:', stats.totalPatterns);
-            console.log('High confidence:', stats.highConfidence);
-            console.log('By type:', stats.byType);
-            console.table(stats.topPatterns);
-            console.groupEnd();
-        }
-    }
-    toast('✅ تم إصلاح ' + totalFixed + ' مشكلة');
+    let msg = '✅ اعتُمد ' + applied + ' ملف';
+    if (rejected) msg += ' • رُفض ' + rejected;
+    if (aiNeeded) msg += ' • ' + aiNeeded + ' تحتاج AI';
+    toast(msg, applied ? 's' : 'w');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
-    // تنزيل يدوي فقط — لا تنزيل تلقائي
 }
+
+// [تنظيف] أُزيل الـhack المعتمد على حدث load.
+//
+// كان تعارض الاسم يُحلّ بإعادة تثبيت النسخة على window بعد التحميل، وهو
+// حل يعتمد على التوقيت. حُلّ التعارض من جذره: fix_engine_pipeline.js صار
+// يعرّف fixAllEnginePipeline، ويعرّف fixAllEngine فقط إذا لم يكن موجودًا.
+// فبتعريفه هنا أولاً (السكربت المضمَّن يسبقه في الترتيب) تبقى نسخة الواجهة
+// هي الفعّالة بلا أي طغيان ولا انتظار لحدث.
+//
+// الاسم العام fixAllEngine هو ما تستدعيه أزرار الواجهة (onclick).
+function fixAllEngine() {
+    return fixAllEngineUI();
+}
+window.fixAllEngine = fixAllEngine;
 
 // ═══════════════════════════════════════════════════════
 // Diff Dialog — زر واحد / onApprove واحد
@@ -771,7 +831,13 @@ async function chatAPI(token, prompt) {
     return crData.result;
 }
 
+// ═══════════════════════════════════════════════════════
+// applyAIResult — اقتراح Claude: تحقق ثم موافقة بشرية ثم تطبيق
+// ═══════════════════════════════════════════════════════
+
 function applyAIResult(fn, ev, after) {
+    if (!_hasVerifier()) { _safeEngineMissing(); return; }
+
     const lines = F[fn].split('\n');
     const funcBase = ev.split('(')[0].trim();
     let start = -1;
@@ -782,10 +848,41 @@ function applyAIResult(fn, ev, after) {
         && (lines[end].startsWith(' ') || lines[end].startsWith('\t') || lines[end].trim() === ''))
         end++;
     lines.splice(start, end - start, ...after.split('\n'));
-    F[fn] = lines.join('\n');
-    R[fn] = { code: F[fn], issues: analyzeCode(F[fn], fn) };
-    refreshStats();
-    toast('✅ تم تطبيق إصلاح AI');
+    const candidate = lines.join('\n');           // ⛔ لم يُكتب على F بعد
+
+    // 1) التحقق التقني أولاً — اقتراح فاشل لا يُعرض للموافقة أصلاً
+    const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+    let v;
+    try { v = FixVerifier.verifyFix(F[fn], candidate, fn, analyzer, {}); }
+    catch (e) { v = { accepted: false, reason: 'VERIFIER_THREW: ' + (e && e.message) }; }
+    if (!v || v.accepted !== true) {
+        toast('❌ اقتراح AI لم يجتز التحقق: ' + ((v && v.reason) || 'REJECTED'), 'e');
+        return;                                    // F و R لم يتغيرا
+    }
+
+    // 2) موافقة بشرية صريحة — Claude اقتراح لا قرار
+    const trustedBase = F[fn];
+    showDiff(fn, trustedBase, candidate, () => {
+        // 3) حارس stale: إذا تغيّر الملف بعد توليد الاقتراح، يُرفض ولا يُطبَّق.
+        //
+        // كان هنا تحذير فقط ثم يتابع إلى _gateApply — وهذا غير كافٍ:
+        // _gateApply يتحقق من (F[fn] الحالي ← candidate)، أي أنه يعيد تقييم
+        // مرشّح مبني على نسخة قديمة مقابل النسخة الجديدة. والبوابة تقيس
+        // المشاكل فقط، فأي تغيير لا يراه المحلل (نص، ترجمة، تعليق، منطق
+        // لا يُبلَّغ عنه) يُمحى صامتًا ويُقبل التعديل.
+        //
+        // مُثبت عمليًا: candidate مبني على نسخة قديمة قُبل من البوابة
+        // (ACCEPTED — أزال مشكلة بلا تدهور) بينما محا سطرًا عُدِّل أثناء
+        // عرض الـDiff. لذلك الرفض هنا، لا التحذير.
+        if (F[fn] !== trustedBase) {
+            toast('⚠️ تغيّر الملف بعد الاقتراح — اطلب اقتراحًا جديدًا', 'w');
+            return;                                // لا stale apply إطلاقًا
+        }
+        const res = _gateApply(fn, candidate, 'claude-approved');
+        if (!res.applied) { toast('❌ رُفض عند التطبيق: ' + res.reason, 'e'); return; }
+        refreshStats();
+        toast('✅ تم تطبيق إصلاح AI بعد التحقق', 's');
+    });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -809,39 +906,28 @@ function refreshStats() {
 // Utilities
 // ═══════════════════════════════════════════════════════
 
+// reCheck — إعادة تحليل فقط، بلا إصلاح.
+// ⚠️ كانت تستدعي repairCode/HTMLRepair وتكتب الناتج مباشرة بلا تحقق.
+// الإصلاح الآن مسؤولية fixAllEngine → RealityOrchestrator وحده.
 function reCheck() {
-  // إعادة تحليل وإصلاح كل الملفات
   const files = Object.keys(F);
   if (!files.length) return;
-  
+
   toast('🔄 جاري إعادة الفحص...');
-  
-  let hasIssues = false;
+
+  let remaining = 0;
   files.forEach(fn => {
     const issues = analyzeCode(F[fn], fn);
-    if (issues.length > 0) {
-      hasIssues = true;
-      // أصلح مرة ثانية
-      const _isHTML = /\.html?$/i.test(fn);
-      let newCode = F[fn];
-      if (_isHTML && typeof HTMLRepair !== 'undefined') {
-        const hr = HTMLRepair.fix(F[fn], fn);
-        if (hr.changed) newCode = hr.fixed;
-      } else {
-        const result = repairCode(F[fn], issues, fn);
-        if (result.repaired !== F[fn]) newCode = result.repaired;
-      }
-      if (newCode !== F[fn]) F[fn] = newCode;
-    }
+    R[fn] = { code: F[fn], issues };               // تحليل فقط — ليس إصلاحًا
+    remaining += issues.length;
   });
-  
-  // أعد التحليل
+
   analyzeAll();
-  
-  if (!hasIssues) {
+
+  if (!remaining) {
     toast('✅ لا مشاكل — الكود نظيف!', 's');
   } else {
-    toast('✅ تم إعادة الفحص والإصلاح', 's');
+    toast('🔎 ' + remaining + ' مشكلة — استخدم «إصلاح الكل بالمحرك»', 'w');
   }
 }
 
@@ -867,10 +953,15 @@ function exportPDF() {
             seen.add(key);
             const sevColor = issue.sev==='c'?'#f85149':issue.sev==='h'?'#f08837':issue.sev==='m'?'#d29922':'#58a6ff';
             const sevLabel = issue.sev==='c'?'حرج':issue.sev==='h'?'عالي':issue.sev==='m'?'متوسط':'منخفض';
+            // [أمان] issue.title واسم الملف مصدرهما ملفات المستخدم. كانا
+            // يُحقنان في التقرير بلا تهريب، فمحتوى مثل <img src=x onerror=…>
+            // أو اسم ملف فيه <script> يصير HTML قابلاً للتنفيذ داخل نافذة
+            // التقرير. esc() موجودة أصلاً في الملف — تُستخدم هنا الآن.
+            // (sevColor و sevLabel قيم ثابتة من الكود، لا من المستخدم.)
             issuesHTML += `<div style="border-right:3px solid ${sevColor};background:#161b22;margin:8px 0;padding:10px 12px;border-radius:4px;direction:rtl">
                 <span style="color:${sevColor};font-weight:bold;font-size:12px">${sevLabel}</span>
-                <div style="color:#e6edf3;font-size:13px;margin:4px 0">${issue.title||''}</div>
-                <div style="color:#8b949e;font-size:11px">السطر ${issue.line} — ${fn}</div>
+                <div style="color:#e6edf3;font-size:13px;margin:4px 0">${esc(issue.title||'')}</div>
+                <div style="color:#8b949e;font-size:11px">السطر ${esc(issue.line)} — ${esc(fn)}</div>
             </div>`;
         });
     });
@@ -886,7 +977,7 @@ function exportPDF() {
       @media print{body{background:#fff;color:#000}}
     </style></head><body>
     <h1>🛡️ Reality Engine</h1>
-    <div style="color:#8b949e">تقرير تحليل الأمان — ${date}</div>
+    <div style="color:#8b949e">تقرير تحليل الأمان — ${esc(date)}</div>
     <div class="score">${score}/100</div>
     <div class="stats">
       <div class="stat"><div class="stat-n" style="color:#f85149">${critical}</div><div class="stat-l">حرج</div></div>
@@ -948,7 +1039,11 @@ function toast(msg, t = 's') {
 </script>
 
 <!-- Welcome Modal -->
-<div id="welcome-modal" style="display:none;position:fixed;inset:0;background:#0008;z-index:9999;display:flex;align-items:center;justify-content:center">
+<!-- [إصلاح] كان style يحوي display:none ثم display:flex معًا. في CSS
+     الخاصية المكررة الأخيرة تفوز، فكان الـmodal يظهر دائمًا عند التحميل
+     حتى لو كان re_welcomed مضبوطًا — أي أن شرط "مرة واحدة فقط" لم يعمل.
+     أُبقيت display:none فقط، والسكربت أدناه هو من يُظهره شرطيًا. -->
+<div id="welcome-modal" style="display:none;position:fixed;inset:0;background:#0008;z-index:9999;align-items:center;justify-content:center">
   <div style="background:#161b22;border:1px solid #30363d;border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center">
     <div style="font-size:48px;margin-bottom:16px">🛡️</div>
     <h2 style="color:#e6edf3;margin-bottom:8px;font-size:20px">Reality Engine</h2>
@@ -972,7 +1067,14 @@ if (!localStorage.getItem('re_welcomed')) {
   document.getElementById('welcome-modal').style.display = 'flex';
 }
 </script>
-<script src="/fix_verifier.js"></script>
+<!-- fix_verifier.js و reality_orchestrator.js محمَّلان في <head> قبل السكربت
+     المضمَّن، فلا يوجد أي `var _FV = FixVerifier` يُنفَّذ قبل توفّره. (وحتى لو
+     تغيّر الترتيب، الملفات المعتمِدة تستخدم lazy resolver يبحث وقت الاستخدام.)
+
+     fix_engine_pipeline.js يبقى محمَّلاً كما هو — لم يُحذف ولم يتغيّر سلوكه.
+     دالته أُعيدت تسميتها إلى fixAllEnginePipeline، ولا تعرّف fixAllEngine إلا
+     إذا لم يكن معرَّفًا. الواجهة تعرّفه قبلها، فنسخة الواجهة هي الفعّالة بلا
+     أي طغيان وبلا انتظار حدث load. -->
 <script src="/fix_engine_pipeline.js"></script>
 <script src="/ghost_mode.js"></script>
 <script src="/learned_fixer.js"></script>
@@ -993,3 +1095,4 @@ window.addEventListener('load', function() {
 </script>
 </body>
 </html>
+
