@@ -1,25 +1,11 @@
-// ═══════════════════════════════════════════════════════
-// c_cpp_analyzer.js v2.0 — تحليل C/C++ ساكن
-//
-// المبدأ: المحلل يكتشف ويُعطي دليلاً. لا يُصدر إصلاحاً إلا إذا كان
-// تحويلاً deterministic يُترجم ولا يغيّر الدلالة، وبعد إثبات الشروط من
-// الملف نفسه (مثل كون الهدف مصفوفة مُعلَنة). كل ما عدا ذلك يخرج بـ
-// fix: null و aiRequired: true و fixHint يشرح السبب.
-//
-// العقد كما هو: analyzeCCpp(code, fileName) → { issues, language, summary }
-// ═══════════════════════════════════════════════════════
-
 "use strict";
 
-// ─── 1. أدوات نصية ───────────────────────────────────────────
 function ccExtOf(fileName) {
   const name = (typeof fileName === 'string') ? fileName : '';
   const dot  = name.lastIndexOf('.');
   return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
 }
 
-// نسخة من كل سطر بنفس الطول، السلاسل والمحارف والتعليقات فيها فراغات.
-// تتبع تعليقات البلوك عبر الأسطر، فلا حاجة لحدس "السطر يبدأ بنجمة".
 function ccCleanLines(lines) {
   const out = [];
   let inBlock = false;
@@ -52,8 +38,6 @@ function ccCleanLines(lines) {
 
 const CC_TYPE_WORD = /\b(?:void|int|char|long|short|unsigned|signed|float|double|bool|size_t|ssize_t|FILE|extern|static|inline|typedef|virtual)\s*\**$/;
 
-// مواضع استدعاء دالة باسم محدد على سطر مُنظَّف.
-// تستبعد التصريحات (يسبقها نوع) واستدعاءات الأعضاء obj.name و ptr->name.
 function ccFindCalls(clean, name) {
   const out = [];
   const re  = new RegExp('(^|[^\\w])' + name + '\\s*\\(', 'g');
@@ -62,15 +46,13 @@ function ccFindCalls(clean, name) {
     const nameStart = m.index + m[1].length;
     const before    = clean.slice(0, nameStart);
     re.lastIndex = m.index + m[0].length;
-    if (/[.]\s*$/.test(before) || /->\s*$/.test(before)) continue;  // استدعاء عضو
-    if (CC_TYPE_WORD.test(before)) continue;                         // تصريح أو تعريف
+    if (/[.]\s*$/.test(before) || /->\s*$/.test(before)) continue;
+    if (CC_TYPE_WORD.test(before)) continue;
     out.push({ nameStart, openIdx: m.index + m[0].length - 1 });
   }
   return out;
 }
 
-// تقسيم وسائط الاستدعاء عند الفواصل في العمق صفر.
-// يُقاس العمق على السطر المُنظَّف فلا تخدعه فاصلة داخل سلسلة.
 function ccSplitArgsAt(clean, original, openIdx) {
   const args = [];
   let depth = 0, start = openIdx + 1;
@@ -86,14 +68,12 @@ function ccSplitArgsAt(clean, original, openIdx) {
     }
     if (c === ',' && depth === 0) { args.push({ text: original.slice(start, i), start, end: i }); start = i + 1; }
   }
-  return null;                                   // لم يُغلق على هذا السطر
+  return null;
 }
 
 const ccTrim = s => String(s == null ? '' : s).trim();
 const ccEsc  = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// مصفوفات المحارف المُعلَنة في الملف: char name[N] — الحجم قد يكون غير معروف.
-// تُستبعد وسائط الدوال لأن char p[] فيها مؤشر و sizeof عليه خاطئ.
 function ccDeclaredArrays(cleanLines) {
   const map = new Map();
   const re  = /\b(?:char|wchar_t|char8_t|char16_t|char32_t)\s+([A-Za-z_]\w*)\s*\[\s*(\d+)?\s*\]/g;
@@ -103,14 +83,13 @@ function ccDeclaredArrays(cleanLines) {
     while ((m = re.exec(line)) !== null) {
       let depth = 0;
       for (let i = 0; i < m.index; i++) { const c = line[i]; if (c === '(') depth++; else if (c === ')') depth--; }
-      if (depth !== 0) continue;                 // داخل قائمة وسائط ⇒ مؤشر لا مصفوفة
+      if (depth !== 0) continue;
       if (!map.has(m[1])) map.set(m[1], m[2] ? Number(m[2]) : null);
     }
   });
   return map;
 }
 
-// مؤشرات المحارف المُعلَنة: char *name — تكفي لـ printf("%s", name)
 function ccDeclaredCharPointers(cleanLines) {
   const set = new Set();
   const re  = /\b(?:const\s+)?char\s*\*\s*(?:const\s+)?([A-Za-z_]\w*)/g;
@@ -118,7 +97,6 @@ function ccDeclaredCharPointers(cleanLines) {
   return set;
 }
 
-// كل نداءات free(ident) بمواضعها. نداءان على سطر واحد كلاهما مرئي.
 function ccFreeCalls(cleanLines) {
   const out = [];
   const re  = /\bfree\s*\(\s*([A-Za-z_]\w*)\s*\)/g;
@@ -127,15 +105,14 @@ function ccFreeCalls(cleanLines) {
     re.lastIndex = 0;
     while ((m = re.exec(line)) !== null) {
       const before = line.slice(0, m.index);
-      if (/[.]\s*$/.test(before) || /->\s*$/.test(before)) continue;   // استدعاء عضو
-      if (CC_TYPE_WORD.test(before)) continue;                          // تصريح
+      if (/[.]\s*$/.test(before) || /->\s*$/.test(before)) continue;
+      if (CC_TYPE_WORD.test(before)) continue;
       out.push({ line: idx, start: m.index, end: m.index + m[0].length, ptr: m[1] });
     }
   });
   return out;
 }
 
-// نص ما بين نداءين على مستوى المحارف — لا يتأثر بمكان فواصل الأسطر.
 function ccGapText(cleanLines, a, b) {
   if (a.line === b.line) return cleanLines[a.line].slice(a.end, b.start);
   const parts = [cleanLines[a.line].slice(a.end)];
@@ -144,13 +121,9 @@ function ccGapText(cleanLines, a, b) {
   return parts.join('\n');
 }
 
-// أقصى مسافة نقبل عندها اقتران نداءين، حدّ كلفة لا حدّ دلالي.
 const CC_FREE_WINDOW = 10;
-// أي رمز يجعل المسار بين النداءين غير مستقيم. التسمية (label) هدف goto.
 const CC_CONTROL = /\b(?:if|else|switch|case|default|while|for|do|goto|return|break|continue)\b|\?|(?:^|[;}])\s*[A-Za-z_]\w*\s*:(?!:)/;
 
-// ─── 2. بناء الثغرة ──────────────────────────────────────────
-// إصلاح لا يُقبل إلا إذا كان نصاً حقيقياً مختلفاً عن السطر المصاب وليس تعليقاً.
 function ccIssue(o) {
   const raw   = (typeof o.fix === 'string') ? o.fix : '';
   const valid = !!raw.trim() && raw.trim() !== ccTrim(o.ev) && !/^\s*(?:\/\/|\/\*|#)/.test(raw);
@@ -163,7 +136,6 @@ function ccIssue(o) {
   };
 }
 
-// ─── 3. المحلل ───────────────────────────────────────────────
 function analyzeCCpp(code, fileName) {
   const issues = [];
   const name   = (typeof fileName === 'string') ? fileName : '';
@@ -199,9 +171,8 @@ function analyzeCCpp(code, fileName) {
     const c  = clean[i];
     const t  = line.trim();
     const ln = i + 1;
-    if (!c.trim()) return;                        // السطر كله تعليق أو سلسلة
+    if (!c.trim()) return;
 
-    // وسائط أول استدعاء: undefined = لا استدعاء · null = لم يُغلق على السطر
     const callOf = fn => {
       const hits = ccFindCalls(c, fn);
       if (!hits.length) return undefined;
@@ -209,7 +180,6 @@ function analyzeCCpp(code, fileName) {
       return split ? { hit: hits[0], split } : null;
     };
 
-    // ─── gets() ───────────────────────────────────────────────
     const gets = callOf('gets');
     if (gets !== undefined) {
       const arg = (gets && gets.split.args.length === 1) ? ccTrim(gets.split.args[0].text) : null;
@@ -227,27 +197,64 @@ function analyzeCCpp(code, fileName) {
       }));
     }
 
-    // ─── strcpy() ─────────────────────────────────────────────
     const scpy = callOf('strcpy');
     if (scpy !== undefined) {
       const a   = (scpy && scpy.split.args.length === 2) ? scpy.split.args : null;
       const dst = a ? ccTrim(a[0].text) : null;
       const ok  = !!(dst && plainIdent(dst) && isArray(dst));
+      // [BUG-1 fix] The strcpy→strncpy fix emits TWO statements (strncpy + NULL-terminator).
+      // In a braceless if/for/while/else body the NULL-terminator executes unconditionally
+      // outside the control block, changing semantics and risking uninitialized-memory writes.
+      //
+      // Detection covers BOTH layouts:
+      //   same-line:  if (cond) strcpy(buf, src);
+      //   next-line:  if (cond)\n    strcpy(buf, src);
+      //
+      // A real block is always safe — its line ends with '{', not ')' or 'else':
+      //   if (cond) { strcpy(buf, src); }   → previous (or same) line ends with '{'  → ok
+      //
+      // gets / strcat / sprintf are unaffected: each produces a single statement.
+      const pfx = c.slice(0, scpy.hit.nameStart).trimEnd();
+
+      // ── same-line: control keyword + closing ')' immediately before strcpy, or bare 'else' ──
+      const sameLineBraceless = (
+        (/\b(?:if|for|while)\b/.test(pfx) && /\)\s*$/.test(pfx)) ||
+        /\belse\s*$/.test(pfx)
+      );
+
+      // ── next-line: strcpy is the only thing on this line (pure whitespace before it),
+      //    and the previous non-empty cleaned line is a braceless control header ──
+      let nextLineBraceless = false;
+      if (ok && !pfx.trim()) {
+        let j = i - 1;
+        while (j >= 0 && !clean[j].trim()) j--;
+        if (j >= 0) {
+          const prev = clean[j].trimEnd();
+          nextLineBraceless = (
+            (/\b(?:if|for|while)\b/.test(prev) && /\)\s*$/.test(prev)) ||
+            /\belse\s*$/.test(prev)
+          );
+        }
+      }
+
+      const inBraceless = ok && (sameLineBraceless || nextLineBraceless);
+      const canFix = ok && !inBraceless;
       issues.push(ccIssue({
         sev: 'h', line: ln, ev: t,
         title: '🟠 strcpy() — Buffer Overflow محتمل (CWE-120)',
-        fix: ok ? line.slice(0, scpy.hit.nameStart) + 'strncpy(' + dst + ',' + a[1].text +
-                  ', sizeof(' + dst + ') - 1); ' + dst + '[sizeof(' + dst + ') - 1] = \'\\0\';' +
-                  line.slice(scpy.split.closeIdx + 1).replace(/^\s*;/, '') : null,
-        fixHint: ok ? null
-                    : (!a ? 'تعذّر تحديد وسيطي الاستدعاء، ' + SPANS
-                          : 'الهدف "' + dst + '" ليس مصفوفة مُعلَنة في هذا الملف، فـsizeof عليه يعطي حجم المؤشر لا حجم المخزن، و strncpy لا تُنهي النص عند القصّ.'),
+        fix: canFix ? line.slice(0, scpy.hit.nameStart) + 'strncpy(' + dst + ',' + a[1].text +
+                      ', sizeof(' + dst + ') - 1); ' + dst + '[sizeof(' + dst + ') - 1] = \'\\0\';' +
+                      line.slice(scpy.split.closeIdx + 1).replace(/^\s*;/, '') : null,
+        fixHint: canFix ? null
+                        : (!a ? 'تعذّر تحديد وسيطي الاستدعاء، ' + SPANS
+                              : inBraceless
+                                ? 'الاستدعاء داخل جسم تحكم بلا أقواس — الإصلاح يُنتج جملتين (strncpy + NULL-terminator) والثانية ستُنفَّذ خارج الشرط وقد تكتب في ذاكرة غير مهيأة. أضف { } حول الجسم ثم أعد التحليل.'
+                                : 'الهدف "' + dst + '" ليس مصفوفة مُعلَنة في هذا الملف، فـsizeof عليه يعطي حجم المؤشر لا حجم المخزن، و strncpy لا تُنهي النص عند القصّ.'),
         conf: 88, cIcon: '🟠', cAct: 'CWE-120',
         cEv: ['استخدم strncpy() أو strlcpy() بدل strcpy()'],
       }));
     }
 
-    // ─── strcat() ─────────────────────────────────────────────
     const scat = callOf('strcat');
     if (scat !== undefined) {
       const a   = (scat && scat.split.args.length === 2) ? scat.split.args : null;
@@ -267,7 +274,6 @@ function analyzeCCpp(code, fileName) {
       }));
     }
 
-    // ─── sprintf() ────────────────────────────────────────────
     const spf = callOf('sprintf');
     if (spf !== undefined) {
       const a   = (spf && spf.split.args.length >= 2) ? spf.split.args : null;
@@ -286,7 +292,6 @@ function analyzeCCpp(code, fileName) {
       }));
     }
 
-    // ─── scanf("%s") ──────────────────────────────────────────
     if (/\bs?scanf\s*\(/.test(c) || /\bfscanf\s*\(/.test(c)) {
       const sc   = callOf('scanf') || callOf('fscanf') || callOf('sscanf');
       const fmtM = line.match(/scanf\s*\(\s*(?:[^,]*,\s*)?"([^"]*)"/);
@@ -311,25 +316,31 @@ function analyzeCCpp(code, fileName) {
       }
     }
 
-    // ─── printf(var) — Format String ──────────────────────────
     const pf = callOf('printf');
     if (pf !== undefined && !/printf\s*\(\s*"/.test(c)) {
-      const a  = (pf && pf.split.args.length === 1) ? ccTrim(pf.split.args[0].text) : null;
-      const ok = !!(a && plainIdent(a) && isCharish(a));
-      if (a && plainIdent(a)) {
+      // [BUG-2 fix] printf(msg, extra) is also a format-string vulnerability: the first
+      // argument controls the format regardless of how many total arguments follow.
+      // Previously only args.length===1 was checked, silently missing the multi-arg case.
+      // Fix: extract the first arg unconditionally; only generate an auto-fix for the
+      // single-arg case (where printf("%s", x) is an equivalent safe replacement).
+      const firstArg    = (pf && pf.split && pf.split.args.length >= 1) ? ccTrim(pf.split.args[0].text) : null;
+      const isSingleArg = !!(pf && pf.split && pf.split.args.length === 1);
+      const ok          = !!(firstArg && plainIdent(firstArg) && isCharish(firstArg) && isSingleArg);
+      if (firstArg && plainIdent(firstArg)) {
         issues.push(ccIssue({
           sev: 'c', line: ln, ev: t,
           title: '🔴 Format String Attack (CWE-134)',
-          fix: ok ? line.slice(0, pf.hit.nameStart) + 'printf("%s", ' + a + ')' + line.slice(pf.split.closeIdx + 1) : null,
+          fix: ok ? line.slice(0, pf.hit.nameStart) + 'printf("%s", ' + firstArg + ')' + line.slice(pf.split.closeIdx + 1) : null,
           fixHint: ok ? null
-                      : 'التحويل إلى printf("%s", x) صحيح فقط إذا كان x نصاً؛ ونوع "' + a + '" غير مُثبت في هذا الملف، ولو كان عدداً فالنتيجة انهيار وقت التشغيل.',
+                      : isSingleArg
+                        ? 'التحويل إلى printf("%s", x) صحيح فقط إذا كان x نصاً؛ ونوع "' + firstArg + '" غير مُثبت في هذا الملف، ولو كان عدداً فالنتيجة انهيار وقت التشغيل.'
+                        : 'printf مع متغير في موضع سلسلة التنسيق يُتيح format string attack بغض النظر عن عدد الوسائط — استخدم سلسلة literal صريحة كـprintf("%s", ' + firstArg + ') أو أعد هيكلة الاستدعاء.',
           conf: 93, cIcon: '🔴', cAct: 'CWE-134 Format String',
           cEv: ['printf(user_input) خطير — استخدم printf("%s", user_input)'],
         }));
       }
     }
 
-    // ─── malloc / calloc / realloc ────────────────────────────
     if (/\b(?:m|c|re)alloc\s*\(/.test(c)) {
       const pm  = c.match(/([A-Za-z_]\w*)\s*=\s*(?:\([^)]*\)\s*)?(?:m|c|re)alloc\s*\(/);
       const ptr = pm ? pm[1] : null;
@@ -356,32 +367,35 @@ function analyzeCCpp(code, fileName) {
       }
     }
 
-    // double free — في مرور مستقل بعد الحلقة، لأنه يقارن نداءات لا أسطراً
-
-    // ─── int = sizeof ─────────────────────────────────────────
     const szM = c.match(/\bint\s+([A-Za-z_]\w*)\s*=\s*sizeof\b/);
     if (szM) {
       const v = ccEsc(szM[1]);
       const signedUse = new RegExp('\\b' + v + '\\s*(?:>=\\s*0|<\\s*0|>\\s*-|<=\\s*-)').test(cleanAll);
+      // [BUG-5 fix] line.replace(/\bint\b/, 'size_t') replaces the FIRST \bint\b token.
+      // When the declaration is 'unsigned int n = sizeof(...)' the result is
+      // 'unsigned size_t n = ...' which does not compile. Detect any type qualifier
+      // (unsigned / signed / long / short) immediately before 'int' and suppress the fix.
+      const hasCompoundType = /\b(?:unsigned|signed|long|short)\s+int\b/.test(c);
+      const canFix = !signedUse && !hasCompoundType;
       issues.push(ccIssue({
         sev: 'm', line: ln, ev: t,
         title: '🟡 استخدم size_t بدل int للـ sizeof',
-        fix: signedUse ? null : line.replace(/\bint\b/, 'size_t'),
-        fixHint: signedUse ? 'المتغير يُقارن بقيمة سالبة أو بـ>= 0 في مكان آخر، وتحويله إلى نوع بلا إشارة يقلب المقارنة.' : null,
+        fix: canFix ? line.replace(/\bint\b/, 'size_t') : null,
+        fixHint: signedUse       ? 'المتغير يُقارن بقيمة سالبة أو بـ>= 0 في مكان آخر، وتحويله إلى نوع بلا إشارة يقلب المقارنة.'
+                : hasCompoundType ? 'المتغير مُعرَّف بنوع مُركَّب (مثل unsigned int)؛ استبدال int وحده يُنتج "unsigned size_t" وهو خطأ نحوي لا يُترجم. استبدل النوع كاملاً بـsize_t يدوياً.'
+                : null,
         conf: 78, cIcon: '🟡', cAct: 'CWE-195 Signed/Unsigned',
         cEv: ['sizeof يرجع size_t (unsigned) — استخدم size_t لتجنب overflow'],
       }));
     }
 
-    // ─── C++ ───────────────────────────────────────────────────
     if (isCpp) {
       if (/\bnew\s+[A-Za-z_]/.test(c) && !/unique_ptr|shared_ptr|make_unique|make_shared/.test(c)) {
         issues.push(ccIssue({
           sev: 'm', line: ln, ev: t,
           title: '🟡 C++: استخدم smart pointers بدل raw new',
           fix: null,
-          fixHint: 'التحويل إلى make_unique يحتاج نقل وسائط الـconstructor وحذف delete المقابل، ' +
-                   'والاستبدال النصي ينتج make_unique<T>()(args) وهو كود لا يُترجم. والمصفوفات تحتاج make_unique<T[]>(n).',
+          fixHint: 'التحويل إلى make_unique يحتاج نقل وسائط الـconstructor وحذف delete المقابل.',
           conf: 80, cIcon: '🟡', cAct: 'Memory Management',
           cEv: ['استخدم unique_ptr أو shared_ptr لتجنب memory leaks'],
         }));
@@ -405,7 +419,7 @@ function analyzeCCpp(code, fileName) {
             sev: 'h', line: ln, ev: t,
             title: '🟠 C++: لا تستخدم throw في Destructor',
             fix: null,
-            fixHint: 'يحتاج تغليف جسم الـdestructor بـtry/catch أو نقل المنطق، وهو تعديل بنيوي لا استبدال سطر.',
+            fixHint: 'يحتاج تغليف جسم الـdestructor بـtry/catch أو نقل المنطق.',
             conf: 88, cIcon: '🟠', cAct: 'C++ Exception Safety',
             cEv: ['throw في destructor يسبب terminate() — استخدم noexcept'],
           }));
@@ -417,14 +431,13 @@ function analyzeCCpp(code, fileName) {
           sev: 'm', line: ln, ev: t,
           title: '🟡 C++: reinterpret_cast خطير',
           fix: null,
-          fixHint: 'static_cast ليس بديلاً عاماً، وصلاحية التحويل تعتمد على النوعين ولا تُستنتج من السطر.',
+          fixHint: 'static_cast ليس بديلاً عاماً.',
           conf: 72, cIcon: '🟡', cAct: 'Unsafe Cast',
           cEv: ['reinterpret_cast يتجاوز type system — استخدمه بحذر'],
         }));
       }
     }
 
-    // using namespace std في header — خارج شرط isCpp لأن امتداد .h كان يُعطِّله
     if (/using\s+namespace\s+std/.test(c) && isHeader) {
       issues.push(ccIssue({
         sev: 'm', line: ln, ev: t,
@@ -436,7 +449,6 @@ function analyzeCCpp(code, fileName) {
       }));
     }
 
-    // ─── Security ─────────────────────────────────────────────
     if (ccFindCalls(c, 'system').length) {
       issues.push(ccIssue({
         sev: 'c', line: ln, ev: t,
@@ -460,11 +472,6 @@ function analyzeCCpp(code, fileName) {
     }
   });
 
-  // ─── double free — مرور مستقل ────────────────────────────
-  // القرار يُبنى على نص الفجوة بين نداءي free على مستوى المحارف، فلا يتغيّر
-  // بتحريك فواصل الأسطر. أي قوس في الفجوة يعني أننا عبرنا حدود كتلة — وهذا
-  // يشمل if/else وswitch بأقواس والحلقات وحدود الدوال — ولا شيء يمكن إثباته
-  // نصياً هناك، فنصمت بدل ادعاء حرج. لا استنتاج لتدفق التحكم ولا للحلقات.
   const freeCalls = ccFreeCalls(clean);
   const lastOf    = new Map();
   for (const cur of freeCalls) {
@@ -476,9 +483,7 @@ function analyzeCCpp(code, fileName) {
     const e   = ccEsc(cur.ptr);
     const gap = ccGapText(clean, prev, cur);
 
-    // إعادة إسناد أو تمرير بالعنوان ⇒ المؤشر قد يكون تغيّر، فلا ادعاء
     if (new RegExp('\\b' + e + '\\s*(?:=(?!=)|\\+\\+|--|\\+=|-=)|(?:\\+\\+|--)\\s*\\b' + e + '\\b|&\\s*' + e + '\\b').test(gap)) continue;
-    // عبور حدود كتلة ⇒ غير قابل للإثبات نصياً
     if (/[{}]/.test(gap)) continue;
 
     const ev    = lines[cur.line].trim();
@@ -504,3 +509,6 @@ function analyzeCCpp(code, fileName) {
 
   return result();
 }
+
+if (typeof module !== 'undefined') module.exports = { analyzeCCpp };
+
