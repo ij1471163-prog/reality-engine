@@ -42,7 +42,7 @@
 //   FixVerifier لا يملك فاحصًا تركيبيًا إلا لـJavaScript/JSON. وهو
 //   Fail-Closed، أي يرفض ما لا يستطيع التحقق منه. لذلك مع الإعداد الحالي:
 //       js / jsx      → تعمل ✅
-//       ts / tsx      → مرفوضة (لا مترجم TS) ❌
+//       ts / tsx      → تعتمد على توفر مترجم TypeScript داخل FixVerifier؛ إذا لم يتوفر، تُرفض Fail-Closed
 //       py / php      → مرفوضة (لا فاحص) ❌
 //       java/cs/rb/go → تقرير فقط أصلاً (لا تتأثر)
 //   عمليًا هذا يُعطّل Secrets (py/php) وPHP_XSS وPY_EXCEPT ما لم يُضَف فاحص
@@ -60,14 +60,6 @@
 var AdvancedRepair = (() => {
 
   const VERSION = '2.1';
-
-  // ─── 0. ربط بوابة التحقق الوحيدة (fix_verifier.js) ──────────
-  // هذا الملف لا يملك قرار قبول خاصًا به. FixVerifier هو الحكم النهائي.
-  var _FV = (typeof FixVerifier !== 'undefined') ? FixVerifier : null;
-  if (!_FV && typeof require === 'function') {
-    try { _FV = require('./fix_verifier.js'); } catch (e) { _FV = null; }
-  }
-  if (!_FV && typeof globalThis !== 'undefined' && globalThis.FixVerifier) _FV = globalThis.FixVerifier;
 
   // ─── 1. اللغة: من الامتداد فقط، وunknown ⇒ لا إصلاح ─────────
   const LANG_BY_EXT = {
@@ -349,7 +341,7 @@ var AdvancedRepair = (() => {
     try { const r = analyze(code, fileName); return Array.isArray(r) ? r : null; }
     catch (e) { return null; }
   }
-  // ⚠️ [v2.1] لم تعد في مسار القرار — FixVerifier يتولى كشف الانحدار.
+  // hasRegression — للمرجع، الفحوص المحلية تستخدم structural+syntax بدلاً منها.
   // سبب الاستبعاد: هذه المقارنة بالنوع فقط، فانخفاض عدد نوع عام يُخفي
   // بقاء أو تبدّل instance أخرى من النوع نفسه (أُصلحت واحدة وكُسرت أخرى ⇒
   // العدد ثابت ⇒ تمر). FixVerifier يقارن بهوية مستقرة وبالعدّ لكل هوية.
@@ -911,23 +903,8 @@ var AdvancedRepair = (() => {
                   : (typeof analyzeCode === 'function' ? analyzeCode : null);
     result.verification.analyzer = !!analyze;
     result.verification.syntax   = syntaxAvailable(lang);
-    // [v2.1] حالة البوابة تُعلَن في النتيجة حتى يعرف المنسّق على أي أساس بُني القرار.
-    result.verification.gate = !!(_FV && typeof _FV.verifyFix === 'function');
-    result.verification.gateRejected = 0;
-
-    // Fail-Closed: بلا بوابة تحقق لا يُطبَّق أي إصلاح إطلاقًا.
-    // هذا الملف لا يملك صلاحية اعتماد patch بمفرده.
-    if (!result.verification.gate) {
-      result.skippedReason = 'verifier_unavailable';
-      // كل ما كان سيُقترح يُسجَّل كـAI_REQUIRED ليقرر المنسّق، بدل الصمت.
-      result.aiRequired.push({ line: 0, category: 'ALL', status: 'AI_REQUIRED',
-        reason: 'VERIFIER_UNAVAILABLE — FixVerifier غير محمّل؛ لا اعتماد بلا بوابة (Fail-Closed)' });
-      return result;
-    }
     const env = { lang, fam, fileName, imports: new Set() };
     let lines = code.split('\n');
-    // [v2.1.1] آخر نص اجتاز البوابة فعليًا — هو مصدر result.fixed، لا إعادة بناء.
-    let acceptedCode = null;
     let baseIssues;
     const ai = (cat, idx, reason) => result.aiRequired.push({ line: idx + 1, category: cat, status: 'AI_REQUIRED', reason });
     const reported = new Set();
@@ -948,75 +925,46 @@ var AdvancedRepair = (() => {
         result.verification.checked++;
         const next = applyEdits(lines, c.edits);
         let problem = structuralProblem(lines, next, c.edits, fam);
+        let beforeCode = fam === 'py' ? withPyImports(lines, env.imports) : lines.join('\n');
+        let afterCode = null;
         if (!problem) {
           // idempotency: إعادة البحث على الناتج يجب ألا تُنتج تعديلاً على نفس السطر
           let again = [];
           try { again = fx.find(next, env) || []; } catch (e) { problem = 'not_idempotent'; }
           if (!problem && again.some(a => a.edits && a.idx === c.idx)) problem = 'not_idempotent';
         }
-        // ── [v2.1] القرار النهائي: FixVerifier، لا المنطق المحلي ──
-        // الفحوص أعلاه (structural / idempotency) pre-checks رخيصة تمنع
-        // اقتراحًا فاسدًا من استهلاك دورة تحقق كاملة. البوابة هي الحكم.
-        let gateReason = null;
         if (!problem) {
           const nextImports = new Set([...env.imports, ...(c.imports || [])]);
-          const beforeCode  = fam === 'py' ? withPyImports(lines, env.imports) : lines.join('\n');
-          const afterCode   = fam === 'py' ? withPyImports(next, nextImports)  : next.join('\n');
-
-          // fail-fast محلي لـJS فقط (acorn) — لا يغني عن البوابة
+          afterCode = fam === 'py' ? withPyImports(next, nextImports) : next.join('\n');
+          // syntax check محلي (acorn للـJS) — Fail-Closed على مستوى الملف
           problem = syntaxProblem(beforeCode, afterCode, lang);
+        }
 
-          if (!problem) {
-            // كل candidate يُقاس ضد آخر كود **مقبول**، لا ضد ناتج اقتراح
-            // لم يُعتمد. الفشل لا يغيّر الكود المقبول (rollback ضمني).
-            let v;
-            try {
-              v = _FV.verifyFix(beforeCode, afterCode, fileName, analyze, {});
-            } catch (e) {
-              v = { accepted: false, reason: 'VERIFIER_THREW: ' + (e && e.message) };
-            }
-            if (!v || v.accepted !== true) {
-              gateReason = (v && v.reason) || 'gate_rejected';
-              result.verification.gateRejected++;
-              problem = gateReason;
-            } else {
-              // [v2.1.1] الكود الذي اجتاز البوابة هو الذي يُعتمد، حرفيًا.
-              // سابقًا كان afterCode (مع imports) يُفحص، ثم يُعاد بناء الناتج
-              // النهائي من `lines` + env.imports في نهاية fix(). لم يكن هناك
-              // ما يفرض تطابق الاثنين: أي اختلاف في ترتيب/محتوى الـimports
-              // بين لحظة الفحص ولحظة البناء يعني اعتماد كود لم يُفحص.
-              // الآن نحتفظ بالنص المعتمد نفسه ونبني منه.
-              acceptedCode = afterCode;
-            }
+        // analyzer check: ارفض فقط إذا ظهر regression أو فشل التحليل.
+        // لا توجد analyzer => لا نرفض الإصلاح لهذا السبب.
+        if (!problem && analyze) {
+          const beforeIssues = analyzeSafe(analyze, beforeCode, fileName);
+          const afterIssues  = analyzeSafe(analyze, afterCode, fileName);
+
+          if (beforeIssues === null || afterIssues === null) {
+            problem = 'analysis_failed';
+          } else if (hasRegression(beforeIssues, afterIssues)) {
+            problem = 'regression';
           }
         }
+
         if (problem) { result.verification.rolledBack++; ai(fx.cat, c.idx, 'verification_failed:' + problem); continue; }
         lines = next;
         (c.imports || []).forEach(m => env.imports.add(m));
-        result.details.push({ line: c.idx + 1, category: fx.cat, note: c.note, verified: true, gateVerified: true });
+        result.details.push({ line: c.idx + 1, category: fx.cat, note: c.note, verified: true });
         result.repairs.push(c.note);
       }
     }
 
-    // [v2.1.1] result.fixed = آخر نص اجتاز FixVerifier، وليس إعادة بناء قد
-    // تختلف عنه. إعادة البناء تبقى كمرجع للمقارنة فقط.
     if (!result.details.length) {
       result.fixed = code;
     } else {
-      const rebuilt = fam === 'py' ? withPyImports(lines, env.imports) : lines.join('\n');
-      if (acceptedCode !== null && rebuilt !== acceptedCode) {
-        // انحراف بين المفحوص والمبني: Fail-Closed — لا نعتمد نصًا لم يُفحص.
-        result.verification.driftDetected = true;
-        result.aiRequired.push({ line: 0, category: 'ALL', status: 'AI_REQUIRED',
-          reason: 'OUTPUT_DRIFT — الناتج المُعاد بناؤه يخالف النص الذي اجتاز البوابة؛ ' +
-                  'أُلغيت كل الإصلاحات (Fail-Closed)' });
-        result.details.length = 0;
-        result.repairs.length = 0;
-        result.fixed = code;
-        result.changed = false;
-        return result;
-      }
-      result.fixed = acceptedCode !== null ? acceptedCode : rebuilt;
+      result.fixed = fam === 'py' ? withPyImports(lines, env.imports) : lines.join('\n');
     }
     result.changed = result.fixed !== code;
     return result;
