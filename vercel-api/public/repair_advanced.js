@@ -42,7 +42,7 @@
 //   FixVerifier لا يملك فاحصًا تركيبيًا إلا لـJavaScript/JSON. وهو
 //   Fail-Closed، أي يرفض ما لا يستطيع التحقق منه. لذلك مع الإعداد الحالي:
 //       js / jsx      → تعمل ✅
-//       ts / tsx      → مرفوضة (لا مترجم TS) ❌
+//       ts / tsx      → تعتمد على توفر مترجم TypeScript داخل FixVerifier؛ إذا لم يتوفر، تُرفض Fail-Closed
 //       py / php      → مرفوضة (لا فاحص) ❌
 //       java/cs/rb/go → تقرير فقط أصلاً (لا تتأثر)
 //   عمليًا هذا يُعطّل Secrets (py/php) وPHP_XSS وPY_EXCEPT ما لم يُضَف فاحص
@@ -63,11 +63,42 @@ var AdvancedRepair = (() => {
 
   // ─── 0. ربط بوابة التحقق الوحيدة (fix_verifier.js) ──────────
   // هذا الملف لا يملك قرار قبول خاصًا به. FixVerifier هو الحكم النهائي.
-  var _FV = (typeof FixVerifier !== 'undefined') ? FixVerifier : null;
-  if (!_FV && typeof require === 'function') {
-    try { _FV = require('./fix_verifier.js'); } catch (e) { _FV = null; }
+  // [v2.1 patch] Lazy Resolver بدل Load-time capture: يمنع حالة تحميل
+  // repair_advanced.js قبل fix_verifier.js مما كان يجعل _FV يبقى null
+  // حتى لو تحمّل FixVerifier لاحقًا. الآن يُحلَّل عند أول استخدام فعلي.
+  var _FV = null;
+
+  function _getFixVerifier() {
+    if (_FV && typeof _FV.verifyFix === 'function') return _FV;
+
+    _FV = null;
+
+    if (typeof FixVerifier !== 'undefined' &&
+        FixVerifier &&
+        typeof FixVerifier.verifyFix === 'function') {
+      _FV = FixVerifier;
+      return _FV;
+    }
+
+    if (typeof globalThis !== 'undefined' &&
+        globalThis.FixVerifier &&
+        typeof globalThis.FixVerifier.verifyFix === 'function') {
+      _FV = globalThis.FixVerifier;
+      return _FV;
+    }
+
+    if (typeof require === 'function') {
+      try {
+        const m = require('./fix_verifier.js');
+        if (m && typeof m.verifyFix === 'function') {
+          _FV = m;
+          return _FV;
+        }
+      } catch (e) {}
+    }
+
+    return null;
   }
-  if (!_FV && typeof globalThis !== 'undefined' && globalThis.FixVerifier) _FV = globalThis.FixVerifier;
 
   // ─── 1. اللغة: من الامتداد فقط، وunknown ⇒ لا إصلاح ─────────
   const LANG_BY_EXT = {
@@ -912,7 +943,9 @@ var AdvancedRepair = (() => {
     result.verification.analyzer = !!analyze;
     result.verification.syntax   = syntaxAvailable(lang);
     // [v2.1] حالة البوابة تُعلَن في النتيجة حتى يعرف المنسّق على أي أساس بُني القرار.
-    result.verification.gate = !!(_FV && typeof _FV.verifyFix === 'function');
+    // [v2.1 patch] يُحلَّل الـverifier هنا (lazy) لا عند تحميل الملف.
+    const verifier = _getFixVerifier();
+    result.verification.gate = !!(verifier && typeof verifier.verifyFix === 'function');
     result.verification.gateRejected = 0;
 
     // Fail-Closed: بلا بوابة تحقق لا يُطبَّق أي إصلاح إطلاقًا.
@@ -971,7 +1004,7 @@ var AdvancedRepair = (() => {
             // لم يُعتمد. الفشل لا يغيّر الكود المقبول (rollback ضمني).
             let v;
             try {
-              v = _FV.verifyFix(beforeCode, afterCode, fileName, analyze, {});
+              v = verifier.verifyFix(beforeCode, afterCode, fileName, analyze, {});
             } catch (e) {
               v = { accepted: false, reason: 'VERIFIER_THREW: ' + (e && e.message) };
             }
@@ -1027,3 +1060,4 @@ var AdvancedRepair = (() => {
 
 if (typeof window !== 'undefined') window.AdvancedRepair = AdvancedRepair;
 if (typeof module !== 'undefined') module.exports = AdvancedRepair;
+
