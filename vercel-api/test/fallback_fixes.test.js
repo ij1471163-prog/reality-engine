@@ -438,19 +438,19 @@ test('applyFallbackToAll: اقتراحات فقط ثم تطبيق محكوم ع�
   // المرحلة الثانية: التطبيق يمر عبر FixVerifier.
   const applied = ctx.applyFallbackProposals(F, R, out.proposals);
 
-  // Python بلا syntax checker موثوق => Fail-Closed.
-  assert.strictEqual(applied.applied.length, 0);
-  assert.strictEqual(applied.rejected.length, 1);
-  assert.strictEqual(applied.rejected[0].file, 'a.py');
-  assert.strictEqual(applied.rejected[0].syntaxStatus, 'no_checker');
-  assert.match(applied.rejected[0].reason, /REJECTED_NO_SYNTAX_CHECKER/);
+  // Python أصبح لديه checker محافظ، لذلك candidate الصحيح يمر عبر FixVerifier.
+  assert.strictEqual(applied.applied.length, 1);
+  assert.strictEqual(applied.rejected.length, 0);
+  assert.strictEqual(applied.applied[0].file, 'a.py');
+  assert.strictEqual(applied.applied[0].removedIssues, 1);
   assert.strictEqual(
     F['a.py'],
-    beforeApply.F['a.py']
+    'import sqlite3\ncursor.execute("SELECT * FROM t WHERE id = ?", (uid,))\n'
   );
-  assert.deepStrictEqual(R['a.py'], beforeApply.R['a.py']);
-  assert.strictEqual(R['a.py'].score, 42, 'مفاتيح R الأخرى ضاعت');
-  assert.strictEqual(R['a.py'].extra, 'keep');
+  // التطبيق الناجح يحدّث issues فقط؛ metadata الأخرى تبقى كما هي.
+  assert.strictEqual(R['a.py'].issues.length, 0, 'issues لم تُزل');
+  assert.strictEqual(R['a.py'].score, 42, 'score تغيّر');
+  assert.strictEqual(R['a.py'].extra, 'keep', 'extra تغيّر');
   // الملفات غير القابلة للإصلاح لم تتغير.
   for (const fn of ['b.kt', 'c.html', 'd.js']) {
     assert.strictEqual(F[fn], beforeApply.F[fn], fn + ': تغيّر');

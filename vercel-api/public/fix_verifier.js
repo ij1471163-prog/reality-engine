@@ -67,6 +67,235 @@ var FixVerifier = (() => {
    * @returns {{ok, available, language, reason}}
    *   available=false ⇒ لا فاحص لهذه اللغة. لا يُعتبر نجاحًا أبدًا.
    */
+  /**
+   * Python structural syntax check — بدون dependency خارجية.
+   *
+   * هذا ليس Python parser كاملًا.
+   * الهدف: منع إصلاحات واضحة الكسر قبل الـdeep verification.
+   */
+  function pythonStructuralSyntaxCheck(code) {
+    const lines = String(code).replace(/\r\n?/g, "\n").split("\n");
+    const stack = [];
+    const indentStack = [0];
+    let expectIndent = false;
+
+    const pairs = { "(": ")", "[": "]", "{": "}" };
+    const closing = new Set([")", "]", "}"]);
+
+    function scanLine(raw) {
+      let out = "";
+      let quote = null;
+      let triple = null;
+      let escaped = false;
+
+      for (let i = 0; i < raw.length; i++) {
+        const c = raw[i];
+        const n1 = raw[i + 1];
+        const n2 = raw[i + 2];
+
+        if (triple) {
+          if (c === triple && n1 === triple && n2 === triple) {
+            out += "   ";
+            i += 2;
+            triple = null;
+          } else {
+            out += " ";
+          }
+          continue;
+        }
+
+        if (quote) {
+          out += " ";
+
+          if (escaped) {
+            escaped = false;
+          } else if (c === "\\") {
+            escaped = true;
+          } else if (c === quote) {
+            quote = null;
+          }
+
+          continue;
+        }
+
+        if (
+          (c === "'" || c === '"') &&
+          n1 === c &&
+          n2 === c
+        ) {
+          triple = c;
+          out += "   ";
+          i += 2;
+          continue;
+        }
+
+        if (c === "'" || c === '"') {
+          quote = c;
+          out += " ";
+          continue;
+        }
+
+        if (c === "#") break;
+
+        out += c;
+      }
+
+      return { code: out, quote, triple };
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+
+      if (!raw.trim()) continue;
+
+      const leadingMatch = raw.match(/^[ \t]*/);
+      const leading = leadingMatch ? leadingMatch[0] : "";
+
+      // لا نسمح بخلط tab وspaces داخل نفس indentation.
+      if (leading.includes(" ") && leading.includes("\t")) {
+        return {
+          ok: false,
+          available: true,
+          language: "python",
+          reason: "mixed tabs and spaces in indentation at line " + (i + 1)
+        };
+      }
+
+      const indent = leading
+        .replace(/\t/g, "    ")
+        .length;
+
+      const scanned = scanLine(raw.slice(leading.length));
+
+      if (scanned.quote || scanned.triple) {
+        return {
+          ok: false,
+          available: true,
+          language: "python",
+          reason: "unterminated Python string at line " + (i + 1)
+        };
+      }
+
+      const clean = scanned.code.trim();
+
+      if (!clean) continue;
+
+      // بعد block header، السطر التالي يجب أن يكون أعمق.
+      if (expectIndent) {
+        const parentIndent = indentStack[indentStack.length - 1];
+
+        if (indent <= parentIndent) {
+          return {
+            ok: false,
+            available: true,
+            language: "python",
+            reason: "expected indented block after line " + i
+          };
+        }
+
+        // مستوى الجسم الجديد يصبح المستوى الحالي.
+        indentStack.push(indent);
+        expectIndent = false;
+      } else {
+        const currentIndent = indentStack[indentStack.length - 1];
+
+        if (indent === currentIndent) {
+          // نفس مستوى الـblock الحالي — صحيح.
+        } else if (indent < currentIndent) {
+          // الرجوع إلى مستوى سابق.
+          while (
+            indentStack.length > 1 &&
+            indent < indentStack[indentStack.length - 1]
+          ) {
+            indentStack.pop();
+          }
+
+          if (indent !== indentStack[indentStack.length - 1]) {
+            return {
+              ok: false,
+              available: true,
+              language: "python",
+              reason: "inconsistent indentation at line " + (i + 1)
+            };
+          }
+        } else {
+          // زيادة indentation بدون block header.
+          return {
+            ok: false,
+            available: true,
+            language: "python",
+            reason: "unexpected indentation at line " + (i + 1)
+          };
+        }
+      }
+
+      // تحقق الأقواس خارج strings/comments.
+      for (let j = 0; j < scanned.code.length; j++) {
+        const c = scanned.code[j];
+
+        if (pairs[c]) {
+          stack.push({
+            expected: pairs[c],
+            line: i + 1
+          });
+        } else if (closing.has(c)) {
+          if (
+            !stack.length ||
+            stack[stack.length - 1].expected !== c
+          ) {
+            return {
+              ok: false,
+              available: true,
+              language: "python",
+              reason: "unmatched '" + c + "' at line " + (i + 1)
+            };
+          }
+
+          stack.pop();
+        }
+      }
+
+      /*
+       * Block header محافظ:
+       * نعترف بالـcolon عندما يكون آخر token في السطر.
+       * هذا يغطي def/if/for/while/class/try/except/with...
+       * ولا يعتبر colon داخل expression بداية block.
+       */
+      if (/:$/.test(clean)) {
+        expectIndent = true;
+      }
+    }
+
+    if (stack.length) {
+      return {
+        ok: false,
+        available: true,
+        language: "python",
+        reason:
+          "unclosed '" +
+          stack[stack.length - 1].expected +
+          "' opened at line " +
+          stack[stack.length - 1].line
+      };
+    }
+
+    if (expectIndent) {
+      return {
+        ok: false,
+        available: true,
+        language: "python",
+        reason: "expected indented block at end of file"
+      };
+    }
+
+    return {
+      ok: true,
+      available: true,
+      language: "python",
+      reason: null
+    };
+  }
+
   function syntaxCheck(code, filename) {
     const language = detectLanguage(filename);
 
@@ -91,6 +320,10 @@ var FixVerifier = (() => {
         return { ok: false, available: true, language, reason: "TS check failed: " + e.message };
       }
       return { ok: false, available: false, language, reason: "no TypeScript compiler available" };
+    }
+
+    if (language === "python") {
+      return pythonStructuralSyntaxCheck(code);
     }
 
     if (language === "javascript") {
