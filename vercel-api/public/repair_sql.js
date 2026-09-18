@@ -524,6 +524,51 @@
         }
       );
 
+      // Concatenation بدون suffix:
+      // cursor.execute("SELECT ... WHERE id=" + user_id)
+      // مسار محافظ لـ SQLite/Python فقط.
+      fixed = fixed.replace(
+        /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)(["'])([^"'`]*(?:SELECT|INSERT|UPDATE|DELETE)[^"'`]*)\2\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/gi,
+        (match, prefix, quote, queryPart, variable) => {
+
+          if (driver.family !== 'sqlite') {
+            return match;
+          }
+
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(queryPart)) {
+            return match;
+          }
+
+          // المتغير يجب أن يكون قيمة بعد equality، وليس اسم جدول/عمود.
+          if (!/\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*['"]?\s*$/i.test(queryPart)) {
+            return match;
+          }
+
+          // لا نلمس SQL الذي يحتوي placeholder مسبقًا.
+          if (/[?$]\d*|%s\b|:\w+/.test(queryPart)) {
+            return match;
+          }
+
+          const placeholder = driver.placeholder || '?';
+
+          const cleanSQL =
+            queryPart.replace(/['"]\s*$/i, '') + placeholder;
+
+          const result =
+            `${prefix}${JSON.stringify(cleanSQL)}, (${variable},))`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'python_sqlite_simple_parameterization',
+            driver: driver.name
+          });
+
+          count++;
+          return result;
+        }
+      );
+
       // f-string و SQL assignment متعمدًا بدون auto-fix هنا.
       // لأنها تحتاج تحليل سياق أعمق، وتذهب لاحقًا إلى AI_REQUIRED.
     }

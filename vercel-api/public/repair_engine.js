@@ -616,6 +616,14 @@ function getAIReason(strategy) {
 // ─── Main repairCode ──────────────────────────────────
 
 function getLegacySQLFixer() {
+  if (
+    typeof RepairSQL !== 'undefined' &&
+    RepairSQL &&
+    typeof RepairSQL.fix === 'function'
+  ) {
+    return RepairSQL;
+  }
+
   if (typeof SQLInjectionFixer !== 'undefined') {
     return SQLInjectionFixer;
   }
@@ -714,21 +722,31 @@ function repairCode(code, issues, fileName) {
 
         if (
           legacySQL &&
-          typeof legacySQL.canFix === 'function' &&
           typeof legacySQL.fix === 'function' &&
           (ext === 'js' || ext === 'py')
         ) {
           try {
             const legacyOut = legacySQL.fix(repairedCode, fileName);
 
+            const legacyFixed =
+              typeof legacyOut?.fixed === 'string'
+                ? legacyOut.fixed
+                : typeof legacyOut?.code === 'string'
+                  ? legacyOut.code
+                  : null;
+
+            const legacyChanged =
+              legacyOut?.changed === true ||
+              (typeof legacyOut?.code === 'string' &&
+               legacyOut.code !== repairedCode);
+
             if (
-              legacyOut &&
-              legacyOut.changed &&
-              typeof legacyOut.fixed === 'string' &&
-              legacyOut.fixed !== repairedCode
+              legacyChanged &&
+              typeof legacyFixed === 'string' &&
+              legacyFixed !== repairedCode
             ) {
               result = {
-                fixed: legacyOut.fixed,
+                fixed: legacyFixed,
                 patch: 'Legacy SQL fixer candidate',
                 reason: 'Legacy SQL fixer fallback',
               };
