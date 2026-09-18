@@ -24,6 +24,7 @@ function createRepairEngine() {
     "taint_py.js",
     "taint_php.js",
     "context_analyzer.js",
+    "repair_sql.js",
     "repair_engine.js",
     "sql_injection_fix.js",
     "repair_html.js",
@@ -33,6 +34,12 @@ function createRepairEngine() {
     const p = path.join(__dirname, file);
     if (!fs.existsSync(p)) continue;
     vm.runInContext(fs.readFileSync(p, "utf8"), ctx, { filename: file });
+
+    // repair_sql.js exports through global.RepairSQL inside the VM.
+    // Expose it on the VM context so repair_engine.js can use it.
+    if (file === "repair_sql.js" && ctx.window?.RepairSQL) {
+      ctx.RepairSQL = ctx.window.RepairSQL;
+    }
   }
 
   if (typeof ctx.analyzeCode !== "function") {
