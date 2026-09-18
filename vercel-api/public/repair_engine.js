@@ -614,6 +614,22 @@ function getAIReason(strategy) {
 }
 
 // ─── Main repairCode ──────────────────────────────────
+
+function getLegacySQLFixer() {
+  if (typeof SQLInjectionFixer !== 'undefined') {
+    return SQLInjectionFixer;
+  }
+
+  if (
+    typeof window !== 'undefined' &&
+    window.SQLInjectionFixer
+  ) {
+    return window.SQLInjectionFixer;
+  }
+
+  return null;
+}
+
 function repairCode(code, issues, fileName) {
   let ext = 'unknown';
   try {
@@ -691,17 +707,54 @@ function repairCode(code, issues, fileName) {
     }
 
     if (!result || result.fixed === repairedCode) {
-      // eval() الغامض يحتاج فهم السلوك المقصود — لا نخترع إصلاحاً.
-      if (stratKey === 'EVAL_USAGE') {
-        aiNeeded.push({
-          line: issue.line,
-          title: issue.title,
-          strategy: stratKey,
-          reason: getAIReason(stratKey),
-          ev: issue.ev,
-        });
+      // SQL fallback: استخدم الـlegacy fixer فقط كمولّد candidate.
+      // لا يتجاوز Ghost/FixVerifier في الطبقة الأعلى.
+      if (stratKey === 'SQL_INJECTION') {
+        const legacySQL = getLegacySQLFixer();
+
+        if (
+          legacySQL &&
+          typeof legacySQL.canFix === 'function' &&
+          typeof legacySQL.fix === 'function' &&
+          (ext === 'js' || ext === 'py')
+        ) {
+          try {
+            const legacyOut = legacySQL.fix(repairedCode, fileName);
+
+            if (
+              legacyOut &&
+              legacyOut.changed &&
+              typeof legacyOut.fixed === 'string' &&
+              legacyOut.fixed !== repairedCode
+            ) {
+              result = {
+                fixed: legacyOut.fixed,
+                patch: 'Legacy SQL fixer candidate',
+                reason: 'Legacy SQL fixer fallback',
+              };
+            }
+          } catch (e) {
+            console.warn(
+              '[RepairEngine] Legacy SQL fallback failed:',
+              e?.message || e
+            );
+          }
+        }
       }
-      return;
+
+      if (!result || result.fixed === repairedCode) {
+        // eval() الغامض يحتاج فهم السلوك المقصود — لا نخترع إصلاحاً.
+        if (stratKey === 'EVAL_USAGE') {
+          aiNeeded.push({
+            line: issue.line,
+            title: issue.title,
+            strategy: stratKey,
+            reason: getAIReason(stratKey),
+            ev: issue.ev,
+          });
+        }
+        return;
+      }
     }
 
     repairs.push({

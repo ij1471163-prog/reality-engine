@@ -25,6 +25,7 @@ function createRepairEngine() {
     "taint_php.js",
     "context_analyzer.js",
     "repair_engine.js",
+    "sql_injection_fix.js",
     "repair_html.js",
   ];
 

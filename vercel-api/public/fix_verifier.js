@@ -53,6 +53,7 @@ var FixVerifier = (() => {
       case "py":                                      return "python";
       case "php":                                     return "php";
       case "java":                                    return "java";
+      case "cs":                                      return "csharp";
       case "c": case "h":                             return "c";
       case "cpp": case "cc": case "hpp":              return "cpp";
       case "rb":                                      return "ruby";
@@ -381,6 +382,37 @@ var FixVerifier = (() => {
     return result;
   }
 
+  // SQL candidate guard — لا يكفي اختفاء SQL Injection من الـAnalyzer.
+  // يجب أن يثبت الـcandidate وجود parameterization مناسب للغة.
+  function sqlCandidateLooksParameterized(beforeCode, afterCode, fileName) {
+    const ext = String(fileName).split('.').pop().toLowerCase();
+
+    if (ext === 'js' || ext === 'ts') {
+      return (
+        /\?\s*["'`]\s*,\s*\[[\s\S]*\]/.test(afterCode) ||
+        /\$\d+/.test(afterCode) ||
+        /\bparams?\s*[,)]/.test(afterCode)
+      );
+    }
+
+    if (ext === 'py') {
+      return (
+        /\.execute\s*\(\s*[^,]+,\s*\(/.test(afterCode) ||
+        /\.execute\s*\(\s*[^,]+,\s*\[[\s\S]*\]\s*\)/.test(afterCode)
+      );
+    }
+
+    if (ext === 'cs') {
+      return (
+        /\.Parameters\.Add(?:WithValue)?\s*\(/.test(afterCode) &&
+        /(?:CommandText|query|command)\s*=/.test(afterCode) &&
+        !/['"`][^'"`]*@param[^'"`]*['"`]\s*\+/.test(afterCode)
+      );
+    }
+
+    return false;
+  }
+
   // ═══════════════════════════════════════════════
   // verifyFix — البوابة الكاملة (يستدعيها الـOrchestrator)
   // ═══════════════════════════════════════════════
@@ -455,6 +487,40 @@ var FixVerifier = (() => {
         reason: "REJECTED_" + deep.reason,
         syntaxStatus, language: syn.language,
         afterIssues: null, quick, diff: deep.diff
+      };
+    }
+
+    // SQL Injection: لا نقبل candidate لمجرد أن الـAnalyzer توقف عن اكتشافه.
+    // نتحقق أن المشكلة الأصلية SQL وأن الناتج يثبت parameterization.
+    const originalSqlIssue = normalizeIssues(
+      analyzeFunc(beforeCode, fileName)
+    ).some(i => {
+      const text = [
+        i?.type,
+        i?.title,
+        i?.cAct,
+        i?.ev
+      ].map(v => String(v || '').toLowerCase()).join(' ');
+
+      return (
+        text.includes('sql injection') ||
+        text.includes('sql_injection') ||
+        text.includes('cwe-89')
+      );
+    });
+
+    if (
+      originalSqlIssue &&
+      !sqlCandidateLooksParameterized(beforeCode, afterCode, fileName)
+    ) {
+      return {
+        accepted: false,
+        reason: "REJECTED_SQL_NOT_PARAMETERIZED — اختفت إشارة SQL من المحلل لكن الـcandidate لا يثبت parameterization صحيحًا",
+        syntaxStatus,
+        language: syn.language,
+        afterIssues: null,
+        quick,
+        diff: deep.diff
       };
     }
 
