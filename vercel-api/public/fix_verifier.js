@@ -57,6 +57,7 @@ var FixVerifier = (() => {
       case "cpp": case "cc": case "hpp":              return "cpp";
       case "rb":                                      return "ruby";
       case "go":                                      return "go";
+      case "html": case "htm":                          return "html";
       default:                                        return "unknown";
     }
   }
@@ -426,7 +427,9 @@ var FixVerifier = (() => {
     if (syn.available && syn.ok) {
       syntaxStatus = "verified";
     } else {
-      if (!allowUnverifiedLanguages) {
+      const isHtml = syn.language === "html";
+
+      if (!isHtml && !allowUnverifiedLanguages) {
         return {
           accepted: false,
           reason: "REJECTED_NO_SYNTAX_CHECKER [" + syn.language + "]: " + syn.reason
@@ -434,6 +437,7 @@ var FixVerifier = (() => {
           syntaxStatus: "no_checker", language: syn.language, afterIssues: null, quick
         };
       }
+
       syntaxStatus = "unverified_language";
     }
 
