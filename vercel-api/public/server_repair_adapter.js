@@ -25,6 +25,7 @@ function createRepairEngine() {
     "taint_php.js",
     "context_analyzer.js",
     "repair_engine.js",
+    "repair_html.js",
   ];
 
   for (const file of engines) {
@@ -55,6 +56,26 @@ function createRepairEngine() {
   function repair(code, issues, fileName) {
     ctx.F = { [fileName]: code };
     ctx.R = { [fileName]: { issues } };
+
+    // HTML له Repair Engine متخصص ومستقل.
+    // لا نوسّع repair_engine.js ليعالج HTML.
+    const ext = String(fileName).split(".").pop().toLowerCase();
+
+    if ((ext === "html" || ext === "htm") &&
+        ctx.HTMLRepair &&
+        typeof ctx.HTMLRepair.fix === "function") {
+      const htmlResult = ctx.HTMLRepair.fix(code, fileName);
+
+      return {
+        repaired: typeof htmlResult?.fixed === "string"
+          ? htmlResult.fixed
+          : code,
+        repairs: Array.isArray(htmlResult?.repairs)
+          ? htmlResult.repairs
+          : [],
+        aiNeeded: [],
+      };
+    }
 
     const result = ctx.repairCode(code, issues, fileName);
 
