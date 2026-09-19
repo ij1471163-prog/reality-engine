@@ -761,8 +761,9 @@ function repairCode(code, issues, fileName) {
       }
 
       if (!result || result.fixed === repairedCode) {
-        // eval() الغامض يحتاج فهم السلوك المقصود — لا نخترع إصلاحاً.
-        if (stratKey === 'EVAL_USAGE') {
+        // إذا فشل الإصلاح الحتمي، لكن Analyzer أعلن أن المشكلة
+        // تحتاج AI، فمررها إلى AI بدل إسقاطها بصمت.
+        if (issue.aiRequired === true) {
           aiNeeded.push({
             line: issue.line,
             title: issue.title,

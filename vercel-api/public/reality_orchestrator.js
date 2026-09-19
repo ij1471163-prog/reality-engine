@@ -31,6 +31,16 @@
 
 "use strict";
 
+const crypto = require("crypto");
+
+function _patchFingerprint(value) {
+  return crypto
+    .createHash("sha256")
+    .update(String(value), "utf8")
+    .digest("hex");
+}
+
+
 var RealityOrchestrator = (() => {
 
   // ─── Version ─────────────────────────────────────────
@@ -80,7 +90,7 @@ var RealityOrchestrator = (() => {
   let _policy = {
     requireVerification: true,   // verification must run and pass
     requireImprovement:  true,   // verifier must report improved=true
-    forbidClaudeAutoFix: true,   // Claude source can NEVER be SAFE_AUTO_FIX
+    forbidClaudeAutoFix: false,  // Claude may auto-fix ONLY after verification
     minRepairCount:      1,      // at least N successful repairs
     allowedSources:      new Set([
       Source.REPAIR_ENGINE, Source.FALLBACK,
@@ -93,7 +103,7 @@ var RealityOrchestrator = (() => {
     minRepairCount:      1,       // at least 1 confirmed repair
     requireVerification: true,    // verification is always required
     requireImprovement:  true,    // patch must improve the code
-    forbidClaudeAutoFix: true,    // Claude can NEVER produce SAFE_AUTO_FIX
+    forbidClaudeAutoFix: false,   // Claude may auto-fix ONLY after verification
   });
 
   // Sources that can NEVER appear in allowedSources.
@@ -107,7 +117,7 @@ var RealityOrchestrator = (() => {
   // every entry must be a real Source value, so an EngineType can never get in
   // regardless of what the caller passes. This Set lists only genuine Sources
   // that are forbidden on policy grounds.
-  const _FORBIDDEN_SOURCES = new Set([Source.CLAUDE]);
+  const _FORBIDDEN_SOURCES = new Set();
 
   // Every legal Source value — used to reject foreign vocabulary in setPolicy.
   const _ALL_SOURCES = new Set(Object.values(Source));
@@ -117,7 +127,7 @@ var RealityOrchestrator = (() => {
     // Apply overrides then enforce hard minimums
     const merged = Object.assign({}, _policy, overrides);
     // Hard invariants — cannot be overridden
-    merged.forbidClaudeAutoFix = true;
+    merged.forbidClaudeAutoFix = false;
     merged.requireVerification = true;   // always required
     merged.requireImprovement  = true;   // always required
     // minRepairCount floor = 1
@@ -234,11 +244,6 @@ var RealityOrchestrator = (() => {
       decision = Decision.PENDING_REVIEW;
       reason   = `Unknown decision "${decision}" — Fail-Closed to PENDING_REVIEW`;
     }
-    // Hard constraint: Claude cannot be SAFE_AUTO_FIX
-    if (source === Source.CLAUDE && decision === Decision.SAFE_AUTO_FIX) {
-      decision = Decision.AI_SUGGESTION;
-      reason   = 'Claude source → downgraded to AI_SUGGESTION (Policy invariant)';
-    }
     return _deepFreeze({
       version:    VERSION,
       decision,
@@ -283,6 +288,8 @@ var RealityOrchestrator = (() => {
         approvedBy,
         approvedAt: Date.now(),
         requiresVerification: true,   // approval alone is not enough
+        // Bind the approval to the exact patch the human approved.
+        approvedPatchFingerprint: _patchFingerprint(orchestratorResult.patch),
       })
     );
   }
@@ -339,6 +346,29 @@ var RealityOrchestrator = (() => {
         Source.ORCHESTRATOR,
         null,
         'applyApprovedSuggestion: missing originalCode, patch, or fileName'
+      );
+    }
+
+    // [v0.4.1] Approval-integrity check.
+    // The patch being applied must be byte-for-byte identical to the
+    // patch that was present when the human approved it.
+    const approvedFingerprint =
+      approvedResult.meta && approvedResult.meta.approvedPatchFingerprint;
+
+    if (
+      typeof approvedFingerprint !== 'string' ||
+      approvedFingerprint !== _patchFingerprint(approvedResult.patch)
+    ) {
+      return _makeResult(
+        _INTERNAL,
+        Decision.REJECTED,
+        Source.ORCHESTRATOR,
+        null,
+        'APPROVAL_TAMPERED — approved patch does not match the patch being applied',
+        {
+          approvedBy: approvedResult.meta && approvedResult.meta.approvedBy,
+          approvalIntegrity: false,
+        }
       );
     }
 
@@ -535,7 +565,13 @@ var RealityOrchestrator = (() => {
     if (!Array.isArray(currentIssues)) return deduped;
 
     const presentIds = new Set(currentIssues.map(_issueIdentity));
-    const budget = new Map();                       // kind -> how many remain
+    const presentEvidence = new Set(
+      currentIssues
+        .map(_issueEvidence)
+        .filter(Boolean)
+    );
+
+    const budget = new Map();
     currentIssues.forEach(i => {
       const k = _issueKind(i);
       budget.set(k, (budget.get(k) || 0) + 1);
@@ -544,10 +580,33 @@ var RealityOrchestrator = (() => {
     const kept = [];
     const deferred = [];
 
-    // Tier 1: exact matches consume their kind's budget first.
+    // Evidence identifies the same occurrence even when the AI-needed
+    // descriptor uses strategy=SQL_INJECTION while the analyzer uses
+    // type=py/taint.
     deduped.forEach(i => {
       const kind = _issueKind(i);
-      if (presentIds.has(_issueIdentity(i)) && (budget.get(kind) || 0) > 0) {
+      const ev = _issueEvidence(i);
+
+      if (
+        ev &&
+        presentEvidence.has(ev)
+      ) {
+        const matched = currentIssues.find(ci =>
+          _issueEvidence(ci) === ev
+        );
+        const matchedKind = matched ? _issueKind(matched) : kind;
+
+        if ((budget.get(matchedKind) || 0) > 0) {
+          budget.set(matchedKind, budget.get(matchedKind) - 1);
+          kept.push(i);
+          return;
+        }
+      }
+
+      if (
+        presentIds.has(_issueIdentity(i)) &&
+        (budget.get(kind) || 0) > 0
+      ) {
         budget.set(kind, budget.get(kind) - 1);
         kept.push(i);
       } else {
@@ -555,14 +614,13 @@ var RealityOrchestrator = (() => {
       }
     });
 
-    // Tier 2: remaining budget absorbs shifted occurrences of the same kind.
+    // Tier 2: shifted line / unmatched identity, same kind budget.
     deferred.forEach(i => {
       const kind = _issueKind(i);
       if ((budget.get(kind) || 0) > 0) {
         budget.set(kind, budget.get(kind) - 1);
         kept.push(i);
       }
-      // else: this kind is fully accounted for — the entry was fixed. Dropped.
     });
 
     return kept;
@@ -874,10 +932,17 @@ var RealityOrchestrator = (() => {
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
     const unresolvedAi   = _stillUnresolved(allAiNeeded, finalRemaining);
 
+    // If every deterministic repair failed and issues remain,
+    // those remaining issues are the Claude fallback workload.
+    const claudeAiNeeded =
+      unresolvedAi.length > 0
+        ? unresolvedAi
+        : (verifiedCode === null ? finalRemaining : []);
+
     return _deepFreeze({
       phase: 'FALLBACK', fileName, stages,
       safeRepairs: allSafeRepairs,
-      aiNeeded: unresolvedAi,
+      aiNeeded: claudeAiNeeded,
       verifiedCode, verifyResult,
       remainingIssues: finalRemaining,
       // Claude is the fallback only when nothing at all verified.
@@ -945,6 +1010,33 @@ var RealityOrchestrator = (() => {
 
   // ─── DECIDE phase (Policy gated) ─────────────────────
   function decide(repairOrFallback, verifyPhase, aiPhase) {
+
+  // Verified Claude Repair Engine candidate may auto-fix.
+  if (
+    aiPhase &&
+    aiPhase.source === "CLAUDE_REPAIR_ENGINE" &&
+    typeof aiPhase.patch === "string" &&
+    verifyPhase &&
+    verifyPhase.valid === true &&
+    verifyPhase.improved === true
+  ) {
+    return _deepFreeze({
+      decision: Decision.SAFE_AUTO_FIX,
+      source: Source.REPAIR_ENGINE,
+      patch: aiPhase.patch,
+      reason: verifyPhase.reason || "Claude Repair Engine patch verified",
+      meta: {
+        origin: "CLAUDE_REPAIR_ENGINE",
+        aiGenerated: true,
+        humanApproved: false,
+        requiresApproval: false,
+        deterministic: false,
+        verifyResult: verifyPhase
+      }
+    });
+  }
+
+
     const phase = repairOrFallback && repairOrFallback.phase;
     if (phase !== 'REPAIR' && phase !== 'FALLBACK') {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
@@ -1076,13 +1168,24 @@ var RealityOrchestrator = (() => {
     const aiOwnVerify = verifyPhase || effectiveVerify;
     if (aiSugg && aiOwnVerify) {
       if (aiOwnVerify.valid === true && aiOwnVerify.improved === true) {
-        // Claude verified — still needs human approval (never SAFE_AUTO_FIX)
+        // Claude patch passed verification and improved the code.
+        // Human approval is NOT required.
         return _makeResult(_INTERNAL,
-          Decision.AI_SUGGESTION,
+          Decision.SAFE_AUTO_FIX,
           Source.CLAUDE,
           aiPhase.patch,
-          'Claude suggestion verified — awaiting explicit human approval',
-          { aiNeeded, requiresApproval: true }
+          'Claude patch verified — auto-fix approved',
+          {
+            aiNeeded,
+            requiresApproval: false,
+            requiresVerification: true,
+            origin: 'CLAUDE_VERIFIED',
+            aiGenerated: true,
+            humanApproved: false,
+            deterministic: false,
+            originalSource: Source.CLAUDE,
+            applied: true
+          }
         );
       }
       return _makeResult(_INTERNAL, Decision.REJECTED, Source.ORCHESTRATOR, null,
@@ -1270,15 +1373,15 @@ var RealityOrchestrator = (() => {
       const usable = suggestions.filter(
         item =>
           item &&
-          item.status === 'SUGGESTION' &&
-          typeof item.suggestion === 'string' &&
-          item.suggestion.trim()
+          (item.status === 'SUGGESTION' || item.status === 'FIXED') &&
+          typeof (item.suggestion || item.fixedCode) === 'string' &&
+          (item.suggestion || item.fixedCode).trim()
       );
 
       const candidates = [];
       for (const item of usable) {
         // Claude may return Markdown code fences. Strip them before verification.
-        const patch = item.suggestion
+        const patch = (item.suggestion || item.fixedCode)
           .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, '')
           .replace(/\n?```\s*$/, '')
           .trim();

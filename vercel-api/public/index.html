@@ -642,7 +642,7 @@ ${F[fn]}
 // وقرار Fallback/Claude كلها مسؤولية RealityOrchestrator.
 // ═══════════════════════════════════════════════════════
 
-function fixAllEngineUI() {
+async function fixAllEngineUI() {
     if (!_hasOrchestrator() || !_hasVerifier()) { _safeEngineMissing(); return; }
     if (!_registerEngines())                    { _safeEngineMissing(); return; }
 
@@ -654,15 +654,15 @@ function fixAllEngineUI() {
     const RO = RealityOrchestrator;
     let applied = 0, rejected = 0, aiNeeded = 0;
 
-    Object.keys(F).forEach(fn => {
+    for (const fn of Object.keys(F)) {
         let out;
         try {
-            out = RO.runPipeline(F[fn], fn, { useFallbackChain: true });
+            out = await RO.runPipelineAsync(F[fn], fn, { useFallbackChain: true });
         } catch (e) {
-            rejected++; return;
+            rejected++; continue;
         }
         const d = out && out.decision;
-        if (!d) { rejected++; return; }
+        if (!d) { rejected++; continue; }
 
         if (d.decision === RO.Decision.SAFE_AUTO_FIX && typeof d.patch === 'string') {
             // المنسّق تحقق أصلًا، والبوابة تتحقق مرة أخيرة قبل الكتابة (حزام إضافي)
@@ -675,7 +675,7 @@ function fixAllEngineUI() {
         } else if (d.decision === RO.Decision.REJECTED || d.decision === RO.Decision.PENDING_REVIEW) {
             rejected++;
         }
-    });
+    }
 
     let msg = '✅ اعتُمد ' + applied + ' ملف';
     if (rejected) msg += ' • رُفض ' + rejected;
