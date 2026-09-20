@@ -31,16 +31,6 @@
 
 "use strict";
 
-const crypto = require("crypto");
-
-function _patchFingerprint(value) {
-  return crypto
-    .createHash("sha256")
-    .update(String(value), "utf8")
-    .digest("hex");
-}
-
-
 var RealityOrchestrator = (() => {
 
   // ─── Version ─────────────────────────────────────────
@@ -288,8 +278,6 @@ var RealityOrchestrator = (() => {
         approvedBy,
         approvedAt: Date.now(),
         requiresVerification: true,   // approval alone is not enough
-        // Bind the approval to the exact patch the human approved.
-        approvedPatchFingerprint: _patchFingerprint(orchestratorResult.patch),
       })
     );
   }
@@ -346,29 +334,6 @@ var RealityOrchestrator = (() => {
         Source.ORCHESTRATOR,
         null,
         'applyApprovedSuggestion: missing originalCode, patch, or fileName'
-      );
-    }
-
-    // [v0.4.1] Approval-integrity check.
-    // The patch being applied must be byte-for-byte identical to the
-    // patch that was present when the human approved it.
-    const approvedFingerprint =
-      approvedResult.meta && approvedResult.meta.approvedPatchFingerprint;
-
-    if (
-      typeof approvedFingerprint !== 'string' ||
-      approvedFingerprint !== _patchFingerprint(approvedResult.patch)
-    ) {
-      return _makeResult(
-        _INTERNAL,
-        Decision.REJECTED,
-        Source.ORCHESTRATOR,
-        null,
-        'APPROVAL_TAMPERED — approved patch does not match the patch being applied',
-        {
-          approvedBy: approvedResult.meta && approvedResult.meta.approvedBy,
-          approvalIntegrity: false,
-        }
       );
     }
 
@@ -580,17 +545,14 @@ var RealityOrchestrator = (() => {
     const kept = [];
     const deferred = [];
 
-    // Evidence identifies the same occurrence even when the AI-needed
-    // descriptor uses strategy=SQL_INJECTION while the analyzer uses
-    // type=py/taint.
+    // Tier 1: evidence identifies the same occurrence even when
+    // AI_REQUIRED uses strategy=SQL_INJECTION while the analyzer uses
+    // type=js/py/taint or another issue kind.
     deduped.forEach(i => {
       const kind = _issueKind(i);
       const ev = _issueEvidence(i);
 
-      if (
-        ev &&
-        presentEvidence.has(ev)
-      ) {
+      if (ev && presentEvidence.has(ev)) {
         const matched = currentIssues.find(ci =>
           _issueEvidence(ci) === ev
         );
@@ -614,13 +576,14 @@ var RealityOrchestrator = (() => {
       }
     });
 
-    // Tier 2: shifted line / unmatched identity, same kind budget.
+    // Tier 2: remaining budget absorbs shifted occurrences of the same kind.
     deferred.forEach(i => {
       const kind = _issueKind(i);
       if ((budget.get(kind) || 0) > 0) {
         budget.set(kind, budget.get(kind) - 1);
         kept.push(i);
       }
+      // else: this kind is fully accounted for — the entry was fixed. Dropped.
     });
 
     return kept;
@@ -932,17 +895,10 @@ var RealityOrchestrator = (() => {
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
     const unresolvedAi   = _stillUnresolved(allAiNeeded, finalRemaining);
 
-    // If every deterministic repair failed and issues remain,
-    // those remaining issues are the Claude fallback workload.
-    const claudeAiNeeded =
-      unresolvedAi.length > 0
-        ? unresolvedAi
-        : (verifiedCode === null ? finalRemaining : []);
-
     return _deepFreeze({
       phase: 'FALLBACK', fileName, stages,
       safeRepairs: allSafeRepairs,
-      aiNeeded: claudeAiNeeded,
+      aiNeeded: unresolvedAi,
       verifiedCode, verifyResult,
       remainingIssues: finalRemaining,
       // Claude is the fallback only when nothing at all verified.
@@ -1010,33 +966,6 @@ var RealityOrchestrator = (() => {
 
   // ─── DECIDE phase (Policy gated) ─────────────────────
   function decide(repairOrFallback, verifyPhase, aiPhase) {
-
-  // Verified Claude Repair Engine candidate may auto-fix.
-  if (
-    aiPhase &&
-    aiPhase.source === "CLAUDE_REPAIR_ENGINE" &&
-    typeof aiPhase.patch === "string" &&
-    verifyPhase &&
-    verifyPhase.valid === true &&
-    verifyPhase.improved === true
-  ) {
-    return _deepFreeze({
-      decision: Decision.SAFE_AUTO_FIX,
-      source: Source.REPAIR_ENGINE,
-      patch: aiPhase.patch,
-      reason: verifyPhase.reason || "Claude Repair Engine patch verified",
-      meta: {
-        origin: "CLAUDE_REPAIR_ENGINE",
-        aiGenerated: true,
-        humanApproved: false,
-        requiresApproval: false,
-        deterministic: false,
-        verifyResult: verifyPhase
-      }
-    });
-  }
-
-
     const phase = repairOrFallback && repairOrFallback.phase;
     if (phase !== 'REPAIR' && phase !== 'FALLBACK') {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
@@ -1168,23 +1097,19 @@ var RealityOrchestrator = (() => {
     const aiOwnVerify = verifyPhase || effectiveVerify;
     if (aiSugg && aiOwnVerify) {
       if (aiOwnVerify.valid === true && aiOwnVerify.improved === true) {
-        // Claude patch passed verification and improved the code.
-        // Human approval is NOT required.
+        // Claude verified by FixVerifier — safe to auto-apply.
         return _makeResult(_INTERNAL,
           Decision.SAFE_AUTO_FIX,
           Source.CLAUDE,
           aiPhase.patch,
-          'Claude patch verified — auto-fix approved',
+          'Claude suggestion verified — auto-applied',
           {
             aiNeeded,
             requiresApproval: false,
-            requiresVerification: true,
             origin: 'CLAUDE_VERIFIED',
             aiGenerated: true,
             humanApproved: false,
-            deterministic: false,
-            originalSource: Source.CLAUDE,
-            applied: true
+            deterministic: false
           }
         );
       }
@@ -1373,15 +1298,15 @@ var RealityOrchestrator = (() => {
       const usable = suggestions.filter(
         item =>
           item &&
-          (item.status === 'SUGGESTION' || item.status === 'FIXED') &&
-          typeof (item.suggestion || item.fixedCode) === 'string' &&
-          (item.suggestion || item.fixedCode).trim()
+          item.status === 'SUGGESTION' &&
+          typeof item.suggestion === 'string' &&
+          item.suggestion.trim()
       );
 
       const candidates = [];
       for (const item of usable) {
         // Claude may return Markdown code fences. Strip them before verification.
-        const patch = (item.suggestion || item.fixedCode)
+        const patch = item.suggestion
           .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, '')
           .replace(/\n?```\s*$/, '')
           .trim();

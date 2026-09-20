@@ -357,13 +357,30 @@ var ClaudeRepairEngine = (() => {
     }
 
     // كل issue تعمل على الكود الأصلي — لا تسلسل
-    const results = await Promise.all(
+    const rawResults = await Promise.all(
       issues.map(issue =>
         repairOne(code, fileName, issue, options)
           .catch(err => _makeResult(Status.PENDING_REVIEW, null, code, issue,
             'Unexpected: ' + err.message))
       )
     );
+
+    // امنع تكرار نفس Claude candidate عندما تشير عدة issues لنفس الإصلاح.
+    const seenSuggestions = new Set();
+    const results = rawResults.filter(result => {
+      if (
+        !result ||
+        result.status !== Status.FIXED ||
+        typeof result.fixedCode !== 'string'
+      ) {
+        return true;
+      }
+
+      if (seenSuggestions.has(result.fixedCode)) return false;
+
+      seenSuggestions.add(result.fixedCode);
+      return true;
+    });
 
     return {
       code,     // الكود الأصلي — لم يتغير هنا
