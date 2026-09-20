@@ -136,6 +136,13 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
     const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
     // ملاحظة: لا نمرر allowUnverifiedLanguages إطلاقًا ⇒ HTML وأي لغة بلا
     // فاحص تُرفض افتراضيًا. هذا مقصود.
+    console.log('[DEBUG FIX GATE]', {
+        file: fn,
+        source,
+        hasAnalyzer: typeof analyzer === 'function',
+        hasVerifier: !!_fv,
+        candidateChanged: candidate !== before
+    });
     const v = _fv.verifyFix(before, candidate, fn, analyzer, {});
 
     if (!v.accepted) {
@@ -194,7 +201,7 @@ function _runIsolatedEngine(F, R, runner, source, report) {
     // الملفات التي لم تتغيّر: لا شيء. والنسخة المؤقتة تُرمى بالكامل.
 }
 
-function fixAllEngine() {
+function fixAllEnginePipeline() {
     const origF = {};
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
 
@@ -356,7 +363,10 @@ function fixAllEngine() {
     // totalFixed يعكس ما أزالته البوابة فعليًا، لا ما ادّعته المحركات.
     const rejectedCount = report.rejected.length;
     let msg = '✅ تم إصلاح ' + report.totalFixed + ' مشكلة';
-    if (rejectedCount > 0) msg += ' • ' + rejectedCount + ' تعديل مرفوض (لم يجتز التحقق)';
+    if (rejectedCount > 0) {
+      const firstReject = report.rejected[0] || {};
+      msg += ' • ' + rejectedCount + ' تعديل مرفوض: ' + (firstReject.reason || 'UNKNOWN');
+    }
     toast(msg);
 
     if (typeof globalThis !== 'undefined') globalThis.lastPipelineReport = report;
@@ -367,8 +377,12 @@ function fixAllEngine() {
     return report;
 }
 
+if (typeof fixAllEngine === 'undefined' && typeof globalThis !== 'undefined') {
+    globalThis.fixAllEngine = fixAllEnginePipeline;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { fixAllEngine, learnedSyntaxOk, _gateAndCommit, _runIsolatedEngine };
+    module.exports = { fixAllEnginePipeline, fixAllEngine: fixAllEnginePipeline, learnedSyntaxOk, _gateAndCommit, _runIsolatedEngine };
 }
 
 
