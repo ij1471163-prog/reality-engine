@@ -136,13 +136,6 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
     const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
     // ملاحظة: لا نمرر allowUnverifiedLanguages إطلاقًا ⇒ HTML وأي لغة بلا
     // فاحص تُرفض افتراضيًا. هذا مقصود.
-    console.log('[DEBUG FIX GATE]', {
-        file: fn,
-        source,
-        hasAnalyzer: typeof analyzer === 'function',
-        hasVerifier: !!_fv,
-        candidateChanged: candidate !== before
-    });
     const v = _fv.verifyFix(before, candidate, fn, analyzer, {});
 
     if (!v.accepted) {
@@ -363,10 +356,7 @@ function fixAllEnginePipeline() {
     // totalFixed يعكس ما أزالته البوابة فعليًا، لا ما ادّعته المحركات.
     const rejectedCount = report.rejected.length;
     let msg = '✅ تم إصلاح ' + report.totalFixed + ' مشكلة';
-    if (rejectedCount > 0) {
-      const firstReject = report.rejected[0] || {};
-      msg += ' • ' + rejectedCount + ' تعديل مرفوض: ' + (firstReject.reason || 'UNKNOWN');
-    }
+    if (rejectedCount > 0) msg += ' • ' + rejectedCount + ' تعديل مرفوض (لم يجتز التحقق)';
     toast(msg);
 
     if (typeof globalThis !== 'undefined') globalThis.lastPipelineReport = report;
@@ -377,6 +367,9 @@ function fixAllEnginePipeline() {
     return report;
 }
 
+// الاسم العام fixAllEngine يُربط هنا فقط إذا لم تعرّفه الواجهة قبل تحميل هذا
+// الملف. إعلان `function fixAllEngine()` مباشرةً كان يطغى على نسخة index.html
+// (التي تمر عبر RealityOrchestrator) لأن هذا الملف يُحمَّل بعدها.
 if (typeof fixAllEngine === 'undefined' && typeof globalThis !== 'undefined') {
     globalThis.fixAllEngine = fixAllEnginePipeline;
 }
