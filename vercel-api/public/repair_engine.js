@@ -615,7 +615,19 @@ function getAIReason(strategy) {
 
 // ─── Main repairCode ──────────────────────────────────
 
-function getLegacySQLFixer() {
+function getLegacySQLFixer(fileName) {
+  const ext = String(fileName || '').split('.').pop().toLowerCase();
+
+  // JS/TS: RepairSQL يُرجع aiRequired بلا تغيير، بينما SQLInjectionFixer يُنتج candidate.
+  if (
+    (ext === 'js' || ext === 'ts') &&
+    typeof SQLInjectionFixer !== 'undefined' &&
+    SQLInjectionFixer &&
+    typeof SQLInjectionFixer.fix === 'function'
+  ) {
+    return SQLInjectionFixer;
+  }
+
   if (
     typeof RepairSQL !== 'undefined' &&
     RepairSQL &&
@@ -718,7 +730,7 @@ function repairCode(code, issues, fileName) {
       // SQL fallback: استخدم الـlegacy fixer فقط كمولّد candidate.
       // لا يتجاوز Ghost/FixVerifier في الطبقة الأعلى.
       if (stratKey === 'SQL_INJECTION') {
-        const legacySQL = getLegacySQLFixer();
+        const legacySQL = getLegacySQLFixer(fileName);
 
         if (
           legacySQL &&

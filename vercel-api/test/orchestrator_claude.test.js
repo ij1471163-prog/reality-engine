@@ -43,7 +43,7 @@ def get_user(user_id):
   );
 
   assert.equal(result.decision.decision, "SAFE_AUTO_FIX");
-  assert.equal(result.decision.source, "CLAUDE");
+  assert.equal(result.decision.source, "REPAIR_ENGINE");
   assert.equal(result.decision.meta.requiresApproval, false);
 
   assert.equal(result.phases.ai.engine, "claude-repair-engine");
@@ -53,7 +53,7 @@ def get_user(user_id):
   assert.equal(result.phases.aiVerify.valid, true);
   assert.equal(result.phases.aiVerify.improved, true);
 
-  assert.equal(result.decision.meta.origin, "CLAUDE_VERIFIED");
+  assert.equal(result.decision.meta.origin, "CLAUDE_REPAIR_ENGINE");
   assert.equal(result.decision.meta.aiGenerated, true);
   assert.equal(result.decision.meta.humanApproved, false);
   assert.equal(result.decision.meta.deterministic, false);
