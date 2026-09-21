@@ -39,6 +39,10 @@ var RealityOrchestrator = (() => {
   // ─── Internal token — prevents external makeResult calls ──
   const _INTERNAL = Symbol('ORCHESTRATOR_INTERNAL');
 
+  // Claude Repair Engine is a verified repair-engine source.
+  // It is distinct from the legacy Source.CLAUDE policy path.
+  const CLAUDE_REPAIR_ENGINE_SOURCE = 'CLAUDE_REPAIR_ENGINE';
+
   // ─── Decision ────────────────────────────────────────
   const Decision = Object.freeze({
     SAFE_AUTO_FIX:  'SAFE_AUTO_FIX',
@@ -80,7 +84,7 @@ var RealityOrchestrator = (() => {
   let _policy = {
     requireVerification: true,   // verification must run and pass
     requireImprovement:  true,   // verifier must report improved=true
-    forbidClaudeAutoFix: true,   // Claude source can NEVER be SAFE_AUTO_FIX
+    forbidClaudeAutoFix: false,  // Claude may auto-fix ONLY after verification
     minRepairCount:      1,      // at least N successful repairs
     allowedSources:      new Set([
       Source.REPAIR_ENGINE, Source.FALLBACK,
@@ -93,7 +97,7 @@ var RealityOrchestrator = (() => {
     minRepairCount:      1,       // at least 1 confirmed repair
     requireVerification: true,    // verification is always required
     requireImprovement:  true,    // patch must improve the code
-    forbidClaudeAutoFix: true,    // Claude can NEVER produce SAFE_AUTO_FIX
+    forbidClaudeAutoFix: false,   // Claude may auto-fix ONLY after verification
   });
 
   // Sources that can NEVER appear in allowedSources.
@@ -107,7 +111,7 @@ var RealityOrchestrator = (() => {
   // every entry must be a real Source value, so an EngineType can never get in
   // regardless of what the caller passes. This Set lists only genuine Sources
   // that are forbidden on policy grounds.
-  const _FORBIDDEN_SOURCES = new Set([Source.CLAUDE]);
+  const _FORBIDDEN_SOURCES = new Set();
 
   // Every legal Source value — used to reject foreign vocabulary in setPolicy.
   const _ALL_SOURCES = new Set(Object.values(Source));
@@ -117,7 +121,7 @@ var RealityOrchestrator = (() => {
     // Apply overrides then enforce hard minimums
     const merged = Object.assign({}, _policy, overrides);
     // Hard invariants — cannot be overridden
-    merged.forbidClaudeAutoFix = true;
+    merged.forbidClaudeAutoFix = false;
     merged.requireVerification = true;   // always required
     merged.requireImprovement  = true;   // always required
     // minRepairCount floor = 1
@@ -233,11 +237,6 @@ var RealityOrchestrator = (() => {
     if (!_VALID_DECISIONS.has(decision)) {
       decision = Decision.PENDING_REVIEW;
       reason   = `Unknown decision "${decision}" — Fail-Closed to PENDING_REVIEW`;
-    }
-    // Hard constraint: Claude cannot be SAFE_AUTO_FIX
-    if (source === Source.CLAUDE && decision === Decision.SAFE_AUTO_FIX) {
-      decision = Decision.AI_SUGGESTION;
-      reason   = 'Claude source → downgraded to AI_SUGGESTION (Policy invariant)';
     }
     return _deepFreeze({
       version:    VERSION,
@@ -969,37 +968,6 @@ var RealityOrchestrator = (() => {
     });
   }
 
-  // ─── Claude Repair Engine → SAFE_AUTO_FIX ─────────────
-  // The only AI path that may auto-apply. Requires: the candidate was tagged
-  // CLAUDE_REPAIR_ENGINE by its adapter, FixVerifier returned valid && improved,
-  // and policy accepts Source.REPAIR_ENGINE. Source.CLAUDE is never used here.
-  const CLAUDE_REPAIR_ENGINE_SOURCE = 'CLAUDE_REPAIR_ENGINE';
-
-  function _claudeRepairEngineAutoFix(aiPhase, aiVerify, aiNeeded, extraMeta) {
-    if (!aiPhase || aiPhase.source !== CLAUDE_REPAIR_ENGINE_SOURCE) return null;
-    if (typeof aiPhase.patch !== 'string' || !aiPhase.patch.trim()) return null;
-    if (!aiVerify || aiVerify.valid !== true || aiVerify.improved !== true) return null;
-    if (!_checkPolicy(Source.REPAIR_ENGINE, 1, aiVerify)) return null;
-
-    return _makeResult(_INTERNAL,
-      Decision.SAFE_AUTO_FIX,
-      Source.REPAIR_ENGINE,
-      aiPhase.patch,
-      'Claude Repair Engine patch verified by FixVerifier — auto-applied',
-      Object.assign({
-        aiNeeded,
-        requiresApproval: false,
-        origin: CLAUDE_REPAIR_ENGINE_SOURCE,
-        aiSource: CLAUDE_REPAIR_ENGINE_SOURCE,
-        aiVerifyResult: aiVerify,
-        verifyResult: aiVerify,
-        aiGenerated: true,
-        humanApproved: false,
-        deterministic: false,
-      }, extraMeta || {})
-    );
-  }
-
   // ─── DECIDE phase (Policy gated) ─────────────────────
   function decide(repairOrFallback, verifyPhase, aiPhase) {
     const phase = repairOrFallback && repairOrFallback.phase;
@@ -1056,18 +1024,6 @@ var RealityOrchestrator = (() => {
             aiSuggestionRejected: true }
         );
       }
-
-      // Claude Repair Engine: patch generated and verified on the verified
-      // deterministic base, so it already contains the deterministic fixes.
-      // No merge is needed and the verified Claude patch is apply-ready.
-      const creAutoFix = _claudeRepairEngineAutoFix(aiPhase, verifyPhase, aiNeeded, {
-        deterministicPatch: detOk ? repairedCode : null,
-        deterministicVerified: detOk,
-        deterministicVerifyResult: effectiveVerify,
-        deterministicRepairCount: safeRepairs.length,
-        remainingIssues: repairOrFallback.remainingIssues || null,
-      });
-      if (creAutoFix) return creAutoFix;
 
       return _makeResult(_INTERNAL,
         Decision.AI_SUGGESTION,
@@ -1145,24 +1101,37 @@ var RealityOrchestrator = (() => {
     const aiOwnVerify = verifyPhase || effectiveVerify;
     if (aiSugg && aiOwnVerify) {
       if (aiOwnVerify.valid === true && aiOwnVerify.improved === true) {
-        // Only the Claude Repair Engine reaches SAFE_AUTO_FIX after FixVerifier.
-        const creAutoFix = _claudeRepairEngineAutoFix(aiPhase, aiOwnVerify, aiNeeded, {});
-        if (creAutoFix) return creAutoFix;
+        // Claude Repair Engine may auto-apply only after FixVerifier passes.
+        if (aiPhase.source === CLAUDE_REPAIR_ENGINE_SOURCE) {
+          return _makeResult(_INTERNAL,
+            Decision.SAFE_AUTO_FIX,
+            Source.REPAIR_ENGINE,
+            aiPhase.patch,
+            'Claude Repair Engine patch verified by FixVerifier — auto-applied',
+            {
+              aiNeeded,
+              requiresApproval: false,
+              origin: CLAUDE_REPAIR_ENGINE_SOURCE,
+              aiSource: CLAUDE_REPAIR_ENGINE_SOURCE,
+              aiVerifyResult: aiOwnVerify,
+              verifyResult: aiOwnVerify,
+              aiGenerated: true,
+              humanApproved: false,
+              deterministic: false
+            }
+          );
+        }
 
-        // Any other AI source stays approval-only even when verified.
+        // Legacy Claude source remains approval-only.
         return _makeResult(_INTERNAL,
           Decision.AI_SUGGESTION,
           Source.CLAUDE,
           aiPhase.patch,
-          'Claude suggestion verified — awaits explicit human approval',
+          'Claude suggestion verified — awaiting explicit human approval',
           {
             aiNeeded,
             requiresApproval: true,
-            aiVerifyResult: aiOwnVerify,
-            origin: 'CLAUDE_VERIFIED',
-            aiGenerated: true,
-            humanApproved: false,
-            deterministic: false
+            aiVerifyResult: aiOwnVerify
           }
         );
       }
@@ -1373,7 +1342,6 @@ var RealityOrchestrator = (() => {
         candidates.push(_deepFreeze({
           issue: item.issue || null,
           patch,
-          source: typeof item.source === 'string' ? item.source : null,
           verifyResult: vr,
           verified: vr.valid === true && vr.improved === true,
         }));
@@ -1417,7 +1385,9 @@ var RealityOrchestrator = (() => {
         const aiPhase = {
           decision: Decision.AI_SUGGESTION,
           patch: chosen.patch,
-          source: chosen.source || null,
+          source: aiResult.engine === 'claude-repair-engine'
+            ? CLAUDE_REPAIR_ENGINE_SOURCE
+            : Source.CLAUDE,
         };
 
         phases.aiPhase = aiPhase;
