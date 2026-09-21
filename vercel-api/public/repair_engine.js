@@ -775,7 +775,7 @@ function repairCode(code, issues, fileName) {
       if (!result || result.fixed === repairedCode) {
         // إذا فشل الإصلاح الحتمي، لكن Analyzer أعلن أن المشكلة
         // تحتاج AI، فمررها إلى AI بدل إسقاطها بصمت.
-        if (issue.aiRequired === true) {
+        if (issue.aiRequired === true || stratKey === 'SQL_INJECTION') {
           aiNeeded.push({
             line: issue.line,
             title: issue.title,
