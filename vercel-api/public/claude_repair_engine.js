@@ -183,6 +183,45 @@ var ClaudeRepairEngine = (() => {
     return prev[B.length];
   }
 
+  // ─── Code extraction (line-based fences) ─────────────
+  // الـfence سطر كامل فقط (CommonMark): 0–3 مسافات ثم ``` أو ~~~ (3+) ثم وسم
+  // لغة اختياري بأي أحرف (c++, python3). الإغلاق: نفس الحرف وبطول ≥ الفتح وحده
+  // على السطر. لذلك ``` داخل string في منتصف سطر لا ينهي الكتلة أبدًا.
+  //   - بلا fence إطلاقًا      → الرد كله كود (السلوك الحالي).
+  //   - كتلة واحدة مكتملة     → محتواها.
+  //   - أكثر من كتلة          → MULTIPLE_CODE_BLOCKS (لا نخمّن أيها الملف).
+  //   - fence مفتوح بلا إغلاق → UNTERMINATED_CODE_BLOCK (رد مقطوع غالبًا).
+  // يُرجع { ok, code } أو { ok: false, reason }.
+  const _FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+  function _extractCode(text) {
+    const lines = String(text).split('\n');
+    const blocks = [];
+    let open = null;                                   // { ch, len, start }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].replace(/\r$/, '');
+      if (!open) {
+        const m = line.match(_FENCE_OPEN);
+        // info string لسياج backtick لا يحتوي backtick (CommonMark)
+        if (m && !(m[1][0] === '`' && m[2].includes('`'))) {
+          open = { ch: m[1][0], len: m[1].length, start: i + 1 };
+        }
+        continue;
+      }
+      const c = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (c && c[1][0] === open.ch && c[1].length >= open.len) {
+        blocks.push(lines.slice(open.start, i).join('\n'));
+        open = null;
+      }
+    }
+
+    if (open)              return { ok: false, reason: 'UNTERMINATED_CODE_BLOCK — opening fence without a closing fence (truncated response?)' };
+    if (blocks.length > 1) return { ok: false, reason: `MULTIPLE_CODE_BLOCKS — response has ${blocks.length} code blocks, expected one` };
+    if (blocks.length === 1) return { ok: true, code: blocks[0] };
+    return { ok: true, code: String(text) };
+  }
+
   // ─── Local validation before FIXED ───────────────────
   // يرفض: فارغ، CANNOT_FIX، بلا تغيير، نثر بلا كود،
   //        تغيير ضخم غير مبرر لمشكلة صغيرة.
@@ -195,11 +234,12 @@ var ClaudeRepairEngine = (() => {
     if (!text)               return { ok: false, reason: 'empty after trim' };
     if (text === 'CANNOT_FIX') return { ok: false, reason: 'CANNOT_FIX' };
 
-    // استخرج كود من code block إذا وُجد
-    const blockMatch = text.match(/```(?:\w*\n?)([\s\S]+?)```/);
+    // استخرج كود من code block إذا وُجد (line-based — انظر _extractCode)
+    const extracted = _extractCode(rawText);
+    if (!extracted.ok) return { ok: false, reason: extracted.reason };
     // لا trim() كامل: إزاحة السطر الأول جزء من الكود (Python / بلوك داخل دالة).
     // نحذف فقط الأسطر الفارغة في البداية والفراغات في النهاية.
-    const candidate  = (blockMatch ? blockMatch[1] : rawText)
+    const candidate  = extracted.code
       .replace(/^(?:[ \t]*\r?\n)+/, '')
       .replace(/\s+$/, '');
 
@@ -375,7 +415,8 @@ var ClaudeRepairEngine = (() => {
       if (!text && (stopReason === null || stopReason === 'end_turn')) {
         throw new Error('Empty content from API');
       }
-      return { text: text.trim(), model: data.model || MODEL, stopReason, outputTokens };
+      // بلا trim(): إزاحة أول سطر جزء من الكود (رد بلا fence). _validate يتولى الحواف.
+      return { text, model: data.model || MODEL, stopReason, outputTokens };
     } finally {
       clearTimeout(timer);
     }
@@ -442,7 +483,7 @@ var ClaudeRepairEngine = (() => {
         return _makeResult(Status.CANNOT_FIX, null, code, issue, reason, { model: result.model });
       }
 
-      if (rawText === 'CANNOT_FIX') {
+      if (rawText.trim() === 'CANNOT_FIX') {
         return _makeResult(Status.CANNOT_FIX, null, code, issue,
           'Claude: cannot safely fix this issue', { model: result.model });
       }
@@ -534,6 +575,7 @@ var ClaudeRepairEngine = (() => {
     _extractContext,
     _reconstructCode,
     _completenessProblem,
+    _extractCode,
   });
 
 })();
