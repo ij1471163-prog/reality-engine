@@ -32,6 +32,10 @@ var ClaudeRepairEngine = (() => {
   // حد أقصى لنسبة التغيير المقبولة (تغيير أكثر من 60% للملف → مشبوه)
   const MAX_CHANGE_RATIO = 0.40;  // تغيير >40% لمشكلة واحدة مشبوه
 
+  // Completeness: أي سطر أصلي أبعد من هذا عن سطر الهدف يجب أن يبقى في الناتج.
+  // أصغر من SMART_CONTEXT_LINES عمدًا: ملف ≤300 سطر يكون أغلبه داخل ±40.
+  const EDIT_RADIUS = 10;
+
   // ─── Status ──────────────────────────────────────────
   const Status = Object.freeze({
     FIXED:          'FIXED',
@@ -153,9 +157,30 @@ var ClaudeRepairEngine = (() => {
       '6. Do NOT add explanations, comments, or prose — code only.',
       '7. If you cannot fix this safely, reply with exactly: CANNOT_FIX',
       '8. If the code shown is already correct for this issue, reply with exactly: CANNOT_FIX',
+      // ملف كامل: الرد يستبدل الملف كله، فأي حذف أو اختصار يضيع كودًا سليمًا.
+      ctx.fullFile
+        ? '9. This is the FULL file: return the COMPLETE file with every other line unchanged. ' +
+          'Never omit, shorten, or summarize any part (no "..." or "rest unchanged" placeholders). ' +
+          'If you cannot return the complete file safely, reply with exactly: CANNOT_FIX'
+        : '',
     );
 
     return parts.filter(Boolean).join('\n');
+  }
+
+  // ─── Longest common subsequence of lines (trimmed) ───
+  // عدد الأسطر المشتركة بنفس الترتيب بين نسختين، بغض النظر عن إزاحتها.
+  function _commonLineCount(a, b) {
+    const A = a.map(l => l.trim()), B = b.map(l => l.trim());
+    let prev = new Uint32Array(B.length + 1);
+    let cur  = new Uint32Array(B.length + 1);
+    for (let i = 1; i <= A.length; i++) {
+      for (let j = 1; j <= B.length; j++) {
+        cur[j] = A[i - 1] === B[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+      }
+      [prev, cur] = [cur, prev];
+    }
+    return prev[B.length];
   }
 
   // ─── Local validation before FIXED ───────────────────
@@ -172,7 +197,11 @@ var ClaudeRepairEngine = (() => {
 
     // استخرج كود من code block إذا وُجد
     const blockMatch = text.match(/```(?:\w*\n?)([\s\S]+?)```/);
-    const candidate  = (blockMatch ? blockMatch[1] : text).trim();
+    // لا trim() كامل: إزاحة السطر الأول جزء من الكود (Python / بلوك داخل دالة).
+    // نحذف فقط الأسطر الفارغة في البداية والفراغات في النهاية.
+    const candidate  = (blockMatch ? blockMatch[1] : rawText)
+      .replace(/^(?:[ \t]*\r?\n)+/, '')
+      .replace(/\s+$/, '');
 
     if (!candidate || candidate.length < 3) {
       return { ok: false, reason: 'candidate too short' };
@@ -192,15 +221,15 @@ var ClaudeRepairEngine = (() => {
 
     // changeRatio: يقارن snippet المُرسَل لـ Claude بـ candidate المُستَلَم.
     // هذا عادل — لا نقارن بالكود الكامل الذي لم يره Claude.
+    // المقارنة بالمحتوى (LCS) لا بالموقع: سطر مُضاف (مثل import في الأعلى)
+    // يُحسب تغييرًا واحدًا بدل أن يُزيح كل ما بعده ويُحسب تغييرًا كاملًا.
+    // الأسطر المحذوفة أو المُعدَّلة ما زالت تُحسب، فالحماية من الحذف باقية.
     const oLines = originalCode.split('\n');
     const cLines = candidate.split('\n');
     const maxLen = Math.max(oLines.length, cLines.length);
     if (maxLen > 10) {
-      let diffCount = Math.abs(oLines.length - cLines.length);
-      const minLen  = Math.min(oLines.length, cLines.length);
-      for (let i = 0; i < minLen; i++) {
-        if (oLines[i].trim() !== cLines[i].trim()) diffCount++;
-      }
+      const common    = _commonLineCount(oLines, cLines);
+      const diffCount = Math.max(oLines.length, cLines.length) - common;
       const changeRatio = diffCount / maxLen;
       if (changeRatio > MAX_CHANGE_RATIO) {
         return {
@@ -220,7 +249,9 @@ var ClaudeRepairEngine = (() => {
   //            targetRange يحدد بالضبط الأسطر المتعلقة بالمشكلة.
   function _reconstructCode(code, issue, candidate, ctx) {
     if (ctx.fullFile) {
-      // Claude رأى الكل وأعاد الكل
+      // Claude رأى الكل وأعاد الكل. _validate يحذف الفراغات في نهاية الرد، فنعيد
+      // السطر الأخير الفارغ إن كان في الأصل حتى لا يتغير الملف بلا سبب.
+      if (code.endsWith('\n') && !candidate.endsWith('\n')) return candidate + '\n';
       return candidate;
     }
 
@@ -232,6 +263,76 @@ var ClaudeRepairEngine = (() => {
     const to       = ctx.targetRange.to;
     lines.splice(from, to - from + 1, ...newLines);
     return lines.join('\n');
+  }
+
+  // ─── Completeness check ───────────────────────────────
+  // يمنع أن يستبدل جزءٌ من الكود الملفَ كله، وأن يُعدَّل كود بعيد عن الهدف.
+  // يحاذي الأصل مع الناتج سطرًا بسطر (LCS) ثم يطبّق قاعدتين:
+  //   1. أي سطر أصلي غير فارغ حُذف أو تغيّر يجب أن يكون داخل منطقة الهدف
+  //      (السطر ± EDIT_RADIUS) — وإلا INCOMPLETE_FILE.
+  //   2. أي سطر مُضاف غير فارغ يجب أن يكون داخل منطقة الهدف، أو import-like
+  //      في رأس الملف — وإلا OUT_OF_SCOPE_ADDITION.
+  // المقارنة تحفظ الإزاحة في بداية السطر (Python: الإزاحة تغيّر المعنى)،
+  // وتتجاهل فقط الفراغات في نهاية السطر.
+  // يُرجع null إذا كان الناتج سليمًا، أو سبب الرفض.
+  const _HEADER_LINE = /^\s*(?:import\b|from\s+\S+\s+import\b|(?:const|let|var)\s+[\w${},\s]+=\s*require\s*\(|require\s*\(|(['"])use strict\1|#include\b|using\s+[\w.]+\s*;|package\s+[\w.]+)/;
+
+  function _completenessProblem(code, fixedCode, issue) {
+    const A   = code.split('\n').map(l => l.replace(/\s+$/, ''));
+    const B   = fixedCode.split('\n').map(l => l.replace(/\s+$/, ''));
+    const idx = Math.max(0, ((issue && issue.line) || 1) - 1);
+    const near = i => Math.abs(i - idx) <= EDIT_RADIUS;
+
+    // رأس الملف: تعليقات/أسطر فارغة/imports قبل أول سطر كود فعلي
+    let headerEnd = 0;
+    while (headerEnd < A.length &&
+           (!A[headerEnd].trim() || _HEADER_LINE.test(A[headerEnd]) ||
+            /^\s*(?:\/\/|#|\/\*|\*)/.test(A[headerEnd]))) headerEnd++;
+
+    // البادئة واللاحقة المتطابقتان لا تحتاجان محاذاة (يبقي LCS صغيرًا)
+    let pre = 0;
+    while (pre < A.length && pre < B.length && A[pre] === B[pre]) pre++;
+    let suf = 0;
+    while (suf < A.length - pre && suf < B.length - pre &&
+           A[A.length - 1 - suf] === B[B.length - 1 - suf]) suf++;
+
+    const a = A.slice(pre, A.length - suf), b = B.slice(pre, B.length - suf);
+    const n = a.length, m = b.length, W = m + 1;
+    const L = new Uint32Array((n + 1) * W);            // L[i][j] = LCS(a[i..], b[j..])
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        L[i * W + j] = a[i] === b[j] ? L[(i + 1) * W + j + 1] + 1
+                                     : Math.max(L[(i + 1) * W + j], L[i * W + j + 1]);
+      }
+    }
+
+    let removed = 0, firstRemoved = -1, added = 0, firstAdded = -1;
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[i] === b[j]) { i++; j++; continue; }
+      if (j >= m || (i < n && L[(i + 1) * W + j] >= L[i * W + j + 1])) {
+        const orig = pre + i;                           // سطر أصلي حُذف/تغيّر
+        if (a[i].trim() && !near(orig)) { removed++; if (firstRemoved < 0) firstRemoved = orig + 1; }
+        i++;
+      } else {
+        const at = pre + i;                             // يُضاف قبل السطر الأصلي at
+        const ok = !b[j].trim() ||                      // سطر فارغ
+                   near(at) || near(at - 1) ||          // داخل منطقة الهدف
+                   (at <= headerEnd && _HEADER_LINE.test(b[j]));   // import في رأس الملف
+        if (!ok) { added++; if (firstAdded < 0) firstAdded = at + 1; }
+        j++;
+      }
+    }
+
+    if (removed) {
+      return `INCOMPLETE_FILE — ${removed} original line(s) outside the target area are missing ` +
+             `or changed (first: line ${firstRemoved})`;
+    }
+    if (added) {
+      return `OUT_OF_SCOPE_ADDITION — ${added} line(s) added outside the target area ` +
+             `(first: before original line ${firstAdded})`;
+    }
+    return null;
   }
 
   // ─── API call with timeout ────────────────────────────
@@ -336,6 +437,13 @@ var ClaudeRepairEngine = (() => {
           'Reconstruction produced no change in full code', { model: result.model });
       }
 
+      // الملف الناقص لا يصبح FIXED أبدًا — CANNOT_FIX بدل patch جزئي.
+      const incomplete = _completenessProblem(code, fixedCode, issue);
+      if (incomplete) {
+        return _makeResult(Status.CANNOT_FIX, null, code, issue,
+          incomplete, { model: result.model });
+      }
+
       return _makeResult(Status.FIXED, fixedCode, code, issue,
         'Claude candidate ready — awaiting FixVerifier',
         { model: result.model });
@@ -401,6 +509,7 @@ var ClaudeRepairEngine = (() => {
     _validate,
     _extractContext,
     _reconstructCode,
+    _completenessProblem,
   });
 
 })();
