@@ -248,3 +248,122 @@ test('phase 2: windowed, no fence, indented first line keeps its indentation →
   assert.equal(r.fixedCode.split('\n')[t - 40], L[t - 40]);
   assert.match(r.fixedCode.split('\n')[t], /===/);
 });
+
+// ═══════════════════════════════════════════════════════
+// Phase 3 — reply-size budget and full-file vs windowed selection
+// full-file فقط إذا: ≤ FULL_FILE_THRESHOLD سطر  و  _estimateTokens ≤ FULL_FILE_TOKEN_BUDGET
+// وإلا windowed. MAX_TOKENS = 6000، timeout = 60s.
+// ═══════════════════════════════════════════════════════
+
+const path = require('node:path');
+const REPO_FILE = rel => fs.readFileSync(path.join(__dirname, '..', 'public', rel), 'utf8');
+
+test('phase 3: MAX_TOKENS is 6000 and is what the API request sends', async () => {
+  assert.equal(ClaudeRepairEngine.MAX_TOKENS, 6000);
+  let sent = null;
+  const fetchFn = async (url, init) => { sent = JSON.parse(init.body); return { ok: true, json: async () => ({ model: 'm', stop_reason: 'end_turn', content: [textBlock('CANNOT_FIX')] }) }; };
+  await ClaudeRepairEngine.repairOne(INLINE_FIXTURE, 'a.js', { line: 3, type: 'X', title: 'X' }, { _fetchFn: fetchFn });
+  assert.equal(sent.max_tokens, 6000);
+});
+
+test('phase 3: timeout is 60s — still waiting at 59.999s, aborted at 60s', async (t) => {
+  assert.equal(ClaudeRepairEngine.DEFAULT_TIMEOUT, 60000);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let aborted = false;
+  const fetchFn = (url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener('abort', () => { aborted = true; const e = new Error('aborted'); e.name = 'AbortError'; reject(e); });
+  });
+  const pending = ClaudeRepairEngine.repairOne(INLINE_FIXTURE, 'a.js', { line: 3, type: 'X', title: 'X' }, { _fetchFn: fetchFn });
+  t.mock.timers.tick(25000);
+  assert.equal(aborted, false, 'must not abort at the old 25s limit');
+  t.mock.timers.tick(34999);
+  assert.equal(aborted, false);
+  t.mock.timers.tick(1);
+  const r = await pending;
+  assert.equal(aborted, true);
+  assert.equal(r.status, Status.PENDING_REVIEW);
+  assert.match(r.reason, /Timeout after 60000ms/);
+});
+
+test('phase 3: _estimateTokens is conservative (ASCII ÷ 3.2, non-ASCII 1 per char)', () => {
+  assert.equal(ClaudeRepairEngine._estimateTokens(''), 0);
+  assert.equal(ClaudeRepairEngine._estimateTokens('x'.repeat(32)), 10);
+  assert.equal(ClaudeRepairEngine._estimateTokens('x'.repeat(33)), 11);         // rounds up
+  assert.equal(ClaudeRepairEngine._estimateTokens('مرحبا'), 5);                 // Arabic is denser
+  assert.equal(ClaudeRepairEngine._estimateTokens('// تعليق\nx'), Math.ceil(4 / 3.2 + 5));
+});
+
+test('phase 3: a small file that fits the budget → full-file mode', () => {
+  assert.ok(ClaudeRepairEngine._estimateTokens(INLINE_FIXTURE) <= ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET);
+  const ctx = ClaudeRepairEngine._extractContext(INLINE_FIXTURE, 3);
+  assert.equal(ctx.fullFile, true);
+  assert.match(ClaudeRepairEngine._buildPrompt({ line: 3, type: 'X', title: 'X' }, INLINE_FIXTURE, 'a.js'), /Full file \(\d+ lines\)/);
+});
+
+for (const [label, code] of fixtures.slice(1)) {
+  test(`phase 3: ${label} fits the budget → still full-file mode`, () => {
+    assert.ok(ClaudeRepairEngine._estimateTokens(code) <= ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET);
+    assert.equal(ClaudeRepairEngine._extractContext(code, 15).fullFile, true);
+  });
+}
+
+test('phase 3: a ≤300-line repo file whose reply would exceed the budget → windowed mode', () => {
+  const code = REPO_FILE('extended_patterns.js');
+  const lines = code.split('\n').length;
+  assert.ok(lines <= ClaudeRepairEngine.FULL_FILE_THRESHOLD, `fixture must be ≤300 lines (is ${lines})`);
+  assert.ok(ClaudeRepairEngine._estimateTokens(code) > ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET);
+  const ctx = ClaudeRepairEngine._extractContext(code, 120);
+  assert.equal(ctx.fullFile, false);
+  assert.equal(ctx.fromLine, 80);
+  assert.equal(ctx.toLine, 160);
+  assert.match(ClaudeRepairEngine._buildPrompt({ line: 120, type: 'X', title: 'X' }, code, 'extended_patterns.js'), /Target context \(lines 80–160 of \d+\)/);
+});
+
+test('phase 3: that windowed repo file is repaired and reconstructed in full → FIXED', async () => {
+  const code = REPO_FILE('extended_patterns.js');
+  const L = code.split('\n'); const t = 119;                               // line 120
+  const ctx = ClaudeRepairEngine._extractContext(code, t + 1);
+  const block = L.slice(ctx.targetRange.from, ctx.targetRange.to + 1).map((l, i) => (ctx.targetRange.from + i === t ? l + ' // reviewed' : l)).join('\n');
+  const r = await ClaudeRepairEngine.repairOne(code, 'extended_patterns.js', { line: t + 1, type: 'X', title: 'X' }, { _fetchFn: endTurn('```js\n' + block + '\n```') });
+  assert.equal(r.status, Status.FIXED, r.reason);
+  const out = r.fixedCode.split('\n');
+  assert.equal(out.length, L.length);
+  assert.equal(out[t], L[t] + ' // reviewed');
+  L.forEach((l, i) => { if (i !== t) assert.equal(out[i], l, `line ${i + 1} changed`); });
+});
+
+test('phase 3: budget boundary — estimate == budget → full-file, budget + 1 → windowed', () => {
+  const budget = ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET;
+  const base = Array.from({ length: 100 }, (_, i) => `const value_${String(i).padStart(3, '0')} = ${i};`);
+  let code = base.join('\n');
+  while (ClaudeRepairEngine._estimateTokens(code) < budget) code += 'x';
+  assert.equal(ClaudeRepairEngine._estimateTokens(code), budget);
+  assert.equal(ClaudeRepairEngine._extractContext(code, 50).fullFile, true);
+  let over = code;
+  while (ClaudeRepairEngine._estimateTokens(over) <= budget) over += 'x';
+  assert.equal(ClaudeRepairEngine._estimateTokens(over), budget + 1);
+  assert.equal(ClaudeRepairEngine._extractContext(over, 50).fullFile, false);
+});
+
+test('phase 3: Arabic-heavy file — line count alone would say full-file, the estimate says windowed', () => {
+  const code = Array.from({ length: 80 }, (_, i) => `// تعليق توضيحي طويل عن الدالة رقم ${i} ووظيفتها\nfunction f${i}() { return ${i}; }`).join('\n');
+  const L = code.split('\n');
+  assert.ok(L.length <= 300);
+  const asciiOnlyEstimate = Math.ceil(code.length / 3.2);
+  assert.ok(asciiOnlyEstimate <= ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET, 'a naive chars/3.2 estimate would wrongly allow full-file');
+  assert.ok(ClaudeRepairEngine._estimateTokens(code) > ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET);
+  assert.equal(ClaudeRepairEngine._extractContext(code, 100).fullFile, false);
+});
+
+test('phase 3: more than 300 lines stays windowed even when tiny (line rule kept)', () => {
+  const code = Array.from({ length: 301 }, (_, i) => `a${i}`).join('\n');
+  assert.ok(ClaudeRepairEngine._estimateTokens(code) <= ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET);
+  assert.equal(ClaudeRepairEngine._extractContext(code, 150).fullFile, false);
+});
+
+test('phase 3: Phase 1 truncation reason now reports the new cap (max_tokens=6000)', async () => {
+  const r = await ClaudeRepairEngine.repairOne(INLINE_FIXTURE, 'a.js', { line: 3, type: 'X', title: 'X' },
+    { _fetchFn: mockApi([textBlock('```js\nx\n```')], 'max_tokens', 6000) });
+  assert.equal(r.status, Status.CANNOT_FIX);
+  assert.match(r.reason, /TRUNCATED_BY_MAX_TOKENS — response cut at max_tokens=6000 \(6000 output tokens\)/);
+});

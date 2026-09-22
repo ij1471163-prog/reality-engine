@@ -21,11 +21,16 @@ var ClaudeRepairEngine = (() => {
   const VERSION         = '0.2.0';
   const MODEL           = 'claude-sonnet-4-6';
   const API_URL         = 'https://api.anthropic.com/v1/messages';
-  const DEFAULT_TIMEOUT = 25000;
-  const MAX_TOKENS      = 3000;
+  // رد ≈2500 token يحتاج عادة أقل من 45s؛ 25s كانت تقطع الردود الكبيرة.
+  const DEFAULT_TIMEOUT = 60000;
+  // سقف الرد. أكبر من FULL_FILE_TOKEN_BUDGET بأكثر من الضعف كهامش لخطأ التقدير.
+  const MAX_TOKENS      = 6000;
 
-  // الملف يُرسل كاملاً حتى هذا الحجم (بالأسطر)
+  // الملف يُرسل كاملاً (ويُطلب كاملًا) فقط إذا تحقق الشرطان:
+  //   عدد الأسطر ≤ FULL_FILE_THRESHOLD  و  حجم الرد المقدَّر ≤ FULL_FILE_TOKEN_BUDGET
+  // وإلا windowed — لا نطلب ردًا لا يتسع له MAX_TOKENS.
   const FULL_FILE_THRESHOLD = 300;
+  const FULL_FILE_TOKEN_BUDGET = 2500;
   // إذا كان الملف أكبر، نرسل سياقاً ذكياً بهذا العدد من الأسطر
   const SMART_CONTEXT_LINES = 40;
 
@@ -52,16 +57,29 @@ var ClaudeRepairEngine = (() => {
     return key.trim();
   }
 
+  // ─── Reply size estimate (conservative) ──────────────
+  // تقدير متحفظ لعدد tokens لو أعاد Claude هذا النص كاملًا. يبالغ عمدًا:
+  // ASCII ≈ 3.2 حرف/token، وغير ASCII (عربي، رموز) ≈ 1 token/حرف لأنه أكثف.
+  // يُعايَر لاحقًا بـ count_tokens عند توفر مفتاح API.
+  function _estimateTokens(text) {
+    const s = String(text || '');
+    let ascii = 0, other = 0;
+    for (let i = 0; i < s.length; i++) {
+      if (s.charCodeAt(i) < 128) ascii++; else other++;
+    }
+    return Math.ceil(ascii / 3.2 + other);
+  }
+
   // ─── Smart Context Extractor ─────────────────────────
-  // يرسل الملف كاملاً إذا كان صغيراً،
+  // يرسل الملف كاملاً إذا كان صغيراً ويتسع رده ضمن FULL_FILE_TOKEN_BUDGET،
   // وإلا يرسل: imports + الدالة/الكلاس المستهدف + سياق محيط.
   function _extractContext(code, lineNum) {
     const lines   = code.split('\n');
     const total   = lines.length;
     const idx     = Math.max(0, (lineNum || 1) - 1);
 
-    // ملف صغير → أرسله كاملاً
-    if (total <= FULL_FILE_THRESHOLD) {
+    // ملف صغير يتسع رده كاملًا → أرسله كاملاً
+    if (total <= FULL_FILE_THRESHOLD && _estimateTokens(code) <= FULL_FILE_TOKEN_BUDGET) {
       return {
         snippet:    code,
         fromLine:   1,
@@ -567,6 +585,10 @@ var ClaudeRepairEngine = (() => {
     VERSION,
     MODEL,
     Status,
+    MAX_TOKENS,
+    DEFAULT_TIMEOUT,
+    FULL_FILE_THRESHOLD,
+    FULL_FILE_TOKEN_BUDGET,
     repairOne,
     repairAll,
     // للاختبار
@@ -576,6 +598,7 @@ var ClaudeRepairEngine = (() => {
     _reconstructCode,
     _completenessProblem,
     _extractCode,
+    _estimateTokens,
   });
 
 })();
