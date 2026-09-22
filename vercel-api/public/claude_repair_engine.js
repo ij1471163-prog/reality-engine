@@ -129,31 +129,60 @@ var ClaudeRepairEngine = (() => {
     };
   }
 
-  // ─── Prompt builder ───────────────────────────────────
-  function _buildPrompt(issue, code, fileName) {
-    const ctx        = _extractContext(code, issue.line);
-    const issueType  = issue.type  || issue.cAct  || 'UNKNOWN';
+  // ─── Prompt builders ──────────────────────────────────
+  // aiNeeded من repair_engine يحمل strategy + reason، و issues الـAnalyzer تحمل type/cAct.
+  function _issueHeader(issue, fileName) {
+    const issueType  = issue.type || issue.strategy || issue.cAct || 'UNKNOWN';
     const issueTitle = issue.title || issueType;
     const targetLine = issue.line  || '?';
-    const contextLabel = ctx.fullFile
-      ? `Full file (${ctx.totalLines} lines)`
-      : `Target context (lines ${ctx.fromLine}–${ctx.toLine} of ${ctx.totalLines})`;
-
-    const parts = [
+    return [
       'You are a precise, minimal code repair assistant for Reality Engine.',
       'Your ONLY job: fix ONE specific issue. Nothing else.',
       '',
       `File: ${fileName}`,
       `Issue type: ${issueType}`,
       `Issue: ${issueTitle}`,
-      `Target line: ${targetLine}`,
-      issue.ev  ? `Evidence: ${issue.ev}`   : '',
-      issue.sev ? `Severity: ${issue.sev}`  : '',
+      `Target line: ${targetLine} (counted from line 1 of the file)`,
+      issue.reason ? `Why this needs a manual fix: ${issue.reason}` : '',
+      issue.ev     ? `Evidence: ${issue.ev}`   : '',
+      issue.sev    ? `Severity: ${issue.sev}`  : '',
     ];
+  }
+
+  // ملف كامل: الرد يستبدل الملف كله، فأي حذف أو اختصار يضيع كودًا سليمًا.
+  function _buildFullFilePrompt(issue, ctx, fileName) {
+    const parts = _issueHeader(issue, fileName);
+    parts.push(
+      '',
+      `Full file (${ctx.totalLines} lines) — this is the ENTIRE file, lines 1–${ctx.totalLines}:`,
+      '```',
+      ctx.snippet,
+      '```',
+      '',
+      'STRICT RULES:',
+      `1. Your response REPLACES the whole file: return the COMPLETE file — all lines from line 1 to line ${ctx.totalLines} — with the fix applied.`,
+      '2. Put the entire file in exactly ONE fenced code block. No text before or after it, and no second code block.',
+      '3. Never omit, shorten, or summarize any part: no "...", no "rest unchanged", no "existing code", and no other placeholder or omitted section.',
+      '4. Fix ONLY the reported issue at the target line. Change only the lines that this fix requires.',
+      '5. Keep every unrelated line exactly as it is — same text, same indentation, same order.',
+      '6. Keep all imports at the top of the file. If the fix strictly requires a new import, add it at the top with the existing imports, never elsewhere.',
+      '7. Do NOT fix other issues, refactor, rename, reformat, or improve unrelated code.',
+      '8. Do NOT add explanations, comments, or prose — code only.',
+      '9. If you cannot fix this safely, or cannot return the complete file, reply with exactly: CANNOT_FIX',
+      '10. If the code shown is already correct for this issue, reply with exactly: CANNOT_FIX',
+    );
+    return parts.filter(Boolean).join('\n');
+  }
+
+  // مقطع فقط: الرد يستبدل الأسطر fromLine–toLine؛ أي import فيه سيقع وسط الملف.
+  function _buildWindowedPrompt(issue, ctx, fileName) {
+    const parts  = _issueHeader(issue, fileName);
+    const range  = `lines ${ctx.fromLine}–${ctx.toLine}`;
+    const inExcerpt = issue.line ? issue.line - ctx.fromLine + 1 : null;
 
     // imports كـ reference فقط — لا يعيدها Claude
-    if (!ctx.fullFile && ctx.importContext) {
-      parts.push('', 'Reference imports (DO NOT include these in your response):');
+    if (ctx.importContext) {
+      parts.push('', 'Reference imports from the top of the file (read-only — DO NOT include these in your response):');
       parts.push('```');
       parts.push(ctx.importContext);
       parts.push('```');
@@ -161,29 +190,37 @@ var ClaudeRepairEngine = (() => {
 
     parts.push(
       '',
-      `${contextLabel} — return ONLY this block fixed:`,
+      `This is an EXCERPT of a larger file, NOT the entire file. It covers ${range} of ${ctx.totalLines}.`,
+      inExcerpt && inExcerpt >= 1
+        ? `The target line ${issue.line} is line ${inExcerpt} of this excerpt.`
+        : '',
+      `Target context (${range} of ${ctx.totalLines}) — return ONLY this excerpt fixed:`,
       '```',
       ctx.snippet,
       '```',
       '',
       'STRICT RULES:',
-      '1. Return ONLY the complete fixed version of the target context block shown above.',
-      '2. Do NOT include the reference imports in your response — they are already in the file.',
-      '3. Fix ONLY the reported issue at the target line.',
-      '4. You MAY add a new import line at the TOP of your response if the fix strictly requires it.',
-      '5. Do NOT fix other issues, refactor, rename, or improve unrelated code.',
-      '6. Do NOT add explanations, comments, or prose — code only.',
-      '7. If you cannot fix this safely, reply with exactly: CANNOT_FIX',
-      '8. If the code shown is already correct for this issue, reply with exactly: CANNOT_FIX',
-      // ملف كامل: الرد يستبدل الملف كله، فأي حذف أو اختصار يضيع كودًا سليمًا.
-      ctx.fullFile
-        ? '9. This is the FULL file: return the COMPLETE file with every other line unchanged. ' +
-          'Never omit, shorten, or summarize any part (no "..." or "rest unchanged" placeholders). ' +
-          'If you cannot return the complete file safely, reply with exactly: CANNOT_FIX'
-        : '',
+      `1. Return ONLY the excerpt above (${range}) with the fix applied. Your response replaces exactly these lines.`,
+      '2. Put the excerpt in exactly ONE fenced code block. No text before or after it, and no second code block.',
+      '3. Do NOT return any code outside the excerpt, and do NOT treat the excerpt as the whole file.',
+      '4. The excerpt may start or end in the middle of a function: keep its first and last lines, and do not close or complete code that continues outside it.',
+      '5. Do NOT add import, require, include, or using lines — the file\'s imports are outside this excerpt. If the fix needs a new import, reply with exactly: CANNOT_FIX',
+      '6. Fix ONLY the reported issue at the target line. Change only the lines that this fix requires.',
+      '7. Keep every unrelated line of the excerpt exactly as it is — same text, same indentation, same order.',
+      '8. Never omit or shorten any part of the excerpt: no "...", no "rest unchanged", and no other placeholder.',
+      '9. Do NOT fix other issues, refactor, rename, reformat, or improve unrelated code.',
+      '10. Do NOT add explanations, comments, or prose — code only.',
+      '11. If you cannot fix this safely within the excerpt, reply with exactly: CANNOT_FIX',
+      '12. If the code shown is already correct for this issue, reply with exactly: CANNOT_FIX',
     );
-
     return parts.filter(Boolean).join('\n');
+  }
+
+  function _buildPrompt(issue, code, fileName) {
+    const ctx = _extractContext(code, issue.line);
+    return ctx.fullFile
+      ? _buildFullFilePrompt(issue, ctx, fileName)
+      : _buildWindowedPrompt(issue, ctx, fileName);
   }
 
   // ─── Longest common subsequence of lines (trimmed) ───
@@ -593,6 +630,8 @@ var ClaudeRepairEngine = (() => {
     repairAll,
     // للاختبار
     _buildPrompt,
+    _buildFullFilePrompt,
+    _buildWindowedPrompt,
     _validate,
     _extractContext,
     _reconstructCode,

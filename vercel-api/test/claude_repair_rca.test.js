@@ -367,3 +367,154 @@ test('phase 3: Phase 1 truncation reason now reports the new cap (max_tokens=600
   assert.equal(r.status, Status.CANNOT_FIX);
   assert.match(r.reason, /TRUNCATED_BY_MAX_TOKENS — response cut at max_tokens=6000 \(6000 output tokens\)/);
 });
+
+// ═══════════════════════════════════════════════════════
+// Phase 4 — prompt منفصل لكل mode + معلومات المشكلة كما يرسلها الـorchestrator
+// ═══════════════════════════════════════════════════════
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// نفس شكل aiNeeded في repair_engine.js (line/title/strategy/reason/ev — بلا type)
+const AI_NEEDED_ISSUE = {
+  line: 3, title: '🟠 Callback Hell — تداخل 4 مستويات',
+  strategy: 'CALLBACK_HELL', reason: 'يحتاج مراجعة يدوية — إعادة هيكلة', ev: 'if (username == "admin") {',
+};
+
+// ملف كبير فيه imports في الأعلى → windowed + reference imports
+const WINDOWED_FIXTURE = [
+  "const fs = require('fs');",
+  "const path = require('path');",
+  '',
+  ...Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`),
+  '',
+].join('\n');
+const WINDOWED_ISSUE = Object.assign({}, AI_NEEDED_ISSUE, { line: 200, ev: 'const pad_196 = 196;' });
+
+for (const [label, code] of fixtures) {
+  const total = code.split('\n').length;
+  const prompt = ClaudeRepairEngine._buildPrompt(AI_NEEDED_ISSUE, code, 'GameServer.js');
+
+  test(`phase 4: ${label}: full-file mode uses the dedicated full-file prompt`, () => {
+    const ctx = ClaudeRepairEngine._extractContext(code, AI_NEEDED_ISSUE.line);
+    assert.equal(ctx.fullFile, true);
+    assert.equal(prompt, ClaudeRepairEngine._buildFullFilePrompt(AI_NEEDED_ISSUE, ctx, 'GameServer.js'));
+    assert.ok(prompt.includes('```\n' + code + '\n```'), 'the whole file is sent verbatim');
+  });
+
+  test(`phase 4: ${label}: full-file prompt demands the ENTIRE file in exactly one fenced block`, () => {
+    assert.match(prompt, new RegExp(`this is the ENTIRE file, lines 1–${total}`));
+    assert.match(prompt, new RegExp(`return the COMPLETE file — all lines from line 1 to line ${total}`));
+    assert.match(prompt, /REPLACES the whole file/);
+    assert.match(prompt, /entire file in exactly ONE fenced code block/);
+    assert.match(prompt, /no second code block/);
+    assert.match(prompt, /cannot return the complete file, reply with exactly: CANNOT_FIX/);
+  });
+
+  test(`phase 4: ${label}: full-file prompt forbids placeholders and omitted sections`, () => {
+    assert.match(prompt, /Never omit, shorten, or summarize any part/);
+    assert.match(prompt, /no "\.\.\."/);
+    assert.match(prompt, /no "rest unchanged"/);
+    assert.match(prompt, /no other placeholder or omitted section/);
+  });
+
+  test(`phase 4: ${label}: full-file prompt keeps imports at the top and unrelated lines exact`, () => {
+    assert.match(prompt, /Keep all imports at the top of the file/);
+    assert.match(prompt, /add it at the top with the existing imports, never elsewhere/);
+    assert.match(prompt, /Keep every unrelated line exactly as it is — same text, same indentation, same order/);
+    assert.match(prompt, /Fix ONLY the reported issue at the target line/);
+    assert.doesNotMatch(prompt, /EXCERPT|Reference imports|DO NOT include these in your response/);
+  });
+}
+
+const wctx = ClaudeRepairEngine._extractContext(WINDOWED_FIXTURE, WINDOWED_ISSUE.line);
+const wprompt = ClaudeRepairEngine._buildPrompt(WINDOWED_ISSUE, WINDOWED_FIXTURE, 'big.js');
+
+test('phase 4: windowed mode uses the dedicated windowed prompt (window unchanged: ±40)', () => {
+  assert.equal(wctx.fullFile, false);
+  assert.equal(wctx.fromLine, 160);
+  assert.equal(wctx.toLine, 240);
+  assert.equal(wprompt, ClaudeRepairEngine._buildWindowedPrompt(WINDOWED_ISSUE, wctx, 'big.js'));
+  assert.ok(wprompt.includes('```\n' + wctx.snippet + '\n```'));
+});
+
+test('phase 4: windowed prompt states the excerpt line range and asks only for that excerpt', () => {
+  const total = WINDOWED_FIXTURE.split('\n').length;
+  assert.match(wprompt, new RegExp(`This is an EXCERPT of a larger file, NOT the entire file\\. It covers lines 160–240 of ${total}\\.`));
+  assert.match(wprompt, /The target line 200 is line 41 of this excerpt\./);
+  assert.match(wprompt, new RegExp(`Target context \\(lines 160–240 of ${total}\\) — return ONLY this excerpt fixed:`));
+  assert.match(wprompt, /Return ONLY the excerpt above \(lines 160–240\) with the fix applied\. Your response replaces exactly these lines\./);
+  assert.match(wprompt, /do NOT treat the excerpt as the whole file/);
+  assert.match(wprompt, /Do NOT return any code outside the excerpt/);
+  assert.match(wprompt, /excerpt in exactly ONE fenced code block/);
+});
+
+test('phase 4: windowed prompt never asks for (or pretends to be) the complete file', () => {
+  assert.doesNotMatch(wprompt, /return the COMPLETE file/);
+  assert.doesNotMatch(wprompt, /ENTIRE file/);
+  assert.doesNotMatch(wprompt, /^Full file/m);
+});
+
+test('phase 4: windowed prompt forbids adding imports (old "MAY add a new import" rule removed)', () => {
+  assert.match(wprompt, /Do NOT add import, require, include, or using lines/);
+  assert.match(wprompt, /If the fix needs a new import, reply with exactly: CANNOT_FIX/);
+  assert.doesNotMatch(wprompt, /MAY add a new import/);
+  // imports الملف تُعرض للقراءة فقط
+  assert.match(wprompt, /Reference imports from the top of the file \(read-only — DO NOT include these in your response\):\n```\nconst fs = require\('fs'\);\nconst path = require\('path'\);\n/);
+});
+
+test('phase 4: windowed prompt forbids placeholders and keeps unrelated excerpt lines exact', () => {
+  assert.match(wprompt, /Never omit or shorten any part of the excerpt: no "\.\.\.", no "rest unchanged", and no other placeholder/);
+  assert.match(wprompt, /Keep every unrelated line of the excerpt exactly as it is/);
+  assert.match(wprompt, /keep its first and last lines, and do not close or complete code that continues outside it/);
+});
+
+test('phase 4: neither prompt keeps the old import rule or the "block" wording of full-file mode', () => {
+  const full = ClaudeRepairEngine._buildPrompt(AI_NEEDED_ISSUE, INLINE_FIXTURE, 'a.js');
+  assert.doesNotMatch(full, /MAY add a new import line at the TOP of your response/);
+  assert.doesNotMatch(full, /return ONLY this block fixed/);
+  assert.doesNotMatch(full, /Do NOT include the reference imports/);
+});
+
+test('phase 4: orchestrator aiNeeded (strategy + reason, no type) reaches both prompts — no "UNKNOWN"', () => {
+  for (const p of [ClaudeRepairEngine._buildPrompt(AI_NEEDED_ISSUE, INLINE_FIXTURE, 'a.js'), wprompt]) {
+    assert.match(p, /^Issue type: CALLBACK_HELL$/m);
+    assert.match(p, new RegExp(`^Issue: ${esc(AI_NEEDED_ISSUE.title)}$`, 'm'));
+    assert.match(p, new RegExp(`^Why this needs a manual fix: ${esc(AI_NEEDED_ISSUE.reason)}$`, 'm'));
+    assert.match(p, /^Evidence: /m);
+    assert.doesNotMatch(p, /UNKNOWN/);
+  }
+  assert.match(wprompt, /^Target line: 200 \(counted from line 1 of the file\)$/m);
+});
+
+test('phase 4: issue type precedence — analyzer type, then strategy, then cAct, else UNKNOWN', () => {
+  const typeOf = issue => ClaudeRepairEngine._buildPrompt(issue, INLINE_FIXTURE, 'a.js').match(/^Issue type: (.*)$/m)[1];
+  assert.equal(typeOf({ line: 3, type: 'LOOSE_EQUALITY', strategy: 'CALLBACK_HELL' }), 'LOOSE_EQUALITY');
+  assert.equal(typeOf({ line: 3, strategy: 'SQL_INJECTION', cAct: 'X' }), 'SQL_INJECTION');
+  assert.equal(typeOf({ line: 3, cAct: 'NULL_CHECK' }), 'NULL_CHECK');
+  assert.equal(typeOf({ line: 3 }), 'UNKNOWN');
+  // بلا title → العنوان هو النوع؛ بلا reason/ev/sev → لا أسطر فارغة المعنى
+  const p = ClaudeRepairEngine._buildPrompt({ line: 3, strategy: 'EVAL_USAGE' }, INLINE_FIXTURE, 'a.js');
+  assert.match(p, /^Issue: EVAL_USAGE$/m);
+  assert.doesNotMatch(p, /Why this needs a manual fix|Evidence:|Severity:/);
+  assert.match(ClaudeRepairEngine._buildPrompt({ line: 3, sev: 'HIGH' }, INLINE_FIXTURE, 'a.js'), /^Severity: HIGH$/m);
+});
+
+test('phase 4: repairAll sends each aiNeeded item\'s own prompt to the API (strategy/reason/line per item)', async () => {
+  const sent = [];
+  const fetchFn = async (url, init) => {
+    sent.push(JSON.parse(init.body).messages[0].content);
+    return { ok: true, json: async () => ({ model: 'm', stop_reason: 'end_turn', content: [textBlock('CANNOT_FIX')] }) };
+  };
+  const items = [
+    AI_NEEDED_ISSUE,
+    { line: 2, title: 'SQL', strategy: 'SQL_INJECTION', reason: 'يحتاج تعديل query + execute() معاً', ev: 'x' },
+  ];
+  await ClaudeRepairEngine.repairAll(INLINE_FIXTURE, 'a.js', items, { _fetchFn: fetchFn });
+  assert.equal(sent.length, 2);
+  items.forEach(it => {
+    const p = sent.find(s => s.includes(`Issue type: ${it.strategy}`));
+    assert.ok(p, `prompt for ${it.strategy} was sent`);
+    assert.equal(p, ClaudeRepairEngine._buildPrompt(it, INLINE_FIXTURE, 'a.js'));
+    assert.match(p, new RegExp(`Why this needs a manual fix: ${esc(it.reason)}`));
+    assert.match(p, new RegExp(`Target line: ${it.line} `));
+  });
+});
