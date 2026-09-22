@@ -746,6 +746,27 @@ function sqlCandidateProblem(beforeCode, afterCode, fileName, ext) {
   return null;
 }
 
+// ─── Evidence helpers (stale-line guard) ──────────────
+// AST evidence (ast-engine.js, astVerified) وصفٌ للعقدة وليس نص السطر:
+//   "total = MemberExpression"  أو  "items.forEach(...)".
+// يُحوَّل إلى نمط يجب أن يطابق السطر الأصلي؛ غير ذلك → null (لا نخمّن).
+function astEvidenceAnchor(ev) {
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let m = ev.match(/^([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Z][A-Za-z]*|\.\.\.)$/);
+  if (m) return new RegExp('(?:^|[^\\w$.])' + esc(m[1]) + '\\s*=(?!=)');
+  m = ev.match(/^([A-Za-z_$][\w$.]*)\.forEach\(\.\.\.\)$/);
+  if (m) return new RegExp('(?:^|[^\\w$])' + esc(m[1]) + '\\s*\\.\\s*forEach\\s*\\(');
+  return null;
+}
+
+// strategies تعالج نفس المشكلة على السطر — لا تُطبَّق فوق بعضها.
+const SAME_PROBLEM_GROUP = {
+  HARDCODED_SECRET: 'SECRET', HARDCODED_PASS: 'SECRET', API_KEY: 'SECRET',
+  WEAK_CRYPTO: 'CRYPTO', MD5_USAGE: 'CRYPTO', WEAK_HASH: 'CRYPTO',
+  CMD_INJECTION: 'CMD', CMD_INJECTION_PY: 'CMD',
+};
+const problemGroup = st => SAME_PROBLEM_GROUP[st] || st;
+
 // ─── Main repairCode ──────────────────────────────────
 
 function getLegacySQLFixer(fileName) {
@@ -806,6 +827,30 @@ function repairCode(code, issues, fileName) {
   const rejected = [];   // candidates رُفضت قبل التطبيق (مثل SQL غير سليم)
   let repairedCode = code;
 
+  // تتبّع الأسطر: لكل سطر حالي → رقم سطره في code (أو -1 إذا أُضيف)،
+  // ومجموعات المشاكل التي أصلحته في هذا التشغيل. يسمح بمعرفة أن الدليل
+  // تغيّر لأن إصلاحًا سابقًا عدّل نفس السطر — لا لأن المشكلة قديمة.
+  const codeLines = code.split('\n');
+  let lineOrigin = codeLines.map((_, i) => i);
+  let lineGroups = codeLines.map(() => null);
+  const trackFix = (before, after, group) => {
+    const O = before.split('\n'), N = after.split('\n');
+    let pre = 0;
+    while (pre < O.length && pre < N.length && O[pre] === N[pre]) pre++;
+    let suf = 0;
+    while (suf < O.length - pre && suf < N.length - pre &&
+           O[O.length - 1 - suf] === N[N.length - 1 - suf]) suf++;
+    const oldMid = O.length - pre - suf, newMid = N.length - pre - suf;
+    const midOrigin = oldMid === newMid
+      ? lineOrigin.slice(pre, pre + oldMid)
+      : new Array(newMid).fill(-1);
+    const midGroups = oldMid === newMid
+      ? lineGroups.slice(pre, pre + oldMid).map(g => new Set([...(g || []), group]))
+      : new Array(newMid).fill(null).map(() => new Set([group]));
+    lineOrigin = [...lineOrigin.slice(0, pre), ...midOrigin, ...lineOrigin.slice(O.length - suf)];
+    lineGroups = [...lineGroups.slice(0, pre), ...midGroups, ...lineGroups.slice(O.length - suf)];
+  };
+
   const sorted = [...issues].sort((a, b) => b.line - a.line);
 
   sorted.forEach(issue => {
@@ -823,16 +868,41 @@ function repairCode(code, issues, fileName) {
 
     const lines = repairedCode.split('\n');
 
+    // لا إعادة معالجة: سطر أصلحته مشكلة من نفس المجموعة في هذا التشغيل لا يُعالج مرة ثانية.
+    const trackedAt = lineOrigin.indexOf(issue.line - 1);
+    if (trackedAt >= 0 && lineGroups[trackedAt] && lineGroups[trackedAt].has(problemGroup(stratKey))) {
+      return;
+    }
+
     // حماية من stale-line:
     // إذا كان الدليل لا يطابق السطر، فالـissue قديمة ويجب تجاهلها.
     // الاستثناء الوحيد: إذا حصل إصلاح سابق غيّر أرقام الأسطر
     // (مثل إضافة import في الرأس)، نعيد ربط الدليل بموقعه الجديد.
     if (issue.ev && String(issue.ev).trim()) {
-      const evidence = String(issue.ev).trim();
+      let evidence = String(issue.ev).trim();
+      const originalText = codeLines[issue.line - 1];
+
+      // AST evidence: يُقبل فقط إذا طابق شكله السطر الأصلي، ثم يصبح نص ذلك
+      // السطر هو الدليل. لا يطابق → stale (كما كان).
+      if (issue.astVerified === true && originalText !== undefined &&
+          !originalText.includes(evidence)) {
+        const anchor = astEvidenceAnchor(evidence);
+        if (!anchor || !anchor.test(originalText)) return;
+        evidence = originalText.trim();
+      }
+
       const originalLineIndex = issue.line - 1;
       const currentLine = lines[originalLineIndex];
 
-      if (!currentLine || !String(currentLine).includes(evidence)) {
+      // الدليل موجود في السطر الأصلي، لكن إصلاحًا سابقًا في هذا التشغيل عدّل
+      // نفس السطر → ليست stale؛ تُعالج على موقع ذلك السطر الآن.
+      const touchedAt = (!currentLine || !String(currentLine).includes(evidence)) &&
+                        originalText !== undefined && originalText.includes(evidence)
+        ? lineOrigin.indexOf(issue.line - 1)
+        : -1;
+      if (touchedAt >= 0 && lineGroups[touchedAt]) {
+        issue = { ...issue, line: touchedAt + 1 };
+      } else if (!currentLine || !String(currentLine).includes(evidence)) {
         // لا يوجد تعديل سابق: mismatch حقيقي = stale issue.
         if (repairedCode === code) {
           return;
@@ -948,6 +1018,7 @@ function repairCode(code, issues, fileName) {
       confidence: strat.confidence, autoFix: true,
       reason: result.reason || 'Safe deterministic replacement',
     });
+    trackFix(repairedCode, result.fixed, problemGroup(stratKey));
     repairedCode = result.fixed;
   });
 
