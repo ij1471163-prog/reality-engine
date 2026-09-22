@@ -549,6 +549,7 @@ var RealityOrchestrator = (() => {
 
     const kept = [];
     const deferred = [];
+    const usedMatches = new Set();   // each current issue matches at most once
 
     // Tier 1: evidence identifies the same occurrence even when
     // AI_REQUIRED uses strategy=SQL_INJECTION while the analyzer uses
@@ -558,14 +559,22 @@ var RealityOrchestrator = (() => {
       const ev = _issueEvidence(i);
 
       if (ev && presentEvidence.has(ev)) {
-        const matched = currentIssues.find(ci =>
+        const freshMatch = currentIssues.find(ci =>
+          !usedMatches.has(ci) && _issueEvidence(ci) === ev
+        );
+        const matched = freshMatch || currentIssues.find(ci =>
           _issueEvidence(ci) === ev
         );
         const matchedKind = matched ? _issueKind(matched) : kind;
 
         if ((budget.get(matchedKind) || 0) > 0) {
           budget.set(matchedKind, budget.get(matchedKind) - 1);
-          kept.push(i);
+          // Carry the CURRENT line: Claude receives the post-repair code, so
+          // the pre-repair line would point _extractContext() at the wrong window.
+          if (freshMatch) usedMatches.add(freshMatch);
+          kept.push(freshMatch && freshMatch.line !== undefined && freshMatch.line !== i.line
+            ? Object.assign({}, i, { line: freshMatch.line })
+            : i);
           return;
         }
       }
