@@ -613,6 +613,139 @@ function getAIReason(strategy) {
   return reasons[strategy] || 'يحتاج مراجعة يدوية';
 }
 
+// ─── SQL candidate validation ─────────────────────────
+// candidate لـSQL_INJECTION يُعتمد فقط إذا أثبت استعلامًا صالحًا مربوط القيم.
+// يُرفض (ويبقى السطر الأصلي كما هو) إذا:
+//   1. بقي دمج قيمة متغيرة داخل نص SQL (+ أو . أو ${} أو f-string).
+//   2. placeholder داخل علامات اقتباس SQL ('?') أو اقتباس غير متوازن.
+//   3. الـplaceholders غير مربوطة بقيم، أو عدد القيم لا يطابقها.
+//   4. الـAnalyzer ما زال يبلّغ عن نفس عدد ثغرات SQL.
+// يُرجع null إذا كان سليمًا، أو سبب الرفض.
+const SQL_KEYWORD = /\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i;
+
+function _sqlLiterals(line) {
+  const out = [];
+  const re = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
+  let m;
+  while ((m = re.exec(line))) {
+    out.push({ quote: m[1], body: m[2], start: m.index, end: re.lastIndex });
+  }
+  return out;
+}
+
+// عدد العناصر داخل [..] أو (..) يبدأ عند open
+function _sqlBoundCount(text, open) {
+  const close = text[open] === '[' ? ']' : ')';
+  let depth = 0, end = -1;
+  for (let k = open; k < text.length; k++) {
+    if (text[k] === text[open]) depth++;
+    else if (text[k] === close && --depth === 0) { end = k; break; }
+  }
+  if (end < 0) return -1;
+  const inner = text.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  if (!inner) return 0;
+  let n = 1; depth = 0;
+  for (const ch of inner) {
+    if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    else if (ch === ',' && depth === 0) n++;
+  }
+  return inner.endsWith(',') ? n - 1 : n;
+}
+
+function sqlCandidateProblem(beforeCode, afterCode, fileName, ext) {
+  const B = beforeCode.split('\n'), A = afterCode.split('\n');
+  let pre = 0;
+  while (pre < B.length && pre < A.length && B[pre] === A[pre]) pre++;
+  let suf = 0;
+  while (suf < B.length - pre && suf < A.length - pre &&
+         B[B.length - 1 - suf] === A[A.length - 1 - suf]) suf++;
+  const regionEnd = A.length - suf;                     // حصري
+
+  // كل literal يُستبدل بـ\u0001 (ليس حرف \w) → literal + literal لا يُحسب دمج متغير
+  const concatOp = ext === 'php' ? /\u0001\s*\.\s*\$|\$[\w\[\]'"]+\s*\.\s*\u0001/ : /\u0001\s*\+\s*[A-Za-z_$(]|[\w$)\]]\s*\+\s*\u0001/;
+  let sqlLines = 0;
+
+  for (let i = pre; i < regionEnd; i++) {
+    const line = A[i];
+    const lits = _sqlLiterals(line);
+    if (!lits.some(l => SQL_KEYWORD.test(l.body))) continue;
+    sqlLines++;
+
+    // 1. دمج قيمة متغيرة في نص SQL
+    let masked = '', last = 0;
+    for (const l of lits) { masked += line.slice(last, l.start) + '\u0001'; last = l.end; }
+    masked += line.slice(last);
+    const interpolated = lits.some(l =>
+      (l.quote === '`' && /\$\{/.test(l.body)) ||
+      (ext === 'php' && l.quote === '"' && /\$\w/.test(l.body)) ||
+      (ext === 'py' && /[fF]$/.test(line.slice(0, l.start)) && /\{[^}]+\}/.test(l.body)));
+    if (concatOp.test(masked) || interpolated) {
+      return `SQL_STILL_CONCATENATED — line ${i + 1} still builds SQL from a variable`;
+    }
+
+    // 2. placeholder داخل اقتباس SQL أو اقتباس غير متوازن
+    const sqlText = lits.map(l => l.body.replace(/\\'/g, "'")).join('');
+    if (/'\s*(?:\?|\$\d+|%s)|(?:\?|\$\d+|%s)\s*'/.test(sqlText)) {
+      return `SQL_PLACEHOLDER_QUOTED — line ${i + 1}: a placeholder inside quotes is a literal, not a bound value`;
+    }
+    if ((sqlText.replace(/''/g, '').match(/'/g) || []).length % 2 !== 0) {
+      return `SQL_UNBALANCED_QUOTES — line ${i + 1} produces an invalid query`;
+    }
+
+    // 3. ربط الـplaceholders بقيم
+    const dollars = (sqlText.match(/\$(\d+)/g) || []).map(s => +s.slice(1));
+    const need = (sqlText.match(/\?/g) || []).length + (sqlText.match(/%s/g) || []).length +
+                 (dollars.length ? Math.max(...dollars) : 0);
+    if (!need) continue;
+
+    if (ext === 'php' || ext === 'cs' || ext === 'java') {
+      const region = A.slice(pre, Math.min(A.length, regionEnd + 5)).join('\n');
+      const bind = { php: /bind_param\s*\(|->execute\s*\(\s*\[/, cs: /\.Parameters\.Add/, java: /\.set(?:String|Int|Long|Object|Double)\s*\(/ }[ext];
+      if (!bind.test(region)) return `SQL_PLACEHOLDERS_UNBOUND — line ${i + 1} has placeholders but no bound values`;
+      continue;
+    }
+
+    let bound = -1;
+    const sameCall = masked.match(/\u0001\s*,\s*([\[(])/);
+    if (sameCall) {
+      bound = _sqlBoundCount(masked, sameCall.index + sameCall[0].length - 1);
+    } else {
+      const assign = masked.match(/^\s*(?:(?:var|let|const)\s+)?([A-Za-z_$][\w$]*)\s*=\s*\u0001/);
+      if (assign) {
+        const call = new RegExp('\\.(?:query|execute|executemany|run|all|get|each|exec|prepare)\\s*\\(\\s*' +
+                                assign[1].replace(/\$/g, '\\$') + '\\b\\s*(,\\s*[\\[(])?');
+        for (let k = i + 1; k < Math.min(A.length, i + 16); k++) {
+          const c = A[k].match(call);
+          if (!c) continue;
+          bound = c[1] ? _sqlBoundCount(A[k], c.index + c[0].length - 1) : 0;
+          break;
+        }
+      }
+    }
+    if (bound < 0) return `SQL_PLACEHOLDERS_UNBOUND — line ${i + 1}: no query call binding the placeholders was found`;
+    if (bound !== need) {
+      return `SQL_PLACEHOLDERS_UNBOUND — line ${i + 1} has ${need} placeholder(s) but ${bound} bound value(s)`;
+    }
+  }
+
+  if (!sqlLines) return 'SQL_NOT_ADDRESSED — the candidate does not change any SQL statement';
+
+  // 4. الـAnalyzer (إن وُجد) يجب أن يرى ثغرات SQL أقل
+  if (typeof analyzeCode === 'function') {
+    try {
+      const count = c => (analyzeCode(c, fileName) || []).filter(x =>
+        /sql injection|sql_injection|cwe-89/i.test([x && x.type, x && x.title, x && x.cAct].join(' '))).length;
+      if (count(afterCode) >= count(beforeCode)) {
+        return 'SQL_INJECTION_STILL_REPORTED — the analyzer still reports the SQL injection';
+      }
+    } catch (e) {
+      return 'SQL_ANALYSIS_FAILED — could not verify the SQL candidate';
+    }
+  }
+  return null;
+}
+
 // ─── Main repairCode ──────────────────────────────────
 
 function getLegacySQLFixer(fileName) {
@@ -670,6 +803,7 @@ function repairCode(code, issues, fileName) {
 
   const repairs  = [];
   const aiNeeded = [];
+  const rejected = [];   // candidates رُفضت قبل التطبيق (مثل SQL غير سليم)
   let repairedCode = code;
 
   const sorted = [...issues].sort((a, b) => b.line - a.line);
@@ -726,6 +860,15 @@ function repairCode(code, issues, fileName) {
       return;
     }
 
+    // SQL: candidate يبقي الثغرة أو ينتج استعلامًا غير صالح لا يُعتمد أبدًا.
+    if (stratKey === 'SQL_INJECTION' && result && result.fixed !== repairedCode) {
+      const problem = sqlCandidateProblem(repairedCode, result.fixed, fileName, ext);
+      if (problem) {
+        rejected.push({ line: issue.line, strategy: stratKey, source: 'fixSQLInjection', reason: problem });
+        result = null;
+      }
+    }
+
     if (!result || result.fixed === repairedCode) {
       // SQL fallback: استخدم الـlegacy fixer فقط كمولّد candidate.
       // لا يتجاوز Ghost/FixVerifier في الطبقة الأعلى.
@@ -752,10 +895,21 @@ function repairCode(code, issues, fileName) {
               (typeof legacyOut?.code === 'string' &&
                legacyOut.code !== repairedCode);
 
-            if (
+            const legacyProblem =
               legacyChanged &&
               typeof legacyFixed === 'string' &&
               legacyFixed !== repairedCode
+                ? sqlCandidateProblem(repairedCode, legacyFixed, fileName, ext)
+                : null;
+            if (legacyProblem) {
+              rejected.push({ line: issue.line, strategy: stratKey, source: 'legacy SQL fixer', reason: legacyProblem });
+            }
+
+            if (
+              legacyChanged &&
+              typeof legacyFixed === 'string' &&
+              legacyFixed !== repairedCode &&
+              !legacyProblem
             ) {
               result = {
                 fixed: legacyFixed,
@@ -816,7 +970,7 @@ function repairCode(code, issues, fileName) {
 
   return {
     original: code, repaired: repairedCode,
-    repairs, aiNeeded,
+    repairs, aiNeeded, rejected,
     summary: {
       total: issues.length,
       fixed: repairs.length,
