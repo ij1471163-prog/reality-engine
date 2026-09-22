@@ -314,9 +314,10 @@ test('phase 3: a ≤300-line repo file whose reply would exceed the budget → w
   assert.ok(ClaudeRepairEngine._estimateTokens(code) > ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET);
   const ctx = ClaudeRepairEngine._extractContext(code, 120);
   assert.equal(ctx.fullFile, false);
-  assert.equal(ctx.fromLine, 80);
-  assert.equal(ctx.toLine, 160);
-  assert.match(ClaudeRepairEngine._buildPrompt({ line: 120, type: 'X', title: 'X' }, code, 'extended_patterns.js'), /Target context \(lines 80–160 of \d+\)/);
+  // Phase 5: النافذة = تعليق القسم + المصفوفة PY_PATTERNS كاملة (88–170) بدل ±40 (80–160) التي كانت تقطعها
+  assert.equal(ctx.fromLine, 88);
+  assert.equal(ctx.toLine, 170);
+  assert.match(ClaudeRepairEngine._buildPrompt({ line: 120, type: 'X', title: 'X' }, code, 'extended_patterns.js'), /Target context \(lines 88–170 of \d+\)/);
 });
 
 test('phase 3: that windowed repo file is repaired and reconstructed in full → FIXED', async () => {
@@ -517,4 +518,219 @@ test('phase 4: repairAll sends each aiNeeded item\'s own prompt to the API (stra
     assert.match(p, new RegExp(`Why this needs a manual fix: ${esc(it.reason)}`));
     assert.match(p, new RegExp(`Target line: ${it.line} `));
   });
+});
+
+// ═══════════════════════════════════════════════════════
+// Phase 5 — حدود النافذة + قفل الأطراف + إعادة تركيب مُتحقَّق منها
+// ═══════════════════════════════════════════════════════
+const E5 = ClaudeRepairEngine;
+const fillerLines = (p, n) => Array.from({ length: n }, (_, i) => `const ${p}_${i} = ${i};`);
+const bodyLines   = (n, ind) => Array.from({ length: n }, (_, i) => `${ind}const v_${i} = compute(${i});`);
+const mark = (lines, idx) => lines.map((l, i) => (i === idx ? l + ' // fixed' : l));
+// رد صحيح لنافذة: نفس الأسطر مع تعديل سطر الهدف فقط
+const windowReply = (code, line, edit = mark) => {
+  const ctx = E5._extractContext(code, line);
+  const L = code.split('\n').slice(ctx.targetRange.from, ctx.targetRange.to + 1);
+  return { ctx, lines: edit(L, line - 1 - ctx.targetRange.from) };
+};
+const fence = lines => '```js\n' + lines.join('\n') + '\n```';
+const run5 = (code, line, text) => E5.repairOne(code, 'f.js', { line, type: 'X', title: 'X' }, { _fetchFn: endTurn(text) });
+
+// 200 سطر → function big (201–302، جسمها 100 سطر) → 200 سطر
+const FN_FILE = [...fillerLines('a', 200), 'function big() {', ...bodyLines(100, '  '), '}', ...fillerLines('b', 200), ''].join('\n');
+
+test('phase 5: target near the END of a function whose start is before the old ±40 window → window starts at the function', () => {
+  const ctx = E5._extractContext(FN_FILE, 290);                 // ±40 كان 250–330 (يبدأ داخل الدالة)
+  assert.equal(ctx.fullFile, false);
+  assert.equal(ctx.boundary, 'enclosing');
+  assert.equal(ctx.fromLine, 201);
+  assert.equal(ctx.toLine, 330);
+  assert.equal(ctx.snippet.split('\n')[0], 'function big() {');
+  assert.ok(ctx.snippet.split('\n').includes('}'), 'the closing brace of the function is inside the window');
+});
+
+test('phase 5: target near the START of a function whose end is after the old ±40 window → window ends at the function', () => {
+  const ctx = E5._extractContext(FN_FILE, 210);                 // ±40 كان 170–250 (ينتهي داخل الدالة)
+  assert.equal(ctx.boundary, 'enclosing');
+  assert.equal(ctx.fromLine, 170);
+  assert.equal(ctx.toLine, 302);
+  assert.equal(ctx.snippet.split('\n').pop(), '}');
+});
+
+// class كبير (> MAX_WINDOW_LINES) من methods فيها بلوكات متداخلة
+const method = k => [
+  `  method${k}(input) {`,
+  '    const out = [];',
+  '    for (let i = 0; i < input.length; i++) {',
+  `      if (input[i] > ${k}) {`,
+  '        out.push(input[i] * 2);',
+  '      }',
+  '    }',
+  ...Array.from({ length: 14 }, (_, j) => `    const m${k}_${j} = ${j};`),
+  '    return out;',
+  '  }',
+];
+const CLASS_FILE = [...fillerLines('h', 20), 'class Service {', ...Array.from({ length: 14 }, (_, k) => method(k)).flat(), '}', ...fillerLines('t', 20), ''].join('\n');
+const CL = CLASS_FILE.split('\n');
+const M6_PUSH = CL.findIndex((l, i) => i > CL.indexOf('  method6(input) {') && l.includes('out.push')) + 1;
+
+test('phase 5: nested blocks — class too large, window = whole methods (never cut inside one)', () => {
+  const blocks = E5._enclosingBlocks(CL, M6_PUSH - 1);
+  assert.deepEqual(blocks.map(b => CL[b.from].trim()),
+    ['out.push(input[i] * 2);', `if (input[i] > 6) {`, 'for (let i = 0; i < input.length; i++) {', 'method6(input) {', 'class Service {']);
+  const ctx = E5._extractContext(CLASS_FILE, M6_PUSH);
+  assert.equal(ctx.boundary, 'enclosing');
+  const W = ctx.snippet.split('\n');
+  assert.match(W[0], /^ {2}method\d+\(input\) \{$/, 'window starts at a method');
+  assert.equal(W[W.length - 1], '  }', 'window ends at the end of a method');
+  assert.ok(ctx.fromLine > CL.indexOf('class Service {') + 1 && ctx.toLine < CL.lastIndexOf('}') + 1, 'class opener/closer stay outside');
+  assert.ok(W.includes('  method6(input) {'));
+  assert.ok(ctx.toLine - ctx.fromLine + 1 <= E5.MAX_WINDOW_LINES);
+});
+
+test('phase 5: nested blocks (Python, indentation only) — window = whole methods of the class', () => {
+  const pyMethod = k => [`    def m${k}(self, xs):`, '        out = []', '        for x in xs:', `            if x > ${k}:`, '                out.append(x)',
+    ...Array.from({ length: 14 }, (_, j) => `        v${j} = ${j}`), '        return out', ''];
+  const code = ['import os', '', 'class Big:', ...Array.from({ length: 16 }, (_, k) => pyMethod(k)).flat(), 'x = 1', ''].join('\n');
+  const L = code.split('\n');
+  const t = L.findIndex((l, i) => i > L.indexOf('    def m8(self, xs):') && l.includes('out.append')) + 1;
+  const ctx = E5._extractContext(code, t);
+  const W = ctx.snippet.split('\n');
+  assert.equal(ctx.boundary, 'enclosing');
+  assert.match(W[0], /^ {4}def m\d+\(self, xs\):$/);
+  assert.equal(W[W.length - 1], '        return out');
+  assert.ok(W.includes('    def m8(self, xs):'));
+  assert.ok(!W.includes('class Big:'));
+});
+
+test('phase 5: enclosing function within MAX_WINDOW_LINES and token budget is sent whole', () => {
+  const ctx = E5._extractContext(FN_FILE, 250);
+  const fn = FN_FILE.split('\n').slice(200, 302).join('\n');
+  assert.ok(ctx.snippet.includes(fn));
+  assert.ok(E5._estimateTokens(ctx.snippet) <= E5.FULL_FILE_TOKEN_BUDGET);
+});
+
+test('phase 5: function over the token budget (≤160 lines) → deeper statement-level window, never cut mid-statement', () => {
+  const long = Array.from({ length: 120 }, (_, i) => `  const w_${i} = compute("${'x'.repeat(90)}", ${i});`);
+  const code = [...fillerLines('a', 200), 'function wide() {', ...long, '}', ...fillerLines('b', 100), ''].join('\n');
+  const ctx = E5._extractContext(code, 261);
+  assert.equal(ctx.boundary, 'enclosing');
+  assert.ok(E5._estimateTokens(ctx.snippet) <= E5.FULL_FILE_TOKEN_BUDGET);
+  assert.ok(ctx.fromLine > 201 && ctx.toLine < 322, 'window is inside the function body');
+  ctx.snippet.split('\n').forEach(l => assert.match(l, /^ {2}const w_\d+ = compute\(.*\);$/));
+});
+
+// دالة 300 سطر؛ الهدف على سطر التعريف → لا بلوك يتسع → ±40 القديم (excerpt)
+const HUGE_FILE = [...fillerLines('a', 10), '', ...fillerLines('c', 39), 'function huge(a) {', ...bodyLines(300, '  '), '}', ...fillerLines('b', 60), ''].join('\n');
+const HUGE_SIG = 51;
+
+test('phase 5: enclosing function too large → conservative ±40 excerpt (unchanged fallback)', () => {
+  const ctx = E5._extractContext(HUGE_FILE, HUGE_SIG);
+  assert.equal(ctx.boundary, 'excerpt');
+  assert.equal(ctx.fromLine, HUGE_SIG - 40);
+  assert.equal(ctx.toLine, HUGE_SIG + 40);
+});
+
+test('phase 5: valid repairs still succeed — function window, nested class window, and ±40 excerpt', async () => {
+  for (const [code, line] of [[FN_FILE, 290], [FN_FILE, 210], [CLASS_FILE, M6_PUSH], [HUGE_FILE, HUGE_SIG]]) {
+    const { lines } = windowReply(code, line);
+    const r = await run5(code, line, fence(lines));
+    assert.equal(r.status, Status.FIXED, `line ${line}: ${r.reason}`);
+    const O = code.split('\n'), N = r.fixedCode.split('\n');
+    assert.equal(N.length, O.length);
+    O.forEach((l, i) => assert.equal(N[i], i === line - 1 ? l + ' // fixed' : l, `line ${i + 1}`));
+  }
+});
+
+test('phase 5: everything outside the window is preserved byte-for-byte (CRLF, tabs, trailing spaces)', async () => {
+  const code = FN_FILE.split('\n').map((l, i) => (i % 3 === 0 ? l + '  \t' : l) + (i % 2 ? '\r' : '')).join('\n');
+  const { ctx, lines } = windowReply(code, 290);
+  const r = await run5(code, 290, fence(lines));
+  assert.equal(r.status, Status.FIXED, r.reason);
+  const O = code.split('\n'), N = r.fixedCode.split('\n');
+  assert.equal(N.slice(0, ctx.targetRange.from).join('\n'), O.slice(0, ctx.targetRange.from).join('\n'));
+  assert.equal(N.slice(ctx.targetRange.to + 1).join('\n'), O.slice(ctx.targetRange.to + 1).join('\n'));
+});
+
+test('phase 5: blank lines at the window edges are kept (were dropped by candidate trimming)', async () => {
+  const ctx = E5._extractContext(HUGE_FILE, HUGE_SIG);
+  assert.equal(ctx.snippet.split('\n')[0], '', 'fixture: excerpt starts with a blank line');
+  const { lines } = windowReply(HUGE_FILE, HUGE_SIG);
+  const r = await run5(HUGE_FILE, HUGE_SIG, fence(lines.slice(1)));   // الرد بلا السطر الفارغ الأول
+  assert.equal(r.status, Status.FIXED, r.reason);
+  assert.equal(r.fixedCode.split('\n').length, HUGE_FILE.split('\n').length);
+  assert.equal(r.fixedCode.split('\n')[ctx.targetRange.from], '');
+});
+
+test('phase 5: truncated window replies → WINDOW_BOUNDARY_CHANGED (end cut or start cut)', async () => {
+  const { lines } = windowReply(FN_FILE, 290);
+  const endCut = await run5(FN_FILE, 290, fence(lines.slice(0, -5)));
+  assert.equal(endCut.status, Status.CANNOT_FIX);
+  assert.match(endCut.reason, /^WINDOW_BOUNDARY_CHANGED — the excerpt must end with its original last line \(line 330\)/);
+  const startCut = await run5(FN_FILE, 290, fence(lines.slice(3)));
+  assert.equal(startCut.status, Status.CANNOT_FIX);
+  assert.match(startCut.reason, /^WINDOW_BOUNDARY_CHANGED — the excerpt must start with its original first line \(line 201\)/);
+});
+
+test('phase 5: a reply missing lines in the middle, far from the target, is still INCOMPLETE_FILE', async () => {
+  const { lines } = windowReply(FN_FILE, 290);
+  const r = await run5(FN_FILE, 290, fence([...lines.slice(0, 5), ...lines.slice(8)]));
+  assert.equal(r.status, Status.CANNOT_FIX);
+  assert.match(r.reason, /INCOMPLETE_FILE/);
+});
+
+test('phase 5: replies that add code outside the requested boundaries → WINDOW_BOUNDARY_CHANGED', async () => {
+  const { lines } = windowReply(FN_FILE, 290);
+  const before = await run5(FN_FILE, 290, fence(['const a_199 = 199;', ...lines]));        // سطر من خارج النافذة
+  assert.match(before.reason, /^WINDOW_BOUNDARY_CHANGED — the excerpt must start/);
+  const after = await run5(FN_FILE, 290, fence([...lines, 'const b_30 = 30;']));
+  assert.match(after.reason, /^WINDOW_BOUNDARY_CHANGED — the excerpt must end/);
+  const imp = await run5(FN_FILE, 290, fence(["const fs = require('fs');", ...lines]));
+  assert.match(imp.reason, /^WINDOW_BOUNDARY_CHANGED — the excerpt must start/);
+  // excerpt يقطع الدالة: "إكمالها" بـ } مرفوض
+  const ex = windowReply(HUGE_FILE, HUGE_SIG);
+  const closed = await run5(HUGE_FILE, HUGE_SIG, fence([...ex.lines, '}']));
+  assert.equal(closed.status, Status.CANNOT_FIX);
+  assert.match(closed.reason, /^WINDOW_BOUNDARY_CHANGED — the excerpt must end/);
+});
+
+test('phase 5: boundary lock exempts an edge only when it is the target line itself', () => {
+  const ctx = { fullFile: false, snippet: 'a();\nb();\nc();', fromLine: 10 };
+  assert.equal(E5._windowBoundaryProblem(ctx, 'a2();\nb();\nc();', { line: 10 }), null);
+  assert.equal(E5._windowBoundaryProblem(ctx, 'a();\nb();\nc2();', { line: 12 }), null);
+  assert.match(E5._windowBoundaryProblem(ctx, 'a2();\nb();\nc();', { line: 11 }), /WINDOW_BOUNDARY_CHANGED/);
+  assert.match(E5._windowBoundaryProblem(ctx, '   ', { line: 11 }), /empty excerpt/);
+  assert.equal(E5._windowBoundaryProblem({ fullFile: true, snippet: 'a' }, 'zzz', { line: 1 }), null);
+});
+
+test('phase 5: malformed reconstruction is rejected (null), never spliced', () => {
+  const code = 'a();\nb();\nc();\nd();';
+  const ok = { fullFile: false, snippet: 'b();\nc();', fromLine: 2, targetRange: { from: 1, to: 2 } };
+  assert.equal(E5._reconstructCode(code, { line: 2 }, 'b2();\nc();', ok), 'a();\nb2();\nc();\nd();');
+  assert.equal(E5._reconstructCode(code, {}, 'x();', Object.assign({}, ok, { snippet: 'stale();\nc();' })), null);
+  assert.equal(E5._reconstructCode(code, {}, 'x();', Object.assign({}, ok, { targetRange: undefined })), null);
+  assert.equal(E5._reconstructCode(code, {}, 'x();', Object.assign({}, ok, { targetRange: { from: 2, to: 1 } })), null);
+  assert.equal(E5._reconstructCode(code, {}, 'x();', Object.assign({}, ok, { targetRange: { from: 3, to: 9 } })), null);
+  assert.equal(E5._reconstructCode(code, {}, '  \n ', ok), null);
+});
+
+test('phase 5: issue line beyond the end of the file → MALFORMED_RECONSTRUCTION (was spliced after EOF)', async () => {
+  const r = await run5(FN_FILE, 10000, fence(['const z = 1;']));
+  assert.equal(r.status, Status.CANNOT_FIX);
+  assert.match(r.reason, /^MALFORMED_RECONSTRUCTION/);
+  assert.equal(r.fixedCode, null);
+});
+
+test('phase 5: full-file mode is untouched by window logic (small file, GameServer-size)', () => {
+  const ctx = E5._extractContext(INLINE_FIXTURE, 3);
+  assert.equal(ctx.fullFile, true);
+  assert.equal(ctx.boundary, undefined);
+  assert.equal(E5._windowBoundaryProblem(ctx, 'anything();', { line: 3 }), null);
+});
+
+test('phase 5: a comment directly above a unit stays with it (window edge before the comment, not between)', () => {
+  const code = [...fillerLines('a', 200), '// big: computes everything', '// (second comment line)', 'function big() {', ...bodyLines(100, '  '), '}', ...fillerLines('b', 200), ''].join('\n');
+  const ctx = E5._extractContext(code, 292);
+  assert.equal(ctx.boundary, 'enclosing');
+  assert.equal(ctx.snippet.split('\n')[0], '// big: computes everything');
 });

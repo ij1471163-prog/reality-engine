@@ -70,6 +70,116 @@ var ClaudeRepairEngine = (() => {
     return Math.ceil(ascii / 3.2 + other);
   }
 
+  // ─── Window boundaries (windowed mode only) ──────────
+  // النافذة لا تقطع دالة/بلوك إذا أمكن تحديد حدوده بأمان:
+  //   1. أكبر بلوك يحتوي الهدف ويتسع ضمن MAX_WINDOW_LINES و FULL_FILE_TOKEN_BUDGET
+  //      (الأولوية للأعلى: top-level، ثم الأعمق إذا لم يتسع).
+  //   2. تُكمَّل حوله وحدات شقيقة كاملة حتى تغطي ±SMART_CONTEXT_LINES إن اتسعت.
+  //   3. إذا لم يتسع أي بلوك → نافذة ±SMART_CONTEXT_LINES كما كانت (excerpt).
+  // الحدود تُستنتج من الإزاحة، بلا parser لكل لغة. أي خطأ في الاستنتاج يبقى آمنًا:
+  // الأطراف مقفلة (_windowBoundaryProblem) وما خارج النافذة لا يُلمس (_reconstructCode).
+  const MAX_WINDOW_LINES = 160;
+
+  const _indent     = l => l.length - l.replace(/^\s+/, '').length;
+  const _structural = l => !!l.trim() && !/^\s*(?:\/\/|#|\/\*|\*|--|<!--)/.test(l);
+  // سطر يُكمل statement قبله: إغلاق، else/catch/except، أو تكملة تعبير
+  const _continues  = l => /^\s*(?:[}\])]|(?:else|elif|except|finally|catch)\b|end\b(?!\s*[=(.\[])|\.(?!\.)|&&|\|\||\?|:)/.test(l);
+
+  // آخر سطر في statement يبدأ عند s: كل ما هو أعمق، وكل تكملة على نفس المستوى.
+  function _blockEnd(lines, s) {
+    const base = _indent(lines[s]);
+    let last = s;
+    for (let k = s + 1; k < lines.length; k++) {
+      if (!_structural(lines[k])) continue;
+      const ind = _indent(lines[k]);
+      if (ind > base || (ind === base && _continues(lines[k]))) { last = k; continue; }
+      break;
+    }
+    return last;
+  }
+
+  // بداية الـstatement الذي يحتوي السطر i (يتخطى الإغلاق و else إلى بدايته).
+  function _stmtStart(lines, i) {
+    let s = i;
+    while (s < lines.length && !_structural(lines[s])) s++;
+    if (s >= lines.length) { s = i; while (s > 0 && !_structural(lines[s])) s--; }
+    const base = _indent(lines[s]);
+    while (_continues(lines[s])) {
+      let p = s - 1;
+      while (p >= 0 && !(_structural(lines[p]) && _indent(lines[p]) <= base)) p--;
+      if (p < 0 || _indent(lines[p]) < base) break;
+      s = p;
+    }
+    return s;
+  }
+
+  // البلوكات التي تحتوي idx، من الأعمق إلى الأعلى: [{ from, to }] (0-based).
+  function _enclosingBlocks(lines, idx) {
+    const blocks = [];
+    let s = _stmtStart(lines, idx);
+    // هدف على تعليق/سطر فارغ قبل statement → يُضم إليه (الحد قبل التعليق آمن)
+    if (s > idx) blocks.push({ from: idx, to: _blockEnd(lines, s) });
+    for (;;) {
+      const e = _blockEnd(lines, s);
+      if (s <= idx && e >= idx) blocks.push({ from: s, to: e });
+      const ind = _indent(lines[s]);
+      let p = s - 1;
+      while (p >= 0 && !(_structural(lines[p]) && _indent(lines[p]) < ind)) p--;
+      if (p < 0) break;
+      s = _stmtStart(lines, p);
+    }
+    return blocks;
+  }
+
+  // النافذة { from, to } أو null إذا لم يتسع أي بلوك يحتوي الهدف.
+  function _boundedWindow(lines, idx) {
+    if (idx < 0 || idx >= lines.length || !lines.some(_structural)) return null;
+    const fits = (f, t) => t - f + 1 <= MAX_WINDOW_LINES &&
+      _estimateTokens(lines.slice(f, t + 1).join('\n')) <= FULL_FILE_TOKEN_BUDGET;
+
+    const blocks = _enclosingBlocks(lines, idx);
+    let b = blocks.length - 1;
+    while (b >= 0 && !fits(blocks[b].from, blocks[b].to)) b--;
+    if (b < 0) return null;
+    const B = blocks[b];
+
+    // الوحدات الشقيقة: statements بنفس مستوى B داخل البلوك الأب (أو الملف كله)
+    const parent    = blocks[b + 1];
+    const scopeFrom = parent ? parent.from + 1 : 0;
+    const scopeTo   = parent ? parent.to       : lines.length - 1;
+    const level     = _indent(lines[_stmtStart(lines, B.from)]);
+    const units = [];
+    let gap = scopeFrom;                                // تعليقات قبل الوحدة تُضم إليها
+    for (let k = scopeFrom; k <= scopeTo; k++) {
+      const l = lines[k];
+      if (!_structural(l) || _indent(l) !== level || _continues(l)) continue;
+      const e = Math.min(_blockEnd(lines, k), scopeTo);
+      while (gap < k && !lines[gap].trim()) gap++;
+      units.push({ from: gap, to: e });
+      k = e;
+      gap = e + 1;
+    }
+
+    const wantFrom = Math.max(scopeFrom, idx - SMART_CONTEXT_LINES);
+    const wantTo   = Math.min(scopeTo,   idx + SMART_CONTEXT_LINES);
+    const grow   = units.find(u => u.to >= wantFrom);                  // يحتوي wantFrom أو بعده
+    const shrink = units.find(u => u.from >= wantFrom);
+    const growE  = [...units].reverse().find(u => u.from <= wantTo);
+    const shrinkE = [...units].reverse().find(u => u.to <= wantTo);
+    const lo = u => Math.min(u ? u.from : B.from, B.from);
+    const hi = u => Math.max(u ? u.to : B.to, B.to);
+
+    const options = [
+      [lo(grow),   hi(growE)],
+      [lo(grow),   hi(shrinkE)],
+      [lo(shrink), hi(growE)],
+      [lo(shrink), hi(shrinkE)],
+      [B.from,     B.to],
+    ];
+    const pick = options.find(([f, t]) => fits(f, t));
+    return { from: pick[0], to: pick[1] };
+  }
+
   // ─── Smart Context Extractor ─────────────────────────
   // يرسل الملف كاملاً إذا كان صغيراً ويتسع رده ضمن FULL_FILE_TOKEN_BUDGET،
   // وإلا يرسل: imports + الدالة/الكلاس المستهدف + سياق محيط.
@@ -105,9 +215,10 @@ var ClaudeRepairEngine = (() => {
       }
     }
 
-    // 2. target context حول السطر المستهدف
-    const ctxFrom = Math.max(0, idx - SMART_CONTEXT_LINES);
-    const ctxTo   = Math.min(total - 1, idx + SMART_CONTEXT_LINES);
+    // 2. target context حول السطر المستهدف: بلوك كامل إن اتسع، وإلا ±SMART_CONTEXT_LINES
+    const win     = _boundedWindow(lines, idx);
+    const ctxFrom = win ? win.from : Math.max(0, idx - SMART_CONTEXT_LINES);
+    const ctxTo   = win ? win.to   : Math.min(total - 1, idx + SMART_CONTEXT_LINES);
     const targetRange = { from: ctxFrom, to: ctxTo };
 
     // snippet = target context فقط (Claude يعيد هذا الجزء)
@@ -126,6 +237,8 @@ var ClaudeRepairEngine = (() => {
       fullFile:      false,
       targetRange,
       importContext, // للـprompt فقط — لا يدخل في reconstruction
+      // 'enclosing' = الأطراف حدود statements كاملة؛ 'excerpt' = ±SMART_CONTEXT_LINES قد تقطع بلوكًا
+      boundary:      win ? 'enclosing' : 'excerpt',
     };
   }
 
@@ -342,6 +455,7 @@ var ClaudeRepairEngine = (() => {
   // partial  → يستبدل فقط targetRange في الكود الأصلي.
   //            imports التي أُرسلت كـ header لا تُستبدل هنا —
   //            targetRange يحدد بالضبط الأسطر المتعلقة بالمشكلة.
+  // يُرجع null إذا كانت النافذة لا تطابق الكود (ctx قديم/تالف) — لا تركيب تخميني.
   function _reconstructCode(code, issue, candidate, ctx) {
     if (ctx.fullFile) {
       // Claude رأى الكل وأعاد الكل. _validate يحذف الفراغات في نهاية الرد، فنعيد
@@ -352,12 +466,56 @@ var ClaudeRepairEngine = (() => {
 
     // snippet = target context فقط → candidate = target context المصلوح فقط.
     // لا markers، لا parsing للرد — نستبدل targetRange مباشرة.
-    const lines    = code.split('\n');
-    const newLines = candidate.split('\n');
-    const from     = ctx.targetRange.from;
-    const to       = ctx.targetRange.to;
-    lines.splice(from, to - from + 1, ...newLines);
-    return lines.join('\n');
+    const lines = code.split('\n');
+    const range = ctx.targetRange;
+    if (!range || !Number.isInteger(range.from) || !Number.isInteger(range.to) ||
+        range.from < 0 || range.to < range.from || range.to >= lines.length) return null;
+    const { from, to } = range;
+    const win = lines.slice(from, to + 1);
+    if (win.join('\n') !== ctx.snippet) return null;
+    if (typeof candidate !== 'string' || !candidate.trim()) return null;
+
+    // _validate يحذف الأسطر الفارغة في طرفي الرد → أعد أسطر الطرفين الفارغة كما في الأصل
+    let lead = 0;
+    while (lead < win.length && !win[lead].trim()) lead++;
+    let trail = 0;
+    while (trail < win.length - lead && !win[win.length - 1 - trail].trim()) trail++;
+    const newLines = [
+      ...win.slice(0, lead),
+      ...candidate.replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '').split('\n'),
+      ...win.slice(win.length - trail),
+    ];
+
+    const out = [...lines.slice(0, from), ...newLines, ...lines.slice(to + 1)];
+    return out.join('\n');
+  }
+
+  // ─── Window boundary lock (windowed mode only) ───────
+  // الرد يجب أن يبدأ وينتهي بنفس أول/آخر سطر غير فارغ في النافذة. يمنع:
+  // رد مقطوع، كود قبل/بعد النافذة (تكرار ما خارجها)، أو "إكمال" بلوك مقطوع بـ}.
+  // الطرف المعفى الوحيد: إذا كان هو سطر الهدف نفسه (الإصلاح قد يغيّره).
+  // يُرجع null أو سبب الرفض.
+  function _windowBoundaryProblem(ctx, candidate, issue) {
+    if (!ctx || ctx.fullFile) return null;
+    const norm = l => l.replace(/\s+$/, '');
+    const orig = ctx.snippet.split('\n');
+    const cand = String(candidate).split('\n');
+    const firstNE = a => a.findIndex(l => l.trim());
+    const lastNE  = a => { for (let i = a.length - 1; i >= 0; i--) if (a[i].trim()) return i; return -1; };
+    const fo = firstNE(orig), lo = lastNE(orig), fc = firstNE(cand), lc = lastNE(cand);
+    if (fo < 0) return null;                              // نافذة فارغة: لا حدود لقفلها
+    if (fc < 0) return 'WINDOW_BOUNDARY_CHANGED — empty excerpt returned';
+    const target = ((issue && issue.line) || 0) - ctx.fromLine;   // 0-based داخل النافذة
+
+    if (fo !== target && norm(orig[fo]) !== norm(cand[fc])) {
+      return `WINDOW_BOUNDARY_CHANGED — the excerpt must start with its original first line ` +
+             `(line ${ctx.fromLine + fo}); the reply changed it or added code before it`;
+    }
+    if (lo !== target && norm(orig[lo]) !== norm(cand[lc])) {
+      return `WINDOW_BOUNDARY_CHANGED — the excerpt must end with its original last line ` +
+             `(line ${ctx.fromLine + lo}); the reply changed it, cut it, or added code after it`;
+    }
+    return null;
   }
 
   // ─── Completeness check ───────────────────────────────
@@ -550,7 +708,19 @@ var ClaudeRepairEngine = (() => {
           { model: result.model, raw: rawText.slice(0, 200) });
       }
 
+      // النافذة: الأطراف مقفلة — لا كود قبلها/بعدها، ولا رد مقطوع.
+      const boundary = _windowBoundaryProblem(ctx, validation.candidate, issue);
+      if (boundary) {
+        return _makeResult(Status.CANNOT_FIX, null, code, issue,
+          boundary, { model: result.model });
+      }
+
       const fixedCode = _reconstructCode(code, issue, validation.candidate, ctx);
+      if (fixedCode === null) {
+        return _makeResult(Status.CANNOT_FIX, null, code, issue,
+          'MALFORMED_RECONSTRUCTION — the context window does not match the code; nothing was applied',
+          { model: result.model });
+      }
 
       if (fixedCode === code) {
         return _makeResult(Status.CANNOT_FIX, null, code, issue,
@@ -626,6 +796,7 @@ var ClaudeRepairEngine = (() => {
     DEFAULT_TIMEOUT,
     FULL_FILE_THRESHOLD,
     FULL_FILE_TOKEN_BUDGET,
+    MAX_WINDOW_LINES,
     repairOne,
     repairAll,
     // للاختبار
@@ -635,6 +806,8 @@ var ClaudeRepairEngine = (() => {
     _validate,
     _extractContext,
     _reconstructCode,
+    _windowBoundaryProblem,
+    _enclosingBlocks,
     _completenessProblem,
     _extractCode,
     _estimateTokens,
