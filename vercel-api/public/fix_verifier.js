@@ -725,9 +725,7 @@ var FixVerifier = (() => {
 
     // SQL Injection: لا نقبل candidate لمجرد أن الـAnalyzer توقف عن اكتشافه.
     // نتحقق أن المشكلة الأصلية SQL وأن الناتج يثبت parameterization.
-    const originalSqlIssue = normalizeIssues(
-      analyzeFunc(beforeCode, fileName)
-    ).some(i => {
+    const hasSqlIssue = code => (normalizeIssues(analyzeFunc(code, fileName)) || []).some(i => {
       const text = [
         i?.type,
         i?.title,
@@ -742,8 +740,13 @@ var FixVerifier = (() => {
       );
     });
 
+    const originalSqlIssue = hasSqlIssue(beforeCode);
+    // الحارس يعمل فقط عندما تختفي إشارة SQL فعلًا. إن بقيت في الناتج فالـcandidate
+    // لم يدّعِ إصلاح SQL، والحكم عليه يعود لمقارنة diffCounts وحدها.
+    const sqlSignalGone = originalSqlIssue && !hasSqlIssue(afterCode);
+
     if (
-      originalSqlIssue &&
+      sqlSignalGone &&
       !sqlCandidateLooksParameterized(beforeCode, afterCode, fileName)
     ) {
       return {
