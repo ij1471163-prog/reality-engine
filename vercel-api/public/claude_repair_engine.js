@@ -360,9 +360,22 @@ var ClaudeRepairEngine = (() => {
         throw new Error('HTTP ' + response.status + ': ' + body.slice(0, 150));
       }
       const data = await response.json();
-      const text = data && data.content && data.content[0] && data.content[0].text;
-      if (!text) throw new Error('Empty content from API');
-      return { text: text.trim(), model: data.model || MODEL };
+      // كل كتل النص، لا content[0] فقط (قد تكون الكتلة الأولى من نوع آخر).
+      const blocks = (data && Array.isArray(data.content)) ? data.content : [];
+      const text = blocks
+        .filter(b => b && typeof b.text === 'string' && (b.type === 'text' || b.type === undefined))
+        .map(b => b.text)
+        .join('');
+      // stop_reason: عند max_tokens يعيد الـAPI نصًا مقطوعًا مع HTTP 200 بلا خطأ.
+      // غيابه (mocks قديمة) = null ولا يغيّر السلوك الحالي.
+      const stopReason   = (data && typeof data.stop_reason === 'string') ? data.stop_reason : null;
+      const outputTokens = (data && data.usage && typeof data.usage.output_tokens === 'number')
+        ? data.usage.output_tokens : null;
+      // رد متوقف بسبب غير end_turn قد يأتي بلا نص (refusal) — يقرر repairOne.
+      if (!text && (stopReason === null || stopReason === 'end_turn')) {
+        throw new Error('Empty content from API');
+      }
+      return { text: text.trim(), model: data.model || MODEL, stopReason, outputTokens };
     } finally {
       clearTimeout(timer);
     }
@@ -417,6 +430,17 @@ var ClaudeRepairEngine = (() => {
     try {
       const result  = await _callAPI(prompt, apiKey, timeoutMs, fetchFn);
       const rawText = result.text;
+
+      // رد غير مكتمل لا يُعامل ككود أبدًا — يُرفض قبل parsing وقبل FixVerifier.
+      if (result.stopReason && result.stopReason !== 'end_turn') {
+        const reason = result.stopReason === 'max_tokens'
+          ? `TRUNCATED_BY_MAX_TOKENS — response cut at max_tokens=${MAX_TOKENS}` +
+            (result.outputTokens != null ? ` (${result.outputTokens} output tokens)` : '')
+          : result.stopReason === 'refusal'
+            ? 'REFUSED — Claude declined this request (stop_reason=refusal)'
+            : `UNEXPECTED_STOP_REASON — ${result.stopReason}`;
+        return _makeResult(Status.CANNOT_FIX, null, code, issue, reason, { model: result.model });
+      }
 
       if (rawText === 'CANNOT_FIX') {
         return _makeResult(Status.CANNOT_FIX, null, code, issue,
