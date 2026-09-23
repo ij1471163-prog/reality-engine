@@ -293,10 +293,28 @@ function fixXSS(code, issue, lines, ext) {
 }
 
 // ─── HTTP → HTTPS ─────────────────────────────────────
+// http:// يُعدَّل فقط في string هو نفسه URL: يبدأ بـhttp:// وليس فيه مسافة أو اقتباس أو
+// \n (نص كود/بيانات مثل 'fetch("http://x");\n' أو 'https:// بدل http://' لا يُلمس)،
+// وليس نمطًا يُبحث عنه أو يُقارن به (t.replace('http://', …) ، url === "http://…").
+// التعليقات والـregex والكود خارج النصوص لا تُلمس.
+const _HTTP_PATTERN_CALL = /\.(?:replace|replaceAll|includes|startsWith|endsWith|indexOf|lastIndexOf|match|matchAll|split|search|test)\s*\([^()]*$/;
+// URI اسم namespace (معرّف وليس اتصالًا): createElementNS("http://www.w3.org/2000/svg") يتعطل مع https
+const _HTTP_NAMESPACE_HOST = /^http:\/\/(?:www\.w3\.org|ns\.adobe\.com|purl\.org|schemas\.(?:xmlsoap\.org|microsoft\.com|openxmlformats\.org|android\.com)|xmlns\.com)\//i;
+const _HTTP_NAMESPACE_CONTEXT = /(?:xmlns|namespace|\bns)\w*['"]?\s*(?:[:=]|\()\s*(?:[\w$.]+\s*\|\|\s*)?$|\b(?:create(?:Element|Attribute)NS|[gs]etAttributeNS|(?:has|remove)AttributeNS|lookupPrefix|isDefaultNamespace)\s*\([^()]*$/i;
 function fixHTTP(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const fixed = line.replace(/http:\/\//g, 'https://');
+  const lits = _lineLiterals(line, ext === 'mjs' || ext === 'cjs' || ext === 'jsx' || ext === 'tsx' ? 'js' : ext);
+  let fixed = line;
+  for (const q of lits.reverse()) {
+    if (q.kind !== 'string') continue;
+    const body = line.slice(q.start + 1, q.end - 1);
+    if (!/^http:\/\/[^\s'"`\\]*$/.test(body) && !/^http:\/\/[^\s'"`\\]*\$\{[^}]*\}[^\s'"`\\]*$/.test(body)) continue;
+    const before = line.slice(0, q.start), after = line.slice(q.end);
+    if (_HTTP_PATTERN_CALL.test(before) || /[=!]==?\s*$/.test(before) || /^\s*[=!]==?(?!>)/.test(after)) continue;
+    if (_HTTP_NAMESPACE_HOST.test(body) || _HTTP_NAMESPACE_CONTEXT.test(before)) continue;
+    fixed = fixed.slice(0, q.start + 1) + 'https://' + fixed.slice(q.start + 1 + 'http://'.length);
+  }
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'HTTP → HTTPS' };
 }
