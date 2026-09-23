@@ -325,21 +325,83 @@ function fixEquality(code, issue, lines, ext) {
 }
 
 // ─── Accumulation ─────────────────────────────────────
+// المتغير المقصود من عنوان المشكلة ("X = بدل +=" أو "X (counter) يستخدم = بدل +=").
+function accumulationTarget(issue) {
+  const m = String(issue.title || '').match(/([A-Za-z_$][\w$]*)\s*(?:\(counter\)\s*يستخدم\s*)?=\s*بدل\s*\+=/);
+  return m ? m[1] : null;
+}
+
+// قيمة ثابتة = إعادة تهيئة وليست تراكمًا (x += 0 / x += false لا معنى لها).
+const _ACC_LITERAL_RHS = /^(?:[-+]?(?:\d[\d_]*\.?\d*(?:e[-+]?\d+)?|\.\d+)|true|false|null|undefined|NaN|Infinity|None|True|False|(['"`])[^'"`]*\1|\[\s*\]|\{\s*\})$/i;
+
+// المتغير (escaped) يُستخدم كمؤشر/فهرس في الكود: ++/-- ، ±= 1 ، [x] ، slice(x ...
+function _accIsCursor(code, esc) {
+  return new RegExp(
+    '(?:\\+\\+|--)\\s*' + esc + '(?![\\w$])|(?:^|[^\\w$.])' + esc + '\\s*(?:\\+\\+|--|[-+]=\\s*1(?![\\w$.]))' +
+    '|\\[\\s*' + esc + '\\s*(?:[\\]+\\-])' +
+    '|\\b(?:slice|substring|substr|charAt|charCodeAt|codePointAt|indexOf|lastIndexOf|startsWith|splice)\\s*\\(\\s*' + esc + '(?![\\w$])'
+  ).test(code);
+}
+
 function fixAccumulation(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  if (/=>/.test(line)) {
-    const fm = line.match(/forEach\s*\(\s*\(?\w+\)?\s*=>\s*\{[^}]*(\w+)\s*=\s*(\w+\.\w+)/);
-    if (!fm) return null;
-    const fixed2 = line
-      .replace(`${fm[1]} = ${fm[2]}`, `${fm[1]} += ${fm[2]}`)
-      .replace(`${fm[1]}=${fm[2]}`, `${fm[1]} += ${fm[2]}`);
-    if (fixed2 === line) return null;
-    return { fixed: replaceLineInCode(code, issue.line, fixed2), patch: fixed2.trim(), reason: `${fm[1]} = → ${fm[1]} +=` };
+  const target = accumulationTarget(issue);
+  if (!target) return null;
+  const esc = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // إسناد عادي للمتغير نفسه فقط: ليس ==/=>، ولا خاصية obj.X، ولا تعريف let/const/var،
+  // ولا داخل رأس for(...)، ولا وسيط مسمّى في Python f(x=...).
+  const re = new RegExp('(^|[^\\w$.])' + esc + '\\s*=(?![=>])', 'g');
+  const hits = [...line.matchAll(re)].filter(m => {
+    const before = line.slice(0, m.index + m[1].length);
+    if (/\b(?:let|const|var)\s+(?:[\w$]+\s*=[^,;]*,\s*)*$/.test(before)) return false;
+    if (/\bfor\s*\([^)]*$/.test(before)) return false;
+    if (ext === 'py' && /[(,]\s*$/.test(before)) return false;
+    return true;
+  });
+  if (hits.length !== 1) return null;           // غائب أو مكرر في السطر → لا تخمين
+
+  const h = hits[0];
+  const start = h.index + h[1].length;
+  const end = h.index + h[0].length;
+  const rhs = line.slice(end).split(/;/)[0].replace(/\s*[)}\]]*\s*$/, '').trim();
+  if (!rhs || _ACC_LITERAL_RHS.test(rhs)) return null;
+  // ternary بين قيمتين ثابتتين (x = c ? 1 : 0) → إعادة تهيئة أيضًا.
+  const tern = rhs.match(/\?\s*([^:?]+?)\s*:\s*([^:?]+)$/);
+  if (tern && _ACC_LITERAL_RHS.test(tern[1].trim()) && _ACC_LITERAL_RHS.test(tern[2].trim())) return null;
+  // الطرف الأيمن يستخدم المتغير نفسه (h = f(h) ، x = max(0, x - 1)) → تحديث كامل أصلًا.
+  if (new RegExp('(?:^|[^\\w$.])' + esc + '(?![\\w$])').test(rhs)) return null;
+
+  // تتبّع max/min: أقرب if (…) بمقارنة تذكر المتغير أو متغيرًا يُسند في نفس الكتلة
+  //   if (cur > best) { best = cur; bestLine = i + 1; }
+  for (let k = issue.line - 1; k >= Math.max(0, issue.line - 4); k--) {
+    const cond = (lines[k] || '').match(/\bif\s*\((.*)\)/);
+    if (!cond) continue;
+    if (/[<>]/.test(cond[1].replace(/=>/g, ''))) {
+      const names = new Set([target]);
+      for (const l of lines.slice(k, issue.line))
+        for (const m of l.matchAll(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=(?![=>])/g)) names.add(m[1]);
+      for (const n of names)
+        if (new RegExp('(?:^|[^\\w$.])' + n.replace(/\$/g, '\\$') + '(?![\\w$])').test(cond[1])) return null;
+    }
+    break;
   }
-  const fixed = line.replace(/(\w+)\s*=\s*/, '$1 += ');
+
+  // مؤشر/فهرس (i++ ، [i] ، slice(i ...) وليس مجمّعًا: i = stop قفزة وليست تراكمًا.
+  if (_accIsCursor(code, esc)) return null;
+  // موضع وليس قيمة: الطرف الأيمن مؤشر ± رقم (start = i + 1).
+  const pos = rhs.match(/^([A-Za-z_$][\w$]*)\s*(?:[-+]\s*\d+)?$/);
+  if (pos) {
+    const pe = pos[1].replace(/\$/g, '\\$');
+    if (_accIsCursor(code, pe) ||
+        new RegExp('\\bfor\\s*\\(\\s*(?:let|var)?\\s*' + pe + '\\s*=').test(code) ||
+        new RegExp('\\.forEach\\s*\\(\\s*\\(\\s*[\\w$]+\\s*,\\s*' + pe + '\\s*\\)').test(code)) return null;
+  }
+
+  const fixed = line.slice(0, start) + target + ' += ' + line.slice(end).replace(/^\s*/, '');
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '= → +=' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: `${target} = → ${target} +=` };
 }
 
 // ─── Hardcoded Secret ─────────────────────────────────
