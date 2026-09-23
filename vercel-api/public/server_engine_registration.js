@@ -32,7 +32,7 @@ function registerServerEngines() {
       "fix-verifier",
       RealityOrchestrator.EngineType.VERIFIER,
       (originalCode, fixedCode, fileName) =>
-        FixVerifier.verify(originalCode, fixedCode, fileName, engine.analyze),
+        FixVerifier.fullVerify(originalCode, fixedCode, fileName, engine.analyze, { allowUnverifiedLanguages: true }),
       ["code-verification"],
       { priority: 100 }
     );
