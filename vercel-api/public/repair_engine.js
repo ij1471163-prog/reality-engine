@@ -1035,6 +1035,25 @@ const _CREDENTIAL_NAME = /secret|passw|pwd|pass$|token|api_?key|apikey|key$|priv
 const _CREDENTIAL_VALUE = /^(?=.*\d)(?=.*[A-Za-z])[\w\-+/=.]{16,}$/;
 // مفاتيح وسوم/بيانات وصفية معروفة — قيمتها نص عرض لا credential. غيرها لا يُحكم عليه.
 const _LABEL_NAME = /^(?:name|title|label|type|kind|category|description|desc|message|msg|text|caption|display|displayName|id|slug|tag|group|section|header|placeholder|tooltip|hint|icon|status|mode|role|lang|locale)$/i;
+// اسم credential بدون الإشارة الضعيفة key$ (STORAGE_KEY / _key / stratKey أسماء مفاتيح تخزين لا أسرار)
+const _STRONG_CREDENTIAL_NAME = /secret|passw|pwd|pass$|token|api_?key|apikey|private|credential|auth|jwt|salt|access|sk_|pk_|bearer|signing|hmac|cipher|encrypt/i;
+// بادئات مفاتيح معروفة
+const _SECRET_PREFIX = /^(?:[spr]k_(?:live|test)_|gh[pousr]_|xox[abprs]-|AKIA|AIza|eyJ)/;
+// اسم callee للاستدعاء المفتوح عند نهاية prefix (أو null إذا لم يكن داخل استدعاء في هذا السطر)
+function _enclosingCallee(prefix) {
+  let depth = 0;
+  for (let i = prefix.length - 1; i >= 0; i--) {
+    const c = prefix[i];
+    if (c === ')' || c === ']' || c === '}') depth++;
+    else if (c === '(' || c === '[' || c === '{') {
+      if (depth > 0) { depth--; continue; }
+      if (c !== '(') return null;
+      const m = prefix.slice(0, i).match(/([\w$.]+)\s*$/);
+      return m ? m[1] : null;
+    }
+  }
+  return null;
+}
 
 function semanticCandidateProblem(beforeCode, afterCode, lineNum, stratKey, ext) {
   const B = beforeCode.split('\n'), A = afterCode.split('\n');
@@ -1084,6 +1103,31 @@ function semanticCandidateProblem(beforeCode, afterCode, lineNum, stratKey, ext)
   }
   if (key && !_CREDENTIAL_NAME.test(key[1]) && !_CREDENTIAL_NAME.test(value) && !_CREDENTIAL_VALUE.test(value)) {
     return `SECRET_NOT_CREDENTIAL — line ${lineNum}: neither "${key[1]}" nor its value looks like a credential; the fixer picked the wrong literal`;
+  }
+  const looksSecret = _CREDENTIAL_VALUE.test(value) || _SECRET_PREFIX.test(value);
+  // literal مفتاحٌ في object ('a.py': ...) وليس قيمة
+  if (/(?:^|[{,])\s*$/.test(line.slice(0, p)) && /^\s*:(?!:)/.test(line.slice(removedEnd))) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: the replaced literal is an object key, not a value`;
+  }
+  if (!key) {
+    // ليس قيمة مُسندة: يُقبل فقط وسيطًا لاستدعاء credential (jwt.sign(…, "x")) أو قيمة تشبه مفتاحًا
+    const callee = _enclosingCallee(line.slice(0, p));
+    if (!looksSecret && !(callee && _STRONG_CREDENTIAL_NAME.test(callee))) {
+      return `SECRET_NOT_CREDENTIAL — line ${lineNum}: the replaced literal is an argument of ${callee || 'no call'}(), not an assigned secret`;
+    }
+    return null;
+  }
+  // ثابت enum/وسم كخاصية object فقط: SECRET: 'secret' ، HARDCODED_SECRET: 'SECRET'
+  // (الإسناد const SECRET = "secret" قد يكون سرًا فعليًا، فلا يُطبَّق عليه)
+  const norm = x => x.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const isProperty = /['"]?\s*:\s*$/.test(line.slice(0, p));
+  if (isProperty && !looksSecret && (norm(value) === norm(key[1]) || /^[A-Z][A-Z_]*$/.test(value))) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: "${key[1]}: '${value}'" is an enum/tag constant, not a credential`;
+  }
+  // اسم مفتاح تخزين (STORAGE_KEY = 're_learned_patterns_v2' ، _key: "sh_log")
+  if (_CREDENTIAL_NAME.test(key[1]) && !_STRONG_CREDENTIAL_NAME.test(key[1]) && !_SECRET_PREFIX.test(value) &&
+      /^[a-z][a-z0-9]*(?:[_.:-][a-z0-9]+)+$/.test(value)) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: "${key[1]}" names a storage/lookup key; "${value}" is an identifier, not a credential`;
   }
   return null;
 }
