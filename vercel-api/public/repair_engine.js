@@ -746,6 +746,134 @@ function sqlCandidateProblem(beforeCode, afterCode, fileName, ext) {
   return null;
 }
 
+// ─── CMD candidate validation ─────────────────────────
+// حارس فقط لـCMD_INJECTION (exec) و CMD_INJECTION_PY (os.system) — الـfixer نفسه لا يتغير.
+// candidate يُعتمد فقط إذا عالج الاستدعاء كاملًا على السطر. يُرفض (ويبقى الكود كما هو) إذا:
+//   1. أنتج كودًا غير صالح نحويًا (استدعاء مقطوع، safeArgs مكرر في نفس الـblock).
+//   2. التعقيم انطبق على الجزء الخطأ من الأمر (نص ثابت أو template كامل بدل المدخل).
+//   3. لم يعالج المشكلة المقصودة أو أسقط منطقًا (callback/options، مدخل ثانٍ، exec ثانٍ،
+//      أو نتيجة os.system المستخدمة في assignment/return/if).
+// يُرجع null إذا كان سليمًا، أو سبب الرفض.
+
+// موضع القوس المغلق المطابق لـopen (يتجاهل ما داخل النصوص)، أو -1
+function _cmdMatchParen(s, open) {
+  let depth = 0, q = null;
+  for (let k = open; k < s.length; k++) {
+    const ch = s[k];
+    if (q) { if (ch === '\\') k++; else if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'" || ch === '`') q = ch;
+    else if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch) && --depth === 0) return k;
+  }
+  return -1;
+}
+
+// تقسيم s عند sep في المستوى الأعلى فقط (خارج النصوص والأقواس)
+function _cmdSplitTop(s, sep) {
+  const out = [];
+  let depth = 0, q = null, last = 0;
+  for (let k = 0; k < s.length; k++) {
+    const ch = s[k];
+    if (q) { if (ch === '\\') k++; else if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'" || ch === '`') q = ch;
+    else if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    else if (ch === sep && depth === 0) { out.push(s.slice(last, k).trim()); last = k + 1; }
+  }
+  out.push(s.slice(last).trim());
+  return out;
+}
+
+// عدد تعريفات name في نفس الـblock الذي يبدأ فيه السطر idx
+function _cmdBlockDecls(lines, idx, name) {
+  const code = lines.join('\n');
+  const masked = code.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|(["'`])(?:\\[\s\S]|(?!\1)[^\\])*\1/g,
+    s => s.replace(/[^\n]/g, ' '));
+  const pos = lines.slice(0, idx).reduce((n, l) => n + l.length + 1, 0);
+  let start = -1, end = masked.length, depth = 0;
+  for (let k = pos - 1; k >= 0; k--) {
+    if (masked[k] === '}') depth++;
+    else if (masked[k] === '{' && depth-- === 0) { start = k; break; }
+  }
+  depth = 0;
+  for (let k = pos; k < masked.length; k++) {
+    if (masked[k] === '{') depth++;
+    else if (masked[k] === '}' && depth-- === 0) { end = k; break; }
+  }
+  let top = '';
+  depth = 0;
+  for (let k = start + 1; k < end; k++) {
+    const ch = masked[k];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    else if (depth === 0) { top += ch; continue; }
+    top += ' ';
+  }
+  return (top.match(new RegExp('\\b(?:const|let|var|function|class)\\s+' + name + '\\b', 'g')) || []).length;
+}
+
+function cmdCandidateProblem(beforeCode, afterCode, lineNum, stratKey) {
+  const B = beforeCode.split('\n'), A = afterCode.split('\n');
+  const line = B[lineNum - 1];
+  if (line === undefined) return `CMD_NOT_ADDRESSED — line ${lineNum} does not exist`;
+  const isPy = stratKey === 'CMD_INJECTION_PY';
+  const calls = [...line.matchAll(isPy ? /os\.system\s*\(/g : /exec\s*\(/g)];
+  const fn = isPy ? 'os.system()' : 'exec()';
+
+  if (!calls.length) return `CMD_NOT_ADDRESSED — line ${lineNum} has no ${fn} call`;
+  if (calls.length > 1) {
+    return `CMD_MULTIPLE_CALLS — line ${lineNum} has ${calls.length} ${fn} calls; the fix covers only the first`;
+  }
+  const open = calls[0].index + calls[0][0].length - 1;
+  const close = _cmdMatchParen(line, open);
+  if (close < 0) return `CMD_CALL_INCOMPLETE — the ${fn} call on line ${lineNum} does not close on the same line`;
+  const inner = line.slice(open + 1, close).trim();
+
+  if (isPy) {
+    // 3. الاستدعاء يجب أن يكون الجملة كاملة — وإلا يضيع assignment/return/if
+    if (line.slice(0, calls[0].index).trim() || !/^;?\s*(?:#.*)?$/.test(line.slice(close + 1).trim())) {
+      return `CMD_CONTEXT_LOST — line ${lineNum} uses the os.system() result; replacing the whole line drops that logic`;
+    }
+    // 1. الـcandidate يمرر نفس الوسيط كاملًا
+    const after = A[lineNum - 1 + (A.length - B.length)];
+    if (!inner || !after || !after.trim().startsWith(`subprocess.run(shlex.split(${inner}),`)) {
+      return `CMD_SYNTAX_INVALID — the candidate does not pass the os.system() argument on line ${lineNum} intact`;
+    }
+    return null;
+  }
+
+  // 1. الـcandidate يعقّم وسيط exec كاملًا في جملة صالحة
+  const decl = (A[lineNum] || '').match(/^\s*const safeArgs = ([\s\S]*)\.replace\(\/\[\^a-zA-Z0-9 \]\/g, ''\);\s*$/);
+  if (!decl || decl[1].trim() !== inner) {
+    return `CMD_SYNTAX_INVALID — the candidate cuts the exec() call on line ${lineNum} and does not parse`;
+  }
+  const args = _cmdSplitTop(inner, ',').filter(Boolean);
+  if (!args.length) return `CMD_NOT_ADDRESSED — exec() on line ${lineNum} has no argument`;
+  if (args.length > 1) {
+    return `CMD_ARGS_DROPPED — exec() on line ${lineNum} has ${args.length} arguments (callback/options); the fix drops them`;
+  }
+  if (_cmdBlockDecls(A, lineNum, 'safeArgs') > 1) {
+    return `CMD_SYNTAX_INVALID — safeArgs is already declared in the same block as line ${lineNum}`;
+  }
+
+  // 2. .replace يلتصق بآخر جزء فقط — يجب أن يكون هو المدخل الوحيد
+  const parts = _cmdSplitTop(args[0], '+');
+  const isLit = p => /^(["'])(?:\\.|(?!\1)[^\\])*\1$/.test(p) || /^`(?:\\.|[^`\\$]|\$(?!\{))*`$/.test(p);
+  const dynamic = parts.filter(p => !isLit(p));
+  if (!dynamic.length) return `CMD_NOT_ADDRESSED — exec() on line ${lineNum} runs a constant command; no input to sanitize`;
+  if (dynamic.length > 1) {
+    return `CMD_UNSANITIZED_INPUT — exec() on line ${lineNum} has ${dynamic.length} inputs; the fix sanitizes only the last part`;
+  }
+  const lastPart = parts[parts.length - 1];
+  if (isLit(lastPart)) {
+    return `CMD_SANITIZE_WRONG_PART — the sanitizer on line ${lineNum} applies to ${lastPart}, not to input ${dynamic[0]}`;
+  }
+  if (lastPart.startsWith('`')) {
+    return `CMD_SANITIZE_WRONG_PART — the sanitizer on line ${lineNum} strips the whole template command, not only its input`;
+  }
+  return null;
+}
+
 // ─── Evidence helpers (stale-line guard) ──────────────
 // AST evidence (ast-engine.js, astVerified) وصفٌ للعقدة وليس نص السطر:
 //   "total = MemberExpression"  أو  "items.forEach(...)".
@@ -935,6 +1063,15 @@ function repairCode(code, issues, fileName) {
       const problem = sqlCandidateProblem(repairedCode, result.fixed, fileName, ext);
       if (problem) {
         rejected.push({ line: issue.line, strategy: stratKey, source: 'fixSQLInjection', reason: problem });
+        result = null;
+      }
+    }
+
+    // CMD: candidate يعقّم الجزء الخطأ أو يكسر السطر لا يُعتمد — المشكلة تبقى كما هي.
+    if ((stratKey === 'CMD_INJECTION' || stratKey === 'CMD_INJECTION_PY') && result && result.fixed !== repairedCode) {
+      const problem = cmdCandidateProblem(repairedCode, result.fixed, issue.line, stratKey);
+      if (problem) {
+        rejected.push({ line: issue.line, strategy: stratKey, source: strat.fn.name, reason: problem });
         result = null;
       }
     }
