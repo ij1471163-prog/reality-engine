@@ -178,3 +178,42 @@ test('server path: claude_engine.test.js never gets a process.env self-assignmen
   const r = await O.runPipelineAsync(code, 'claude_engine.test.js', { useFallbackChain: true });
   if (r.decision.patch) assert.ok(!/process\.env\.(\w+)\s*=\s*process\.env\.\1\b/.test(r.decision.patch), 'self-assignment reached the patch');
 });
+
+// ═══ 5. A6b — WEAK_CRYPTO: md5/sha1 داخل string/تعليق/template ═══
+const WC_TITLE = '🟠 تشفير ضعيف MD5';
+const wc = (code, file) => ctx.repairCode(code, [{ line: 1, title: WC_TITLE, ev: code.split('\n')[0].trim() }], file);
+
+const WC_REJECT = {
+  'JS: createHash("md5") inside a string (repair_advanced.test.js L269)': ["  ['a.js',  'const h = crypto.createHash(\"md5\").update(password).digest(\"hex\");\\n', ['x']],\n", 'a.js'],
+  'JS: inside a comment':  ['// never use crypto.createHash("md5") here\n', 'a.js'],
+  'JS: inside a template literal': ['const s = `crypto.createHash("md5")`;\n', 'a.js'],
+  'JS: real call + another inside a string on the same line': ["const h = crypto.createHash(\"md5\").update('createHash(\"md5\")');\n", 'a.js'],
+  'Python: hashlib.md5 inside a string': ["s = \"hashlib.md5(b'x')\"\n", 'a.py'],
+};
+for (const [name, [code, file]] of Object.entries(WC_REJECT)) {
+  test(`WEAK_CRYPTO ${name} → rejected, code unchanged`, () => {
+    const out = wc(code, file);
+    assert.strictEqual(out.repaired, code);
+    assert.strictEqual(out.repairs.length, 0);
+    assert.match(out.rejected.find(r => r.strategy === 'WEAK_CRYPTO').reason, /^TARGET_IN_LITERAL/);
+  });
+}
+
+const WC_KEEP = {
+  'JS md5':    ['const h = crypto.createHash("md5").update(pw).digest("hex");\n', 'a.js'],
+  'JS sha1':   ["const h = crypto.createHash('sha1').update(pw).digest(\"hex\");\n", 'a.js'],
+  'TS md5':    ['const h: string = crypto.createHash("md5").update(pw).digest("hex");\n', 'a.ts'],
+  'Python':    ['h = hashlib.md5(b"x").hexdigest()\n', 'a.py'],
+  'PHP':       ['$h = md5($pw);\n', 'a.php'],
+  'Java':      ['MessageDigest md = MessageDigest.getInstance("MD5");\n', 'A.java'],
+  'C#':        ['var h = MD5.Create();\n', 'a.cs'],
+};
+for (const [name, [code, file]] of Object.entries(WC_KEEP)) {
+  test(`WEAK_CRYPTO real call (${name}) → fixed, byte-identical to fixWeakCrypto`, () => {
+    const expected = ctx.fixWeakCrypto(code, { line: 1 }, code.split('\n'), null, file).fixed;
+    const out = wc(code, file);
+    assert.strictEqual(out.repaired, expected);
+    assert.notStrictEqual(out.repaired, code);
+    assert.strictEqual(out.rejected.filter(r => r.strategy === 'WEAK_CRYPTO').length, 0);
+  });
+}

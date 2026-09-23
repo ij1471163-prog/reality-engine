@@ -1017,12 +1017,34 @@ const _TARGET_CALL = {
   CMD_INJECTION_PY: /\bos\.system\s*\(/g,
 };
 
+const _WEAK_CRYPTO_CALL = {
+  py:   [/hashlib\.md5\s*\(/g, /hashlib\.sha1\s*\(/g],
+  js:   [/createHash\s*\(\s*["']md5["']\s*\)/gi, /createHash\s*\(\s*["']sha1["']\s*\)/gi],
+  ts:   [/createHash\s*\(\s*["']md5["']\s*\)/gi, /createHash\s*\(\s*["']sha1["']\s*\)/gi],
+  php:  [/md5\s*\(/gi, /sha1\s*\(/gi],
+  cs:   [/MD5\.Create\s*\(\s*\)/g, /new MD5CryptoServiceProvider\s*\(\s*\)/g],
+  java: [/MessageDigest\.getInstance\s*\(\s*["']MD5["']\s*\)/g, /MessageDigest\.getInstance\s*\(\s*["']SHA-1["']\s*\)/g],
+};
+
 function literalTargetProblem(beforeCode, afterCode, lineNum, stratKey, ext) {
   const B = beforeCode.split('\n'), A = afterCode.split('\n');
   const line = B[lineNum - 1];
   if (line === undefined) return null;
   const spans = _lineLiterals(line, ext);
   const inLiteral = k => spans.some(q => k > q.start && k < q.end) || spans.some(q => q.kind === 'comment' && k >= q.start && k < q.end);
+
+  // WEAK_CRYPTO: الـfixer يستبدل كل تطابق في السطر (replace عام) ⇒ يكفي تطابق واحد داخل
+  // نص/تعليق لرفض الـcandidate. الأنماط هي أنماط fixWeakCrypto نفسها لكل لغة.
+  if (stratKey === 'WEAK_CRYPTO' || stratKey === 'MD5_USAGE' || stratKey === 'WEAK_HASH') {
+    const pats = _WEAK_CRYPTO_CALL[ext] || [];
+    for (const re of pats) {
+      const hit = [...line.matchAll(re)].find(m => inLiteral(m.index));
+      if (hit) {
+        return `TARGET_IN_LITERAL — line ${lineNum}: the ${hit[0].replace(/\s+/g, '')} call is inside a string or comment, not code`;
+      }
+    }
+    return null;
+  }
 
   if (_TARGET_CALL[stratKey]) {
     const calls = [...line.matchAll(_TARGET_CALL[stratKey])];
@@ -1273,7 +1295,8 @@ function repairCode(code, issues, fileName) {
       }
     }
     if ((stratKey === 'EVAL_USAGE' || stratKey === 'CMD_INJECTION' || stratKey === 'CMD_INJECTION_PY' ||
-         stratKey === 'SQL_INJECTION') && result && result.fixed !== repairedCode) {
+         stratKey === 'SQL_INJECTION' || stratKey === 'WEAK_CRYPTO' || stratKey === 'MD5_USAGE' ||
+         stratKey === 'WEAK_HASH') && result && result.fixed !== repairedCode) {
       const problem = literalTargetProblem(repairedCode, result.fixed, issue.line, stratKey, ext);
       if (problem) {
         rejected.push({ line: issue.line, strategy: stratKey, source: strat.fn.name || stratKey, reason: problem });
