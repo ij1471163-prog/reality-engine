@@ -271,7 +271,7 @@ class CallGraphAnalyzer {
 
     _extractFunction(line, ln, lines, idx) {
         let m = line.match(/function\s+(\w+)\s*\(([^)]*)\)/);
-        if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/);
+        if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^()]*)\)\s*=>/);
         if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*function\s*\(([^)]*)\)/);
         if (!m) return;
 
