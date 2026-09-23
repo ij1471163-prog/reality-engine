@@ -959,6 +959,9 @@ function getLegacySQLFixer(fileName) {
   return null;
 }
 
+// السطر الذي يحقنه فرع الـroute في AuthRepair حرفيًا
+const AUTH_ROUTE_LINE = '  if (!req.user) return res.status(401).json({ error: "Unauthorized" });';
+
 function repairCode(code, issues, fileName) {
   let ext = 'unknown';
   try {
@@ -1196,10 +1199,30 @@ function repairCode(code, issues, fileName) {
   });
 
   // AuthRepair
+  // يُفترض أنه يضيف أسطرًا فقط. حقن فرع الـroute (401 بلا أي فحص حساسية)
+  // يُحذف ويُسجَّل في rejected؛ باقي الإضافات (فرع الـfunction) تبقى كما هي.
   if (typeof AuthRepair !== 'undefined') {
     try {
       const ar = AuthRepair.fix(repairedCode, fileName);
-      if (ar.changed) repairedCode = ar.fixed;
+      if (ar.changed) {
+        const B = repairedCode.split('\n'), A = String(ar.fixed).split('\n');
+        const kept = [];
+        const routeRejected = [];
+        let p = 0;
+        for (const l of A) {
+          if (p < B.length && l === B[p]) { kept.push(l); p++; }
+          else if (l === AUTH_ROUTE_LINE) routeRejected.push(p);   // p = عدد الأسطر الأصلية قبله = رقم السطر الذي حُقن بعده
+          else kept.push(l);
+        }
+        if (p !== B.length) {
+          rejected.push({ line: null, strategy: 'MISSING_AUTH', source: 'AuthRepair',
+            reason: 'AUTH_NOT_ADDITIVE — AuthRepair modified existing lines instead of only adding; output not applied' });
+        } else {
+          routeRejected.forEach(line => rejected.push({ line, strategy: 'MISSING_AUTH', source: 'AuthRepair',
+            reason: 'AUTH_ROUTE_INJECTED — unconditional 401 check added to a route without any sensitivity analysis' }));
+          repairedCode = kept.join('\n');
+        }
+      }
     } catch(e) {}
   }
 
