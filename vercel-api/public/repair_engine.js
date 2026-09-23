@@ -560,6 +560,14 @@ function fixCommandInjectionPy(code, issue) {
   lines[ln] = `${indent}subprocess.run(shlex.split(${arg}), check=True, capture_output=True)`;
   let fixed = lines.join('\n');
   if (!fixed.includes('import subprocess')) fixed = 'import subprocess\nimport shlex\n' + fixed;
+  else if (!/^import[ \t]+(?:[\w.]+[ \t]*,[ \t]*)*shlex[ \t]*(?:,|#|$)/m.test(fixed)) {
+    // subprocess مستورد لكن الاسم shlex غير معرّف → أضفه بعد سطر import subprocess
+    // (موضع import صالح أصلًا، فلا يسبق __future__ أو docstring).
+    const at = fixed.match(/^([ \t]*)import[ \t]+subprocess\b.*$/m);
+    fixed = at
+      ? fixed.slice(0, at.index + at[0].length) + `\n${at[1]}import shlex` + fixed.slice(at.index + at[0].length)
+      : 'import shlex\n' + fixed;
+  }
   return { fixed, patch: lines[ln].trim(), reason: 'Command Injection → subprocess.run' };
 }
 
