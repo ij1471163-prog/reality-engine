@@ -86,9 +86,11 @@ for (const [file, code] of Object.entries(DET_BROKEN)) {
   test(`pipeline: broken deterministic patch never reaches SAFE_AUTO_FIX — ${file}`, async () => {
     const r = await pipeline(code, file);
     assert.notStrictEqual(r.decision.decision, 'SAFE_AUTO_FIX');
-    const rejectedStage = r.phases.fallback.stages.find(s => s.verifyResult && s.verifyResult.valid === false);
-    assert.ok(rejectedStage, 'the deterministic patch was rejected by the verifier');
-    assert.match(rejectedStage.verifyResult.reason, /^REJECTED_SYNTAX_BROKEN/);
+    // يُرفض إما في repairCode نفسه (حارس السر، فلا patch يصل) أو في الـverifier بـSYNTAX_BROKEN
+    assert.ok(r.phases.fallback.stages.every(s => !s.succeeded), 'no deterministic patch was accepted');
+    for (const s of r.phases.fallback.stages) {
+      if (s.verifyResult && s.verifyResult.valid === false) assert.match(s.verifyResult.reason, /^REJECTED_SYNTAX_BROKEN/);
+    }
   });
 }
 

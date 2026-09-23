@@ -147,6 +147,8 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
+  // Idempotency: السطر يقرأ أصلًا من متغير بيئة ⇒ الاستبدال ينتج self-assignment.
+  if (/process\.env\.|os\.environ|getenv\s*\(/i.test(line)) return null;
   const ext = detectExt(code, fileName);
   const varMatch = line.match(/(\w+)\s*[:=]/);
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
@@ -521,6 +523,9 @@ function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
   const ext = detectExt(code, fileName);
+
+  // Idempotency: السطر يقرأ أصلًا من متغير بيئة ⇒ الاستبدال ينتج self-assignment.
+  if (/process\.env\.|os\.environ|getenv\s*\(/i.test(line)) return null;
 
   const m = line.match(/(?:const|let|var|private|public|string)?\s*(\w+)\s*[:=]\s*["']([^"']+)["']/);
   if (!m) return null;
@@ -901,6 +906,149 @@ function xssCandidateProblem(beforeCode, afterCode, lineNum) {
   return null;
 }
 
+// ─── Semantic candidate validation ────────────────────
+// حارس فقط لـHARDCODED_SECRET / HARDCODED_PASS / API_KEY / LOOSE_EQUALITY — الـfixers
+// نفسها لا تتغير. candidate صحيح نحويًا لكنه يغيّر معنى الكود يُرفض:
+//   - السر: القيمة المستبدلة ليست literal كاملًا (تقطع نصًا آخر)، أو ليست credential
+//     (مفتاح وسم عرض، نص فيه مسافات، أو لا المفتاح ولا القيمة يشبهان سرًا).
+//   - المساواة: تغيّر شيئًا داخل نص/regex/تعليق، أو تحوّل == null (تطابق undefined أيضًا).
+// يُرجع null إذا كان سليمًا، أو سبب الرفض.
+
+// مقاطع literal في سطر واحد: [{start, end, kind}] — نص، template، regex، تعليق.
+function _lineLiterals(line, ext) {
+  const out = [];
+  const js = ext === 'js' || ext === 'ts';
+  const hashComment = ext === 'py' || ext === 'php';
+  let prev = '';
+  for (let k = 0; k < line.length;) {
+    const ch = line[k], nx = line[k + 1];
+    if ((ch === '/' && nx === '/') || (hashComment && ch === '#')) { out.push({ start: k, end: line.length, kind: 'comment' }); break; }
+    if (ch === '/' && nx === '*') {
+      const e = line.indexOf('*/', k + 2), end = e < 0 ? line.length : e + 2;
+      out.push({ start: k, end, kind: 'comment' }); k = end; continue;
+    }
+    if (ch === '"' || ch === "'" || (js && ch === '`')) {
+      let j = k + 1;
+      while (j < line.length && line[j] !== ch) j += line[j] === '\\' ? 2 : 1;
+      out.push({ start: k, end: Math.min(j + 1, line.length), kind: 'string' }); k = j + 1; prev = 'v'; continue;
+    }
+    if (js && ch === '/' && (prev === '' || /[(,=:[!&|?{};+\-*%<>~^]$/.test(prev) || /^(return|typeof|case|in|of|delete|void|throw|new|instanceof|yield|await)$/.test(prev))) {
+      let j = k + 1, cls = false;
+      while (j < line.length && (cls || line[j] !== '/')) {
+        if (line[j] === '\\') j++;
+        else if (line[j] === '[') cls = true;
+        else if (line[j] === ']') cls = false;
+        j++;
+      }
+      j++; while (j < line.length && /[a-z]/i.test(line[j])) j++;
+      out.push({ start: k, end: j, kind: 'regex' }); k = j; prev = 'v'; continue;
+    }
+    if (/\s/.test(ch)) { k++; continue; }
+    if (/[\w$]/.test(ch)) { let j = k; while (j < line.length && /[\w$]/.test(line[j])) j++; prev = line.slice(k, j); k = j; continue; }
+    prev = ch; k++;
+  }
+  return out;
+}
+
+const _CREDENTIAL_NAME = /secret|passw|pwd|pass$|token|api_?key|apikey|key$|private|credential|auth|jwt|salt|access|sk_|pk_|bearer/i;
+// قيمة تشبه مفتاحًا عشوائيًا: ≥16 حرفًا بلا مسافات، فيها أرقام وحروف
+const _CREDENTIAL_VALUE = /^(?=.*\d)(?=.*[A-Za-z])[\w\-+/=.]{16,}$/;
+// مفاتيح وسوم/بيانات وصفية معروفة — قيمتها نص عرض لا credential. غيرها لا يُحكم عليه.
+const _LABEL_NAME = /^(?:name|title|label|type|kind|category|description|desc|message|msg|text|caption|display|displayName|id|slug|tag|group|section|header|placeholder|tooltip|hint|icon|status|mode|role|lang|locale)$/i;
+
+function semanticCandidateProblem(beforeCode, afterCode, lineNum, stratKey, ext) {
+  const B = beforeCode.split('\n'), A = afterCode.split('\n');
+  const line = B[lineNum - 1];
+  if (line === undefined) return null;
+
+  if (stratKey === 'LOOSE_EQUALITY') {
+    const after = A[lineNum - 1];
+    if (after === undefined || A.length !== B.length) return null;
+    const lits = s => _lineLiterals(s, ext).map(p => s.slice(p.start, p.end));
+    if (JSON.stringify(lits(line)) !== JSON.stringify(lits(after))) {
+      return `EQ_LITERAL_CHANGED — line ${lineNum}: the candidate changes a string, regex or comment, not only the comparison`;
+    }
+    const mask = s => { let m = s; for (const p of _lineLiterals(s, ext).reverse()) m = m.slice(0, p.start) + ' '.repeat(p.end - p.start) + m.slice(p.end); return m; };
+    const looseNull = s => (mask(s).match(/(?:^|[^=!<>])[!=]=(?!=)\s*(?:null|undefined)\b|\b(?:null|undefined)\s*[!=]=(?!=)/g) || []).length;
+    if (looseNull(after) < looseNull(line)) {
+      return `EQ_NULL_SEMANTICS — line ${lineNum}: == null also matches undefined; === null changes the result`;
+    }
+    return null;
+  }
+
+  // السر: السطر المعدَّل هو lineNum أو التالي له (import os يُضاف في الرأس)
+  const cands = [lineNum - 1, lineNum].filter(i => A[i] !== undefined && A[i] !== line);
+  if (!cands.length) return null;
+  const common = (a, b) => { let n = 0; while (n < a.length && n < b.length && a[n] === b[n]) n++; return n; };
+  const after = cands.reduce((best, i) => (common(line, A[i]) > common(line, best) ? A[i] : best), A[cands[0]]);
+  const p = common(line, after);
+  let s = 0;
+  while (s < line.length - p && s < after.length - p && line[line.length - 1 - s] === after[after.length - 1 - s]) s++;
+  const removedEnd = line.length - s;
+  const lit = _lineLiterals(line, ext).find(q => q.start === p && q.end === removedEnd && q.kind === 'string');
+  if (!lit) {
+    return `SECRET_LITERAL_BROKEN — line ${lineNum}: the replaced text is not one complete string literal (it cuts through another string)`;
+  }
+  // literal طرفُ مقارنة (== / === / != / !==) ليس قيمة سر مُسندة
+  if (/(?:[=!]==?)\s*$/.test(line.slice(0, p)) || /^\s*[=!]==?(?!>)/.test(line.slice(removedEnd))) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: the replaced literal is a comparison operand, not an assigned secret`;
+  }
+  const key = line.slice(0, p).match(/([\w$]+)['"]?\s*(?:[:=]|=>)\s*$/);
+  if (key && _LABEL_NAME.test(key[1])) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: "${key[1]}" is not a credential; replacing its value changes the program`;
+  }
+  // الـfixer يستبدل أول literal في السطر، لا literal السر بالضرورة
+  const value = line.slice(p + 1, removedEnd - 1);
+  if (/\s/.test(value)) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: the replaced value is text, not a credential`;
+  }
+  if (key && !_CREDENTIAL_NAME.test(key[1]) && !_CREDENTIAL_NAME.test(value) && !_CREDENTIAL_VALUE.test(value)) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: neither "${key[1]}" nor its value looks like a credential; the fixer picked the wrong literal`;
+  }
+  return null;
+}
+
+// EVAL / CMD / SQL: الـcall الذي يعدّله الـfixer يجب أن يكون في code فعلي، لا داخل
+// string literal أو تعليق (كود مكتوب كنص). محتوى استعلام SQL داخل نص طبيعي ولا يُرفض:
+// لـSQL الشرط أن يلمس التعديل code فعليًا، لا أن يقع كله داخل literal واحد.
+const _TARGET_CALL = {
+  EVAL_USAGE: /\beval\s*\(/g,
+  CMD_INJECTION: /\bexec\s*\(/g,
+  CMD_INJECTION_PY: /\bos\.system\s*\(/g,
+};
+
+function literalTargetProblem(beforeCode, afterCode, lineNum, stratKey, ext) {
+  const B = beforeCode.split('\n'), A = afterCode.split('\n');
+  const line = B[lineNum - 1];
+  if (line === undefined) return null;
+  const spans = _lineLiterals(line, ext);
+  const inLiteral = k => spans.some(q => k > q.start && k < q.end) || spans.some(q => q.kind === 'comment' && k >= q.start && k < q.end);
+
+  if (_TARGET_CALL[stratKey]) {
+    const calls = [...line.matchAll(_TARGET_CALL[stratKey])];
+    if (calls.length && calls.every(m => inLiteral(m.index))) {
+      return `TARGET_IN_LITERAL — line ${lineNum}: the ${calls[0][0].replace(/\s*\($/, '()')} call is inside a string or comment, not code`;
+    }
+    return null;
+  }
+
+  // SQL: كل سطر معدَّل يجب أن يلمس code — تعديل يقع كله داخل literal واحد = كود داخل نص.
+  // الـlegacy fixer قد يعدّل عدة أسطر: يكفي سطر واحد داخل literal لرفض الـcandidate.
+  // المقارنة على الـcode وحده: كل literal = رمز ثابت، التعليقات محذوفة. code مطابق = التعديل كله داخل نص/تعليق.
+  if (A.length !== B.length) return null;
+  const codeOnly = s => {
+    let m = s;
+    for (const q of _lineLiterals(s, ext).reverse()) m = m.slice(0, q.start) + (q.kind === 'comment' ? '' : ' \u0000 ') + m.slice(q.end);
+    return m.replace(/\s+/g, '');
+  };
+  for (let k = 0; k < B.length; k++) {
+    if (A[k] !== B[k] && codeOnly(A[k]) === codeOnly(B[k])) {
+      return `TARGET_IN_LITERAL — line ${k + 1}: the SQL change lies entirely inside a string literal (code written as text), not in the query code`;
+    }
+  }
+  return null;
+}
+
 // ─── Evidence helpers (stale-line guard) ──────────────
 // AST evidence (ast-engine.js, astVerified) وصفٌ للعقدة وليس نص السطر:
 //   "total = MemberExpression"  أو  "items.forEach(...)".
@@ -1115,6 +1263,24 @@ function repairCode(code, issues, fileName) {
       }
     }
 
+    // Semantic: candidate صحيح نحويًا لكنه يغيّر معنى الكود لا يُعتمد — المشكلة تبقى كما هي.
+    if ((stratKey === 'HARDCODED_SECRET' || stratKey === 'HARDCODED_PASS' || stratKey === 'API_KEY' ||
+         stratKey === 'LOOSE_EQUALITY') && result && result.fixed !== repairedCode) {
+      const problem = semanticCandidateProblem(repairedCode, result.fixed, issue.line, stratKey, ext);
+      if (problem) {
+        rejected.push({ line: issue.line, strategy: stratKey, source: strat.fn.name, reason: problem });
+        result = null;
+      }
+    }
+    if ((stratKey === 'EVAL_USAGE' || stratKey === 'CMD_INJECTION' || stratKey === 'CMD_INJECTION_PY' ||
+         stratKey === 'SQL_INJECTION') && result && result.fixed !== repairedCode) {
+      const problem = literalTargetProblem(repairedCode, result.fixed, issue.line, stratKey, ext);
+      if (problem) {
+        rejected.push({ line: issue.line, strategy: stratKey, source: strat.fn.name || stratKey, reason: problem });
+        result = null;
+      }
+    }
+
     if (!result || result.fixed === repairedCode) {
       // SQL fallback: استخدم الـlegacy fixer فقط كمولّد candidate.
       // لا يتجاوز Ghost/FixVerifier في الطبقة الأعلى.
@@ -1145,7 +1311,8 @@ function repairCode(code, issues, fileName) {
               legacyChanged &&
               typeof legacyFixed === 'string' &&
               legacyFixed !== repairedCode
-                ? sqlCandidateProblem(repairedCode, legacyFixed, fileName, ext)
+                ? sqlCandidateProblem(repairedCode, legacyFixed, fileName, ext) ||
+                  literalTargetProblem(repairedCode, legacyFixed, issue.line, stratKey, ext)
                 : null;
             if (legacyProblem) {
               rejected.push({ line: issue.line, strategy: stratKey, source: 'legacy SQL fixer', reason: legacyProblem });
