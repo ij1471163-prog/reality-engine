@@ -882,6 +882,25 @@ function cmdCandidateProblem(beforeCode, afterCode, lineNum, stratKey) {
   return null;
 }
 
+// ─── XSS candidate validation ─────────────────────────
+// حارس فقط لفرع res.send(... + ...) في fixXSS — الـfixer نفسه لا يتغير.
+// تحويل res.send إلى res.json يغيّر نوع الاستجابة وشكلها ولا يُرمِّز المخرج،
+// فيُرفض دائمًا (لا نخمّن متى يكون آمنًا). فرع innerHTML/outerHTML لا يمر من هنا.
+// يُرجع null إذا لم يكن candidate من هذا النوع، أو سبب الرفض.
+function xssCandidateProblem(beforeCode, afterCode, lineNum) {
+  const line = beforeCode.split('\n')[lineNum - 1];
+  const after = afterCode.split('\n')[lineNum - 1];
+  if (line === undefined || after === undefined) return null;
+  if (!/res\.send\s*\([^)]*\+/.test(line)) return null;
+  const count = (s, re) => (s.match(re) || []).length;
+  if (count(after, /res\.json\s*\(/g) > count(line, /res\.json\s*\(/g) &&
+      count(after, /res\.send\s*\(/g) < count(line, /res\.send\s*\(/g)) {
+    return `XSS_RESPONSE_CHANGED — line ${lineNum}: the candidate replaces res.send with res.json, ` +
+           'which changes the response type and shape instead of escaping the output';
+  }
+  return null;
+}
+
 // ─── Evidence helpers (stale-line guard) ──────────────
 // AST evidence (ast-engine.js, astVerified) وصفٌ للعقدة وليس نص السطر:
 //   "total = MemberExpression"  أو  "items.forEach(...)".
@@ -1078,6 +1097,15 @@ function repairCode(code, issues, fileName) {
     // CMD: candidate يعقّم الجزء الخطأ أو يكسر السطر لا يُعتمد — المشكلة تبقى كما هي.
     if ((stratKey === 'CMD_INJECTION' || stratKey === 'CMD_INJECTION_PY') && result && result.fixed !== repairedCode) {
       const problem = cmdCandidateProblem(repairedCode, result.fixed, issue.line, stratKey);
+      if (problem) {
+        rejected.push({ line: issue.line, strategy: stratKey, source: strat.fn.name, reason: problem });
+        result = null;
+      }
+    }
+
+    // XSS: candidate يحوّل res.send إلى res.json لا يُعتمد — المشكلة تبقى كما هي.
+    if (stratKey === 'XSS_INNER_HTML' && result && result.fixed !== repairedCode) {
+      const problem = xssCandidateProblem(repairedCode, result.fixed, issue.line);
       if (problem) {
         rejected.push({ line: issue.line, strategy: stratKey, source: strat.fn.name, reason: problem });
         result = null;
