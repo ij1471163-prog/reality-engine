@@ -177,6 +177,21 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── Command Injection JS/TS — splice لا string concat ─
+// exec( أمر shell فقط إذا كان exec الخاص بـchild_process: exec( مباشر (كما كان)، أو
+// X.exec( حيث X مربوط بـrequire/import من child_process. غير ذلك (RegExp.prototype.exec،
+// /re/.exec، pattern.exec، db.exec، ).exec() ليس أمرًا → لا candidate.
+function _isCommandExecCall(code, line, execIndex) {
+  const before = line.slice(0, execIndex);
+  if (!/\.\s*$/.test(before)) return true;
+  if (/require\s*\(\s*['"](?:node:)?child_process['"]\s*\)\s*\.\s*$/.test(before)) return true;
+  const recv = before.match(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\.\s*$/);
+  if (!recv) return false;
+  const esc = recv[1].replace(/\$/g, '\\$');
+  const CP = `['"](?:node:)?child_process['"]`;
+  return new RegExp(`\\b(?:const|let|var)\\s+${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)` +
+                    `|\\bimport\\s+(?:\\*\\s+as\\s+)?${esc}\\s+from\\s+${CP}`).test(code);
+}
+
 function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
@@ -184,6 +199,8 @@ function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   const line = lines[ln];
   const ext = detectExt(code, fileName);
   if (ext !== 'js' && ext !== 'ts') return null;
+  const execAt = line.search(/\bexec\s*\(/);
+  if (execAt >= 0 && !_isCommandExecCall(code, line, execAt)) return null;
 
   const indent = ' '.repeat(line.search(/\S/));
   const execArg = line.match(/exec\s*\(([^)]+)\)/)?.[1] || 'command';
