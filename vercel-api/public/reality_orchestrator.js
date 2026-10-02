@@ -267,6 +267,12 @@ var RealityOrchestrator = (() => {
   //               → runVerification() → decide() → conditional SAFE_AUTO_FIX
   //
   // Note: SAFE_AUTO_FIX from Claude source is blocked by Policy invariant.
+  // [A8] سجل داخلي للموافقات التي أصدرها makeApproval() نفسه، مع الـpatch الذي
+  // وافق عليه الإنسان حرفيًا. النتائج مجمّدة (_deepFreeze) فلا يتغير patch الكائن
+  // نفسه، وأي نسخة ({...approval, patch}) أو كائن مصنوع يدويًا ليس في السجل →
+  // APPROVAL_TAMPERED. بصمة داخل meta وحدها لا تكفي: من يزوّر الـpatch يزوّرها معه.
+  const _issuedApprovals = new WeakMap();
+
   function makeApproval(orchestratorResult, approvedBy) {
     if (!orchestratorResult ||
         orchestratorResult.decision !== Decision.AI_SUGGESTION) {
@@ -277,7 +283,7 @@ var RealityOrchestrator = (() => {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
         null, 'makeApproval: approvedBy must be a non-empty string');
     }
-    return _makeResult(_INTERNAL,
+    const approval = _makeResult(_INTERNAL,
       Decision.AI_SUGGESTION,        // still AI_SUGGESTION until verified
       orchestratorResult.source,
       orchestratorResult.patch,
@@ -288,6 +294,8 @@ var RealityOrchestrator = (() => {
         requiresVerification: true,   // approval alone is not enough
       })
     );
+    _issuedApprovals.set(approval, approval.patch);
+    return approval;
   }
 
   // ─── Apply approved Claude suggestion ──────────────────
@@ -328,6 +336,20 @@ var RealityOrchestrator = (() => {
         Source.ORCHESTRATOR,
         null,
         'applyApprovedSuggestion: explicit human approval is required'
+      );
+    }
+
+    // [A8] Approval integrity: الكائن نفسه يجب أن يكون صادرًا من makeApproval(),
+    // والـpatch المطبَّق مطابق حرفيًا لما وافق عليه الإنسان.
+    if (!_issuedApprovals.has(approvedResult) ||
+        _issuedApprovals.get(approvedResult) !== approvedResult.patch) {
+      return _makeResult(
+        _INTERNAL,
+        Decision.REJECTED,
+        Source.ORCHESTRATOR,
+        null,
+        'APPROVAL_TAMPERED — this approval was not issued by makeApproval() for this exact patch',
+        { approvedBy: approvedResult.meta.approvedBy, approvalIntegrity: false }
       );
     }
 
