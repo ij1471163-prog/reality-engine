@@ -37,8 +37,8 @@ var CVEPatterns = (() => {
       { id: 'CWE-89',  lang: 'js',  pattern: /["'`].*(?:SELECT|INSERT|UPDATE|DELETE|DROP|CREATE).*["'`]\s*\+/i, conf: 0.97, title: '🔴 SQL Injection (CWE-89)' },
       { id: 'CWE-89',  lang: 'py',  pattern: /f["'].*SELECT.*{/i, conf: 0.97, title: '🔴 SQL Injection f-string (CWE-89)' },
       { id: 'CWE-89',  lang: 'php', pattern: /\$_(GET|POST|REQUEST).*mysql_query|mysql_query.*\$_(GET|POST)/i, conf: 0.99, title: '🔴 SQL Injection (CWE-89)' },
-      { id: 'CWE-78',  lang: 'js',  pattern: /(?:exec|spawn|execSync)\s*\(\s*(?:`[^`]*\$\{|['"][^'"]*'\s*\+)/i, conf: 0.97, title: '🔴 OS Command Injection (CWE-78)' },
-      { id: 'CWE-78',  lang: 'py',  pattern: /os\.system\s*\(\s*f?["'][^"']*\+|os\.system\s*\(\s*f["']/i, conf: 0.97, title: '🔴 OS Command Injection (CWE-78)' },
+      { id: 'CWE-78',  lang: 'js',  pattern: /(?:exec|spawn|execSync)\s*\(\s*(?:`[^`]*\$\{|['"][^'"]*'\s*\+)/i, conf: 0.97, aiRequired: true, title: '🔴 OS Command Injection (CWE-78)' },
+      { id: 'CWE-78',  lang: 'py',  pattern: /os\.system\s*\(\s*f?["'][^"']*\+|os\.system\s*\(\s*f["']/i, conf: 0.97, aiRequired: true, title: '🔴 OS Command Injection (CWE-78)' },
       { id: 'CWE-79',  lang: 'js',  pattern: /\.innerHTML\s*=\s*(?!['"`])[^;]+(?:req\.|request\.|params\.|query\.|body\.)/i, conf: 0.95, title: '🔴 XSS - DOM (CWE-79)' },
       { id: 'CWE-79',  lang: 'php', pattern: /echo\s+\$_(GET|POST|REQUEST|COOKIE)\s*\[/i, conf: 0.99, title: '🔴 XSS - Reflected (CWE-79)' },
       { id: 'CWE-917', lang: 'js',  pattern: /eval\s*\(\s*(?:req\.|request\.|params\.|query\.|body\.)/i, conf: 0.99, title: '🔴 Expression Injection (CWE-917)' },
@@ -203,6 +203,7 @@ var CVEPatterns = (() => {
           cIcon: sev === 'c' ? '🔴' : sev === 'h' ? '🟠' : sev === 'm' ? '🟡' : '🔵',
           cAct: p.id,
           source: 'CVE',
+          ...(p.aiRequired ? { aiRequired: true } : {}),
         });
       });
     });
