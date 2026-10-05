@@ -71,20 +71,25 @@ function analyzeTaintJS(code, fileName) {
       }
     });
 
+    // allowlist sanitizer ضيّق: <var>.replace(/[^a-zA-Z0-9_ ]/g, '') — المتغير المعقَّم فقط
+    // لا ينقل الـtaint (assignment أو concat)؛ باقي المتغيرات تنتقل كالمعتاد.
+    const sanM = t.match(/\b([a-zA-Z_]\w*)\s*\.replace\(\s*\/\[\^(?:a-zA-Z0-9|_| ){2,}\]\/g\s*,\s*(['"])\2\s*\)/);
+    const sanitizedVar = sanM ? sanM[1] : null;
+
     // تتبع assignments: let x = tainted
     const assignM = t.match(/(?:let|const|var)\s+(\w+)\s*=\s*(.+)/);
     if (assignM) {
       const [, target, expr] = assignM;
       // استخرج variables من الـ expression
       const vars = expr.match(/\b([a-zA-Z_]\w*)\b/g) || [];
-      vars.forEach(v => engine.checkAssignment(target, v, ln));
+      vars.forEach(v => { if (v !== sanitizedVar) engine.checkAssignment(target, v, ln); });
     }
 
     // تتبع string concat تضم tainted vars
     const concatM = t.match(/(\w+)\s*=\s*["'`][^"'`]*["'`]\s*\+\s*(\w+)/);
     if (concatM) {
       const [, target, src2] = concatM;
-      if (engine.isTainted(src2)) engine.markTainted(target, engine.tainted.get(src2).source, ln);
+      if (engine.isTainted(src2) && src2 !== sanitizedVar) engine.markTainted(target, engine.tainted.get(src2).source, ln);
     }
   });
 
