@@ -1,6 +1,38 @@
 // ─── Security Scanner ────────────────────────────────
 // يكتشف ثغرات أمنية شائعة في الكود
 
+// استدعاء exec/spawn الممتد على عدة أسطر: يجمع الأسطر حتى يتوازن القوس (حد 12 سطرًا).
+// يرجع null إذا لم يبدأ استدعاء، أو أُغلق في نفس السطر (يعالجه الفحص أحادي السطر)، أو لم يُغلق.
+// first = الوسيط الأول فقط (قبل أول فاصلة في المستوى الأعلى)، inner = كل ما بين القوسين.
+function __joinMultilineCall(lines, i, nameRe) {
+  const m = nameRe.exec(lines[i]);
+  if (!m) return null;
+  // تجاهل التطابق داخل تعليق // أو داخل نص (عدد فردي من علامات الاقتباس قبله)
+  const pre = lines[i].slice(0, m.index);
+  if (/(?:^|[^:])\/\//.test(pre) || ["'", '"', '`'].some(c => (pre.split(c).length - 1) % 2 === 1)) return null;
+  let depth = 0, q = null, text = '', first = null, started = false;
+  for (let k = i; k < lines.length && k < i + 12; k++) {
+    const src = k === i ? lines[k].slice(m.index + m[0].length - 1) : lines[k];
+    if (k > i && src.trim().startsWith('//')) continue;
+    for (let c = 0; c < src.length; c++) {
+      const ch = src[c];
+      if (q) { text += ch; if (ch === '\\') { text += src[++c] || ''; } else if (ch === q) q = null; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; text += ch; continue; }
+      if ('([{'.includes(ch)) { depth++; if (!started) { started = true; continue; } }
+      else if (')]}'.includes(ch)) {
+        depth--;
+        if (depth === 0) {
+          if (first === null) first = text;
+          return k === i ? null : { inner: text, first: first.trim(), endLine: k };
+        }
+      } else if (ch === ',' && depth === 1 && first === null) { first = text; }
+      text += ch;
+    }
+    text += ' ';
+  }
+  return null;
+}
+
 function scanSecurity(code, fileName) {
   const issues = [];
   const lines = code.split('\n');
@@ -66,8 +98,11 @@ function scanSecurity(code, fileName) {
     }
 
     // ─── 5. Command Injection ───────────────────────
-    if (/(?:\bexec\s*\(|\bspawn\s*\(|\bos\.system\s*\(|\bsubprocess\.(?:run|Popen|call|check_output)\s*\()/i.test(t) &&
-        /\+|f"|f'|\$\{/.test(t)) {
+    // exec/spawn ممتد على عدة أسطر: نفحص الوسيط الأول فقط (حتى لا يطابق + داخل الـcallback).
+    const mlCmd = __joinMultilineCall(lines, i, /\b(?:exec|spawn)\s*\(/);
+    if (mlCmd ? /\+|\$\{/.test(mlCmd.first) :
+        (/(?:\bexec\s*\(|\bspawn\s*\(|\bos\.system\s*\(|\bsubprocess\.(?:run|Popen|call|check_output)\s*\()/i.test(t) &&
+         /\+|f"|f'|\$\{/.test(t))) {
       issues.push({
         type: 'security', sev: 'c',
         title: '🔴 Command Injection محتمل',

@@ -3,6 +3,38 @@
 // ═══════════════════════════════════════════════════════
 "use strict";
 
+// استدعاء exec/spawn الممتد على عدة أسطر: يجمع الأسطر حتى يتوازن القوس (حد 12 سطرًا).
+// يرجع null إذا لم يبدأ استدعاء، أو أُغلق في نفس السطر (يعالجه الفحص أحادي السطر)، أو لم يُغلق.
+// first = الوسيط الأول فقط (قبل أول فاصلة في المستوى الأعلى)، inner = كل ما بين القوسين.
+function __taintJoinMultilineCall(lines, i, nameRe) {
+  const m = nameRe.exec(lines[i]);
+  if (!m) return null;
+  // تجاهل التطابق داخل تعليق // أو داخل نص (عدد فردي من علامات الاقتباس قبله)
+  const pre = lines[i].slice(0, m.index);
+  if (/(?:^|[^:])\/\//.test(pre) || ["'", '"', '`'].some(c => (pre.split(c).length - 1) % 2 === 1)) return null;
+  let depth = 0, q = null, text = '', first = null, started = false;
+  for (let k = i; k < lines.length && k < i + 12; k++) {
+    const src = k === i ? lines[k].slice(m.index + m[0].length - 1) : lines[k];
+    if (k > i && src.trim().startsWith('//')) continue;
+    for (let c = 0; c < src.length; c++) {
+      const ch = src[c];
+      if (q) { text += ch; if (ch === '\\') { text += src[++c] || ''; } else if (ch === q) q = null; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; text += ch; continue; }
+      if ('([{'.includes(ch)) { depth++; if (!started) { started = true; continue; } }
+      else if (')]}'.includes(ch)) {
+        depth--;
+        if (depth === 0) {
+          if (first === null) first = text;
+          return k === i ? null : { inner: text, first: first.trim(), endLine: k };
+        }
+      } else if (ch === ',' && depth === 1 && first === null) { first = text; }
+      text += ch;
+    }
+    text += ' ';
+  }
+  return null;
+}
+
 function analyzeTaintJS(code, fileName) {
   const engine  = new TaintEngine();
   const lines   = code.split('\n');
@@ -99,10 +131,15 @@ function analyzeTaintJS(code, fileName) {
     if (t.startsWith('//')) return;
     const ln = i + 1;
 
+    // exec/spawn ممتد على عدة أسطر: الـsink يُقرأ من النص المجموع، ويُتجاوز الفحص أحادي السطر لهذا السطر.
+    const mlCmd = __taintJoinMultilineCall(lines, i, /\b(?:exec|execSync|spawn)\s*\(/);
+
     SINKS.forEach(({ re, type, sev, sink, fix }) => {
       re.lastIndex = 0;
       let m;
-      while ((m = re.exec(line)) !== null) {
+      const mlSink = type === 'CMD_INJECTION' && mlCmd;
+      if (mlSink) m = { 1: mlCmd.inner, index: 0 };
+      while (mlSink ? m : (m = re.exec(line)) !== null) {
         const expr = m[1] || '';
         // استخرج variables من الـ expression
         const vars = expr.match(/\b([a-zA-Z_]\w*)\b/g) || [];
@@ -130,6 +167,7 @@ function analyzeTaintJS(code, fileName) {
             });
           });
         }
+        if (mlSink) break;
       }
     });
   });
