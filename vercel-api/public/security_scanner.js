@@ -74,6 +74,7 @@ function scanSecurity(code, fileName) {
         line: ln, ev: t,
         fix: '// لا تدمج input المستخدم في shell commands',
         conf: 85, cIcon: '🔴', cAct: 'ثغرة حرجة',
+        aiRequired: true,
         cEv: ['استخدم قائمة arguments بدل string']
       });
     }

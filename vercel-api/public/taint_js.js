@@ -125,6 +125,7 @@ function analyzeTaintJS(code, fileName) {
               title: `🔴 ${type}: ${v} من ${engine.tainted.get(v).source} → ${sink}`,
               fix: fix(v),
               conf: 88, cIcon: '🔴', cAct: type,
+              ...(type === 'CMD_INJECTION' ? { aiRequired: true } : {}),
               cEv: [`${v} مصدره: ${engine.tainted.get(v).source}`, `يصل لـ: ${sink} بدون sanitization`]
             });
           });

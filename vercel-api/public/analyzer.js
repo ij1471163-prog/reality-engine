@@ -209,7 +209,7 @@ const VULN_CLASSES = [
     ['sql_params', /params mismatch|ناقص params|بدون params|missing params/i],
     ['sqli',       /sql injection|cwe-?89|sqli\b/i],
     ['xss',        /\bxss\b|cwe-?79/i],
-    ['cmd',        /command injection|cwe-?78|os\.system/i],
+    ['cmd',        /command injection|cmd_injection|cwe-?78|os\.system/i],
     ['code_exec',  /\beval\b|new Function|cwe-?0?94|code injection/i],
     ['weak_hash',  /\bmd5\b|\bsha-?1\b|cwe-?327|cwe-?916|weak hash/i],
     ['accum',      /تراكم|accumulation/i],

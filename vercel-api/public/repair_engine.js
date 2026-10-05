@@ -621,7 +621,7 @@ function detectStrategy(issue, lang) {
   if (t.includes('sql'))                                                    stratKey = 'SQL_INJECTION';
   else if (t.includes('innerhtml') || t.includes('xss'))                   stratKey = 'XSS_INNER_HTML';
   else if (t.includes('md5') || t.includes('sha1') || t.includes('ضعيف') || t.includes('لتشفير') || t.includes('crypto')) stratKey = 'WEAK_CRYPTO';
-  else if (t.includes('command') || t.includes('os.system'))               stratKey = (lang === 'py') ? 'CMD_INJECTION_PY' : 'CMD_INJECTION';
+  else if (t.includes('command') || t.includes('os.system') || t.includes('cmd_injection'))               stratKey = (lang === 'py') ? 'CMD_INJECTION_PY' : 'CMD_INJECTION';
   else if (t.includes('eval'))                                              stratKey = 'EVAL_USAGE';
   else if (t.includes('مرور') || t.includes('password'))                   stratKey = 'HARDCODED_PASS';
   else if (t.includes('secret') || t.includes('مكشوف'))                    stratKey = 'HARDCODED_SECRET';
