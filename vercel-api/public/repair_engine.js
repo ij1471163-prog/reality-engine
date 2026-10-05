@@ -1292,6 +1292,7 @@ function repairCode(code, issues, fileName) {
     }
 
     let result = null;
+    let cmdRejection = null;   // سبب رفض candidate CMD — الثغرة قائمة فتذهب إلى aiNeeded
     try {
       result = strat.fn(repairedCode, issue, lines, ext, fileName);
     } catch (e) {
@@ -1314,6 +1315,7 @@ function repairCode(code, issues, fileName) {
       const problem = cmdCandidateProblem(repairedCode, result.fixed, issue.line, stratKey);
       if (problem) {
         rejected.push({ line: issue.line, strategy: stratKey, source: strat.fn.name, reason: problem });
+        cmdRejection = problem;
         result = null;
       }
     }
@@ -1407,13 +1409,16 @@ function repairCode(code, issues, fileName) {
       if (!result || result.fixed === repairedCode) {
         // إذا فشل الإصلاح الحتمي، لكن Analyzer أعلن أن المشكلة
         // تحتاج AI، فمررها إلى AI بدل إسقاطها بصمت.
-        if (issue.aiRequired === true) {
+        // candidate CMD مرفوض (CMD_SYNTAX_INVALID / CMD_SANITIZE_WRONG_PART / ...) لا يُسقَط
+        // حتى لو لم تحمل الـissue aiRequired: الثغرة باقية ولا إصلاح حتمي آمن لها.
+        if (issue.aiRequired === true || cmdRejection) {
           aiNeeded.push({
             line: issue.line,
             title: issue.title,
             strategy: stratKey,
             reason: getAIReason(stratKey),
             ev: issue.ev,
+            ...(cmdRejection ? { rejectionReason: cmdRejection } : {}),
           });
         }
         return;
