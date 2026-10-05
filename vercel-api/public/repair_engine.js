@@ -142,6 +142,16 @@ function fixEval(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── Hardcoded Password ───────────────────────────────
+// [scratch patch] True only if the module-level name `os` is actually bound by an import
+// (`import os`, `import os.path`, `import sys, os`); not `import osmosis`, `import os.path as osp`,
+// or a commented-out line.
+function _pyBindsOs(code) {
+  return code.split('\n').some(l => {
+    const m = l.match(/^\s*import\s+([^#]+?)\s*(?:#.*)?$/);
+    return !!m && m[1].split(',').some(it => /^os(?:\.[\w.]+)?$/.test(it.trim()) || /^os\s+as\s+os$/.test(it.trim()));
+  });
+}
+
 function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
@@ -157,7 +167,6 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   if (ext === 'py') {
     if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
-    if (fixed !== line && !code.includes('import os')) lines.unshift('import os');
   } else if (ext === 'js' || ext === 'ts') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   } else if (ext === 'java') {
@@ -173,6 +182,8 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
 
   if (fixed === line) return null;
   lines[ln] = fixed;
+  // [scratch patch] unshift AFTER the in-place replacement so lines[ln] is still the target line
+  if (ext === 'py' && !_pyBindsOs(code)) lines.unshift('import os');
   return { fixed: lines.join('\n'), patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' };
 }
 
@@ -413,7 +424,10 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   }
 
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Secret moved to env variable' };
+  let out = replaceLineInCode(code, issue.line, fixed);
+  // [scratch patch] Python: the new os.environ call needs `import os`
+  if (ext === 'py' && !_pyBindsOs(code)) out = 'import os\n' + out;
+  return { fixed: out, patch: fixed.trim(), reason: 'Secret moved to env variable' };
 }
 
 // ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
