@@ -603,6 +603,32 @@ var RealityOrchestrator = (() => {
     return kept;
   }
 
+  // Critical / aiRequired issues still present after the chain must reach AI.
+  //
+  // Two paths used to drop them silently:
+  //   • An AI_REQUIRED entry whose evidence line was rewritten by another fix
+  //     on the same line (var → let on the SQL line) no longer matched by
+  //     evidence or kind, so _stillUnresolved discarded it as "fixed".
+  //   • A strategy that declines to patch (fixEval on a non-JSON argument)
+  //     returns nothing and reports no AI_REQUIRED at all.
+  // The result was SAFE_AUTO_FIX reporting "1 issue still require AI" while
+  // SQL injection and eval() remained in the file and were never forwarded.
+  function _withUnclaimedCritical(aiList, currentIssues) {
+    if (!Array.isArray(currentIssues)) return aiList;
+    const out = aiList.slice();
+    const claimed = new Set(out.map(a => String(a.title || '') + '|' + a.line));
+    currentIssues.forEach(ci => {
+      if (!ci || (ci.aiRequired !== true && ci.sev !== 'c')) return;
+      const key = String(ci.title || '') + '|' + ci.line;
+      if (claimed.has(key)) return;
+      claimed.add(key);
+      out.push({ line: ci.line, title: ci.title, strategy: _issueKind(ci),
+        reason: ci.fixHint || 'Critical issue left unresolved by deterministic repair',
+        ev: ci.ev });
+    });
+    return out;
+  }
+
   // ─── Single REPAIR attempt (one engine) ───────────────
   function _tryRepair(engine, code, issues, fileName) {
     try {
@@ -726,7 +752,9 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must describe the FINAL state, not the pre-repair state.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _stillUnresolved(aiNeeded, finalRemaining);
+    const unresolvedAi   = _withUnclaimedCritical(
+      _stillUnresolved(aiNeeded, finalRemaining),
+      reanalysisFailed ? null : finalRemaining);
 
     return _deepFreeze({
       phase: 'REPAIR', fileName, original: code,
@@ -907,7 +935,9 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must reflect the FINAL verified state, not the original scan.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _stillUnresolved(allAiNeeded, finalRemaining);
+    const unresolvedAi   = _withUnclaimedCritical(
+      _stillUnresolved(allAiNeeded, finalRemaining),
+      reanalysisFailed ? null : finalRemaining);
 
     return _deepFreeze({
       phase: 'FALLBACK', fileName, stages,

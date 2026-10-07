@@ -241,6 +241,13 @@ function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
   const ext = detectExt(code, fileName);
   let fixedLine = line;
 
+  // تجزئة كلمات المرور: SHA-256 بلا salt سريع وقابل للـbrute-force مثل MD5،
+  // فاستبداله هنا إصلاح وهمي. البديل الصحيح (bcrypt/scrypt/argon2 + salt +
+  // تخزين/مقارنة مختلفة) قرار دلالي يُترك لمسار AI_REQUIRED.
+  const near = lines.slice(Math.max(0, ln - 5), ln + 1).join('\n')
+    .replace(/(["'`])(?:\\.|(?!\1)[^\\\n])*\1/g, '""');   // نص الـliterals ليس سياقًا
+  if (/password|passwd|(?:^|[^a-z])pass\b|\bpwd\b/i.test(near)) return null;
+
   if (ext === 'py') {
     fixedLine = line
       .replace(/hashlib\.md5\s*\(/g, 'hashlib.sha256(')
@@ -1407,7 +1414,9 @@ function repairCode(code, issues, fileName) {
       if (!result || result.fixed === repairedCode) {
         // إذا فشل الإصلاح الحتمي، لكن Analyzer أعلن أن المشكلة
         // تحتاج AI، فمررها إلى AI بدل إسقاطها بصمت.
-        if (issue.aiRequired === true) {
+        // وكذلك الحرجة، والتشفير الضعيف الذي رفضت الـstrategy إصلاحه
+        // (تجزئة كلمة مرور) — بدل أن تختفي من التقرير.
+        if (issue.aiRequired === true || issue.sev === 'c' || stratKey === 'WEAK_CRYPTO') {
           aiNeeded.push({
             line: issue.line,
             title: issue.title,
