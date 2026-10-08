@@ -23,8 +23,10 @@
 //      already fixed is never handed to a later engine.
 //   9. aiNeeded is recomputed from the final verified state, so it reflects
 //      what is actually still broken rather than a stale pre-repair list.
-//  10. decide() reports partial vs fully-resolved. SAFE_AUTO_FIX means "this
-//      patch is safe to apply", NOT "the file is now clean".
+//  10. decide() reports partial vs fully-resolved. SAFE_AUTO_FIX is issued
+//      only when nothing still requires AI. Verified repairs with issues left
+//      over are PARTIAL_FIX: patch is null, the verified code is in
+//      meta.deterministicPatch, and meta.aiNeeded lists what remains.
 //  11. Claude receives ALL remaining AI_REQUIRED issues, and every suggestion
 //      is verified individually. Claude still can never reach SAFE_AUTO_FIX.
 // ═══════════════════════════════════════════════════════
@@ -42,6 +44,7 @@ var RealityOrchestrator = (() => {
   // ─── Decision ────────────────────────────────────────
   const Decision = Object.freeze({
     SAFE_AUTO_FIX:  'SAFE_AUTO_FIX',
+    PARTIAL_FIX:    'PARTIAL_FIX',
     NEEDS_VERIFY:   'NEEDS_VERIFY',
     AI_SUGGESTION:  'AI_SUGGESTION',
     PENDING_REVIEW: 'PENDING_REVIEW',
@@ -235,7 +238,8 @@ var RealityOrchestrator = (() => {
       reason   = `Unknown decision "${decision}" — Fail-Closed to PENDING_REVIEW`;
     }
     // Hard constraint: Claude cannot be SAFE_AUTO_FIX
-    if (source === Source.CLAUDE && decision === Decision.SAFE_AUTO_FIX) {
+    if (source === Source.CLAUDE &&
+        (decision === Decision.SAFE_AUTO_FIX || decision === Decision.PARTIAL_FIX)) {
       decision = Decision.AI_SUGGESTION;
       reason   = 'Claude source → downgraded to AI_SUGGESTION (Policy invariant)';
     }
@@ -1039,6 +1043,33 @@ var RealityOrchestrator = (() => {
     );
   }
 
+  // ─── PARTIAL_FIX result ──────────────────────────────
+  // Verified deterministic repairs + issues that still need AI. `patch` is
+  // null on purpose: the verified code is only in meta.deterministicPatch, so
+  // a consumer that applies `patch` on SAFE_AUTO_FIX cannot take it as the
+  // fixed file.
+  function _partialFix(source, repairedCode, safeRepairs, aiNeeded,
+                       verifyResult, remainingIssues, reason, extra) {
+    return _makeResult(_INTERNAL,
+      Decision.PARTIAL_FIX,
+      source,
+      null,
+      reason,
+      Object.assign({ safeRepairs, aiNeeded, verifyResult,
+        partial: true,
+        deterministicPatch: repairedCode,
+        deterministicVerified: true,
+        deterministicRepairCount: safeRepairs.length,
+        aiRequiredCount: aiNeeded.length,
+        fileFullyResolved: false,
+        remainingIssues: remainingIssues || null,
+        origin: 'DETERMINISTIC',
+        aiGenerated: false,
+        humanApproved: false,
+        deterministic: true }, extra)
+    );
+  }
+
   // ─── DECIDE phase (Policy gated) ─────────────────────
   function decide(repairOrFallback, verifyPhase, aiPhase) {
     const phase = repairOrFallback && repairOrFallback.phase;
@@ -1080,6 +1111,13 @@ var RealityOrchestrator = (() => {
       if (!aiVerified) {
         // Claude's patch failed verification — fall through to the normal
         // deterministic path below by reporting only the verified part.
+        if (detOk && aiNeeded.length > 0) {
+          return _partialFix(source, repairedCode, safeRepairs, aiNeeded,
+            effectiveVerify, repairOrFallback.remainingIssues,
+            `${safeRepairs.length} repair(s) verified — Claude suggestion failed verification; ` +
+            `${aiNeeded.length} issue(s) still require AI`,
+            { aiSuggestionRejected: true });
+        }
         return _makeResult(_INTERNAL,
           detOk ? Decision.SAFE_AUTO_FIX : Decision.REJECTED,
           detOk ? source : Source.ORCHESTRATOR,
@@ -1137,19 +1175,28 @@ var RealityOrchestrator = (() => {
         // must apply the verified patch AND then continue with Claude for the
         // remainder. `fileFullyResolved` is the single field to read when the
         // question is "is this file done?".
-        const partial = aiNeeded.length > 0;
+        //
+        // PARTIAL_FIX: the verified repairs are real but issues remain
+        // (critical ones included — SQL injection / eval() left in the patch).
+        // Reporting SAFE_AUTO_FIX there let callers treat the patch as the
+        // fixed file. The verified code moves to meta.deterministicPatch and
+        // `patch` stays null, so nothing reads it as a full fix.
+        if (aiNeeded.length > 0) {
+          return _partialFix(source, repairedCode, safeRepairs, aiNeeded,
+            effectiveVerify, repairOrFallback.remainingIssues,
+            `${safeRepairs.length} repair(s) verified — ${aiNeeded.length} issue(s) still require AI`,
+            {});
+        }
         return _makeResult(_INTERNAL,
           Decision.SAFE_AUTO_FIX,
           source,
           repairedCode,
-          partial
-            ? `${safeRepairs.length} repair(s) verified — ${aiNeeded.length} issue(s) still require AI`
-            : `${safeRepairs.length} repair(s) verified and policy-approved`,
+          `${safeRepairs.length} repair(s) verified and policy-approved`,
           { safeRepairs, aiNeeded, verifyResult: effectiveVerify,
-            partial,
+            partial: false,
             deterministicRepairCount: safeRepairs.length,
-            aiRequiredCount: aiNeeded.length,
-            fileFullyResolved: !partial,
+            aiRequiredCount: 0,
+            fileFullyResolved: true,
             remainingIssues: repairOrFallback.remainingIssues || null,
             // [v0.4.1] provenance — mirrors applyApprovedSuggestion()
             origin: 'DETERMINISTIC',

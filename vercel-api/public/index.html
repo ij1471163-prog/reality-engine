@@ -652,7 +652,7 @@ function fixAllEngineUI() {
     }
 
     const RO = RealityOrchestrator;
-    let applied = 0, rejected = 0, aiNeeded = 0;
+    let applied = 0, partial = 0, rejected = 0, aiNeeded = 0;
 
     Object.keys(F).forEach(fn => {
         let out;
@@ -669,6 +669,12 @@ function fixAllEngineUI() {
             const res = _gateApply(fn, d.patch, 'orchestrator');
             if (res.applied) applied++; else rejected++;
             if (d.meta && d.meta.aiRequiredCount) aiNeeded += d.meta.aiRequiredCount;
+        } else if (d.decision === RO.Decision.PARTIAL_FIX && d.meta &&
+                   typeof d.meta.deterministicPatch === 'string') {
+            // إصلاح جزئي: نطبّق الجزء الحتمي المتحقق فقط، والملف لم يُحلّ بالكامل
+            const res = _gateApply(fn, d.meta.deterministicPatch, 'orchestrator-partial');
+            if (res.applied) partial++; else rejected++;
+            aiNeeded += (d.meta.aiNeeded ? d.meta.aiNeeded.length : 1);
         } else if (d.decision === RO.Decision.AI_SUGGESTION) {
             // Claude مصدر اقتراح — لا يُطبَّق من هنا إطلاقًا
             aiNeeded += (d.meta && d.meta.aiNeeded ? d.meta.aiNeeded.length : 1);
@@ -678,9 +684,10 @@ function fixAllEngineUI() {
     });
 
     let msg = '✅ اعتُمد ' + applied + ' ملف';
+    if (partial) msg += ' • إصلاح جزئي ' + partial;
     if (rejected) msg += ' • رُفض ' + rejected;
     if (aiNeeded) msg += ' • ' + aiNeeded + ' تحتاج AI';
-    toast(msg, applied ? 's' : 'w');
+    toast(msg, applied && !partial && !aiNeeded ? 's' : 'w');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
 }

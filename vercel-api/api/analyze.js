@@ -114,6 +114,7 @@ module.exports = async (req, res) => {
       let fixed = code;
     let healingResult = null;
     let orchestratorResult = null;
+    let partialFix = null;
 
     if (fix) {
       // Central repair pipeline:
@@ -129,6 +130,16 @@ module.exports = async (req, res) => {
 
       if (decision && decision.decision === RealityOrchestrator.Decision.SAFE_AUTO_FIX) {
         fixed = decision.patch || code;
+      }
+      // PARTIAL_FIX: verified repairs exist but issues remain. The verified
+      // code goes out as partialFix, never as `fixed` (which means "full fix").
+      if (decision && decision.decision === RealityOrchestrator.Decision.PARTIAL_FIX) {
+        partialFix = {
+          patch: decision.meta.deterministicPatch,
+          repairCount: decision.meta.deterministicRepairCount,
+          aiNeeded: decision.meta.aiNeeded,
+          fileFullyResolved: false,
+        };
       }
 
       // Preserve the existing healing field while exposing the new
@@ -154,6 +165,7 @@ module.exports = async (req, res) => {
         orchestratorResult.decision.decision === RealityOrchestrator.Decision.SAFE_AUTO_FIX
           ? fixed
           : undefined,
+      partialFix: partialFix || undefined,
       orchestrator: fix ? orchestratorResult : undefined,
     });
 
