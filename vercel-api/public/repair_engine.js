@@ -241,6 +241,16 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
 // القاعدة: أمر shell فقط إذا أُثبت أنه exec الخاص بـchild_process — exec(
 // مباشر بلا نقطة، أو مستقبِل مربوط بـrequire/import من child_process.
 // المستقبِل المجهول يُرفض (fail-closed): لا إصلاح، وتُمرَّر المشكلة كما هي.
+//
+// حدود هذا الفحص: الربط يُستدلّ عليه نصيًا، فثلاث حالات تمرّ وهي ليست ربطًا.
+// الثلاث تشترط أن يحمل المستقبِل نفس معرّف الربط (name collision)، ولا يمكن
+// حسمها إلا بتحليل نطاق/تدفّق لا يقدر عليه regex، وكلها كانت تمرّ أيضًا قبل
+// وجود هذا الحارس — فهي حدّ معروف لا انحدار:
+//   1) require داخل نص حرفي: const s = "const cp = require('child_process')"
+//      (لا يمكن تجريد النصوص هنا لأن اسم الوحدة نفسه نصّ حرفي)
+//   2) معامل يُظلّل الربط في نطاق آخر: f(){const cp=require(...)} / g(cp){cp.exec()}
+//   3) إعادة إسناد بعد الربط: let cp=require(...); cp=getDb(); cp.exec()
+// لا تُحَل بالتخمين: أي تشديد نصيّ إضافي سيرفض روابط شرعية.
 function _isCommandExecCall(code, line, execIndex) {
   const before = line.slice(0, execIndex);
   if (!/\.\s*$/.test(before)) return true; // exec( بلا نقطة = نمط child_process الكلاسيكي (destructured exec)
@@ -250,16 +260,21 @@ function _isCommandExecCall(code, line, execIndex) {
   const recv = before.match(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\.\s*$/);
   if (!recv) return false;
 
+  // الدليل يُقرأ من الكود وحده: تعليق يذكر child_process ليس ربطًا.
+  const scan = code.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
   const esc = recv[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const CP = `['"](?:node:)?child_process['"]`;
+  // بين الاسم وfrom لا يصحّ إلا بند import حقيقي: `, { ... }` أو `, * as ns`
+  const CLAUSE = `(?:,\\s*(?:\\*\\s+as\\s+[A-Za-z_$][\\w$]*|\\{[^}]*\\}))?`;
   return new RegExp(
-    // const/let/var cp = require(...)  وكذلك إعادة الإسناد المجرّدة cp = require(...)
-    `\\b${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)` +
-    // import cp / import * as cp / import cp, { spawn } ... from '...'
-    `|\\bimport\\s+(?:\\*\\s+as\\s+)?${esc}\\b[^;\\n]*?from\\s+${CP}` +
+    // cp = require(...) تعريفًا أو إعادة إسناد — لكن ليس عضوًا مثل obj.cp
+    `(?:^|[^\\w$.])${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)` +
+    // import cp / import * as cp / import cp, { spawn } / import cp, * as ns
+    `|\\bimport\\s+(?:\\*\\s+as\\s+)?${esc}\\b\\s*${CLAUSE}\\s+from\\s+${CP}` +
     // TypeScript: import cp = require('...')
     `|\\bimport\\s+${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)`
-  ).test(code);
+  ).test(scan);
 }
 
 function fixCommandInjection(code, issue, lines2, ext2, fileName) {

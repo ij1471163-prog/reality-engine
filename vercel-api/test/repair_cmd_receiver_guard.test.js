@@ -187,3 +187,62 @@ test('e2e DeepFlow: cp.exec(tainted) من child_process يبقى قابلًا ل
   assert.notStrictEqual(fixOn(code, issues[0].line), null,
     'child_process شرعي: التغطية القائمة محفوظة');
 });
+
+// ═══ المجموعة 5 — adversarial: أشكال require / import / إسناد ══
+// الدليل على الربط يُقرأ من الكود وحده. نصّ يذكر child_process في تعليق،
+// أو إسناد إلى عضو كائن، أو بند import غير حقيقي — لا يُثبت أن المستقبِل
+// هو child_process، فيبقى الرفض قائمًا (fail-closed).
+
+const ADVERSARIAL_REJECT = [
+  ['تعليق سطري يحمل require',
+   `// const cp = require('child_process');\nconst cp = openDb();\ncp.exec(sql);`, 3],
+  ['تعليق كتلي يحمل require',
+   `/* const cp = require('child_process'); */\nconst cp = openDb();\ncp.exec(sql);`, 3],
+  ['تعليق ذيلي على سطر import يذكر الوحدة',
+   `import db from './db.js' // from 'child_process'\ndb.exec(sql);`, 2],
+  ['إسناد إلى عضو كائن obj.cp = require',
+   `obj.cp = require('child_process');\nconst cp = openDb();\ncp.exec(sql);`, 3],
+  ['مقارنة cp == require لا إسناد',
+   `if (cp == require('child_process')) {}\ncp.exec(sql);`, 2],
+  ['تصادم سابقة mycp = require',
+   `const mycp = require('child_process');\ncp.exec(sql);`, 2],
+  ['تصادم لاحقة cp2 = require',
+   `const cp2 = require('child_process');\ncp.exec(sql);`, 2],
+  ['import نوعي فقط (type)',
+   `import type cp from 'child_process';\ncp.exec(c);`, 2],
+  ['استيرادان على سطر واحد، db أولًا',
+   `import db from './db.js'; import cp from 'child_process';\ndb.exec(sql);`, 2],
+  ['استيرادان على سطرين',
+   `import { db } from './db.js';\nimport cp from 'child_process';\ndb.exec(sql);`, 3],
+  ['export ... from child_process لا يربط db',
+   `export { exec } from 'child_process';\nconst db = openDb();\ndb.exec(sql);`, 3],
+  ['عضو متداخل a.b.exec',
+   `const b = require('child_process');\na.b.exec(q);`, 2],
+  ['كائن حرفي mod.cp.exec',
+   `const mod = { cp: require('child_process') };\nmod.cp.exec(q);`, 2],
+];
+
+for (const [label, code, line] of ADVERSARIAL_REJECT) {
+  test(`adversarial: ${label} → يبقى مرفوضًا`, () => {
+    assert.strictEqual(fixOn(code, line), null,
+      `${label}: لا يُثبت ربط child_process — الرفض يجب أن يبقى (fail-closed)`);
+  });
+}
+
+// الأشكال الشرعية التي يجب ألا يكسرها التشديد أعلاه
+const ADVERSARIAL_ALLOW = [
+  ['require بسطرين',            `const cp =\n  require('child_process');\ncp.exec(c);`, 3],
+  ['require باقتباس مزدوج',     `const cp = require("child_process");\ncp.exec(c);`, 2],
+  ['require مع تعليق ذيلي',     `const cp = require('child_process'); // يشغّل أوامر\ncp.exec(c);`, 2],
+  ['require بتعليق كتلي وسطي',  `const cp = /* mod */ require('child_process');\ncp.exec(c);`, 2],
+  ['import cp, { spawn }',      `import cp, { spawn } from 'child_process';\ncp.exec(c);`, 2],
+  ['import cp, * as ns',        `import cp, * as ns from 'child_process';\ncp.exec(c);`, 2],
+  ['import cp,{spawn} بلا مسافة', `import cp,{spawn} from 'child_process';\ncp.exec(c);`, 2],
+];
+
+for (const [label, code, line] of ADVERSARIAL_ALLOW) {
+  test(`adversarial: ${label} → يبقى قابلًا للإصلاح`, () => {
+    assert.notStrictEqual(fixOn(code, line), null,
+      `${label}: ربط child_process شرعي — التشديد لا يجوز أن يكسره`);
+  });
+}
