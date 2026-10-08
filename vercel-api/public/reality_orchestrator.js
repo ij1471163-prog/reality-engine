@@ -647,6 +647,21 @@ var RealityOrchestrator = (() => {
     return _withUnclaimedCritical(_stillUnresolved(aiList, finalRemaining), finalRemaining);
   }
 
+  // Does a Claude candidate resolve everything that still needs AI?
+  //
+  // runVerification() only reports valid/improved — "improved" means one issue
+  // fewer, not none left — and ClaudeRepairEngine.repairAll() repairs each
+  // issue independently against the same base, so the pre-Claude aiNeeded says
+  // nothing about the candidate. The candidate text itself is re-analyzed and
+  // its remaining aiNeeded computed exactly as for a deterministic patch.
+  function _candidateResolves(patch, aiNeeded, fileName) {
+    if (!fileName) return { ok: false, remaining: null, reason: 'no fileName to re-analyze candidate' };
+    const issues = _reanalyze(patch, fileName);
+    if (issues === null) return { ok: false, remaining: null, reason: 'candidate re-analysis failed' };
+    const remaining = _finalAiNeeded(aiNeeded, issues, false);
+    return { ok: remaining.length === 0, remaining };
+  }
+
   // ─── Single REPAIR attempt (one engine) ───────────────
   function _tryRepair(engine, code, issues, fileName) {
     try {
@@ -1028,11 +1043,19 @@ var RealityOrchestrator = (() => {
   // and policy accepts Source.REPAIR_ENGINE. Source.CLAUDE is never used here.
   const CLAUDE_REPAIR_ENGINE_SOURCE = 'CLAUDE_REPAIR_ENGINE';
 
-  function _claudeRepairEngineAutoFix(aiPhase, aiVerify, aiNeeded, extraMeta) {
+  //
+  // FixVerifier acceptance is not enough: SAFE_AUTO_FIX also requires that the
+  // candidate itself leaves nothing for AI (see _candidateResolves) and that
+  // the deterministic re-analysis did not fail. Otherwise null is returned and
+  // the caller keeps the verified candidate as an approval-only AI_SUGGESTION.
+  function _claudeRepairEngineAutoFix(aiPhase, aiVerify, aiNeeded, extraMeta, guard) {
     if (!aiPhase || aiPhase.source !== CLAUDE_REPAIR_ENGINE_SOURCE) return null;
     if (typeof aiPhase.patch !== 'string' || !aiPhase.patch.trim()) return null;
     if (!aiVerify || aiVerify.valid !== true || aiVerify.improved !== true) return null;
     if (!_checkPolicy(Source.REPAIR_ENGINE, 1, aiVerify)) return null;
+    if (!guard || guard.reanalysisFailed === true) return null;
+    const check = _candidateResolves(aiPhase.patch, aiNeeded, guard.fileName);
+    if (!check.ok) return null;
 
     return _makeResult(_INTERNAL,
       Decision.SAFE_AUTO_FIX,
@@ -1049,7 +1072,15 @@ var RealityOrchestrator = (() => {
         aiGenerated: true,
         humanApproved: false,
         deterministic: false,
-      }, extraMeta || {})
+      }, extraMeta || {}, {
+        // guaranteed by _candidateResolves — extraMeta cannot override them
+        aiNeeded: [],
+        aiResolved: aiNeeded,
+        partial: false,
+        aiRequiredCount: 0,
+        fileFullyResolved: true,
+        reanalysisFailed: false,
+      })
     );
   }
 
@@ -1185,7 +1216,7 @@ var RealityOrchestrator = (() => {
         deterministicVerifyResult: effectiveVerify,
         deterministicRepairCount: safeRepairs.length,
         remainingIssues: repairOrFallback.remainingIssues || null,
-      });
+      }, { fileName: repairOrFallback.fileName, reanalysisFailed });
       if (creAutoFix) return creAutoFix;
 
       return _makeResult(_INTERNAL,
@@ -1205,7 +1236,8 @@ var RealityOrchestrator = (() => {
           aiRequiredCount: aiNeeded.length,
           partial: true,
           fileFullyResolved: false,
-          remainingIssues: repairOrFallback.remainingIssues || null }
+          remainingIssues: repairOrFallback.remainingIssues || null,
+          ...staleMeta }
       );
     }
 
@@ -1275,7 +1307,8 @@ var RealityOrchestrator = (() => {
     if (aiSugg && aiOwnVerify) {
       if (aiOwnVerify.valid === true && aiOwnVerify.improved === true) {
         // Only the Claude Repair Engine reaches SAFE_AUTO_FIX after FixVerifier.
-        const creAutoFix = _claudeRepairEngineAutoFix(aiPhase, aiOwnVerify, aiNeeded, {});
+        const creAutoFix = _claudeRepairEngineAutoFix(aiPhase, aiOwnVerify, aiNeeded, {},
+          { fileName: repairOrFallback.fileName, reanalysisFailed });
         if (creAutoFix) return creAutoFix;
 
         // Any other AI source stays approval-only even when verified.
