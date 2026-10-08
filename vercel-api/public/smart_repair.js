@@ -155,15 +155,28 @@ var SmartRepairEngine = (() => {
     );
   }
 
+  // نفس الفكرة لبايثون: cursor.execute(q) بلا معاملات بعد. وجود معاملات
+  // أصلاً ⇒ لا تطابق ⇒ لا نلمس شيئًا (الربط قائم).
+  // executemany مستثنى عمدًا: يتوقع تتابع تتابعات، فربط (p,) عليه خطأ دلالي.
+  function pyExecuteCallRe(varName) {
+    return new RegExp(
+      '((?:cursor|cur|crsr|conn|connection|session|db)\\s*\\.\\s*execute\\s*\\(\\s*)' +
+      varName + '\\s*\\)');
+  }
+
   // يبحث عن موضع الاستدعاء داخل نفس الكتلة فقط (يتوقف عند أول سطر
   // إزاحته أقل من سطر الاستعلام ⇒ خرجنا من الكتلة).
-  function findQueryCallSite(lines, varName, fromLine, indentWidth) {
-    const re = queryCallRe(varName);
+  // reBuilder اختياري — الافتراضي شكل JS، ويمرّر فرع بايثون شكله الخاص.
+  function findQueryCallSite(lines, varName, fromLine, indentWidth, reBuilder) {
+    const re = (reBuilder || queryCallRe)(varName);
     for (let k = fromLine + 1; k < lines.length; k++) {
       const raw = lines[k];
       if (!raw.trim()) continue;
-      if (re.test(raw)) return k;
+      // [FIX] فحص الخروج من الكتلة قبل التطابق، لا بعده. كان التطابق يُفحَص
+      // أولاً فيفوز استدعاء على سطر أقل إزاحة — أي خارج الكتلة. في JS يحجب
+      // ذلك سطر `}` بالصدفة، وبايثون بلا أقواس فالثقب مكشوف هناك.
       if (raw.search(/\S/) < indentWidth) return -1;
+      if (re.test(raw)) return k;
     }
     return -1;
   }
@@ -186,34 +199,34 @@ var SmartRepairEngine = (() => {
       if (ctx.ext === 'py') {
         // يكتشف SQL concat في Python
         if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["'].*\+/.test(t) && !/cursor|execute/.test(t)) {
-          const varM = t.match(/(\w+)\s*=/);
-          if (!varM) continue;
-          const varName = varM[1];
-          const indent = ' '.repeat(line.search(/\S/));
-
-          // استخرج params من السياق
-          const sqlInfo = ctx.sqlVars.get(varName);
-          const params = sqlInfo?.params || [];
-          if (!params.length) continue;
-
-          // بناء query نظيف
-          const queryM = t.match(/["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
-          if (!queryM) continue;
-          let q = queryM[1].replace(/='\s*$/, '=?').replace(/'\s*$/, '?').trim();
-          if (!q.includes('?')) q += '?';
-
-          // احذف cursor.execute القديم
-          let j = i + 1;
-          while (j < lines.length && /cursor.*conn\.execute|conn\.execute|return cursor/.test(lines[j]))
-            lines.splice(j, 1);
-
-          lines[i] = `${indent}${varName} = "${q}"`;
-          lines.splice(i + 1, 0, `${indent}cursor = conn.cursor()`);
-          lines.splice(i + 2, 0, `${indent}cursor.execute(${varName}, (${params.join(', ')},))`);
-          lines.splice(i + 3, 0, `${indent}return cursor.fetchall()`);
-          repairs.push({ line: i + 1, fix: `${varName} → parameterized (${params.join(', ')})` });
-          changed = true;
-          i += 4;
+          // [FIX] كان هذا الفرع يبني patch بالقَولَبة لا بالإثبات، بثلاثة أعطال:
+          //   (أ) بتر الاستعلام — queryM يلتقط أول نص حرفي فقط فيُفقد كل ما بعد
+          //       أول +، ثم يُضاف placeholder واحد بلا نظر لعدد المعاملات.
+          //   (ب) زرع return cursor.fetchall() لم يكن في المصدر، بلا إثبات أن
+          //       الدالة تُرجع صفوف الاستعلام ولا أن conn موجود ⇒ يتغيّر ناتج
+          //       الدالة ويصير ما بعده كودًا ميتًا.
+          //   (ج) حلقة حذف الاستدعاء القديم معلّقة على conn.execute/return
+          //       cursor، والشكل الشائع cursor.execute(q) لا يطابقها، فيبقى
+          //       الاستدعاء الأصلي مكرَّرًا ميتًا.
+          // الآن: الاستعلام يُبنى من التعبير كاملاً بـparseSqlConcat نفسها التي
+          // يستخدمها فرع JS (fail-closed على أي مقطع لا نضمن ترجمته)، والمعاملات
+          // تُربط في موضع execute القائم فعلاً. لا يُحشَر سطر ولا يُحذَف سطر، وأي
+          // حالة لا تُثبَت تُترك كما هي فيبقى البلاغ قائمًا ويذهب لمسار AI.
+          const declM  = t.match(/^([A-Za-z_]\w*)\s*=\s*(.+?)\s*$/);
+          const parsed = declM ? parseSqlConcat(declM[2]) : null;
+          if (parsed) {
+            const varName = declM[1];
+            const indentW = line.search(/\S/);
+            const callIdx = findQueryCallSite(lines, varName, i, indentW, pyExecuteCallRe);
+            if (callIdx !== -1) {
+              const re = pyExecuteCallRe(varName);
+              lines[callIdx] = lines[callIdx].replace(re,
+                (m, head) => `${head}${varName}, (${parsed.params.join(', ')},))`);
+              lines[i] = `${' '.repeat(indentW)}${varName} = ${JSON.stringify(parsed.query)}`;
+              repairs.push({ line: i + 1, fix: `PY SQL → parameterized (${parsed.params.join(', ')})` });
+              changed = true;
+            }
+          }
         }
       }
 
