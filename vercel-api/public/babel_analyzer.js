@@ -156,6 +156,7 @@
             if (dv.length>0) issues.push({
               type:'XSS', sev:'c', line:ln,
               title:`🔴 XSS: ${dv[0]} في res.send`,
+              strategy:'XSS_INNER_HTML',
               ev:`res.send(${dv[0]})`, fix:`res.json({ message: String(${dv[0]}).replace(/[<>]/g,'') })`,
               conf:90, cIcon:'🔴', cAct:'XSS',
             });
@@ -168,6 +169,7 @@
             if (dv.length>0) issues.push({
               type:'CMD_INJECTION', sev:'c', line:ln,
               title:`🔴 Command Injection: ${dv[0]} في exec`,
+              strategy:'CMD_INJECTION',
               ev:`exec(${dv[0]})`, conf:92, cIcon:'🔴', cAct:'CMD_INJECTION',
             });
           }
@@ -184,6 +186,7 @@
             if (dv.length>0) issues.push({
               type:'XSS', sev:'c', line:ln,
               title:`🔴 XSS: innerHTML مع ${dv[0]}`,
+              strategy:'XSS_INNER_HTML',
               fix:`textContent = ${dv[0]}`, conf:93, cIcon:'🔴', cAct:'XSS',
             });
           }

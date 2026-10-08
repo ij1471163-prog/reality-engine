@@ -56,6 +56,7 @@ function detectAccumulation(code, fileName) {
               type: 'bug',
               sev: 'c',
               title: `خطأ تراكم: ${varName} = بدل +=`,
+              strategy: 'ACCUMULATION',
               line: i + 1,
               ev: t,
               fix: fix,

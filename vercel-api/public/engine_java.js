@@ -160,6 +160,7 @@ function analyzeJava(code, fileName) {
             const _dup = issues.some(_x => Math.abs(_x.line - (_i+1)) <= 1);
             if (!_dup) issues.push({type:'bug', sev:'c',
               title: 'خطأ تراكم Java: ' + _v + ' = بدل +=',
+              strategy: 'ACCUMULATION',
               line: _i+1, ev: _t,
               fix: _t.replace(new RegExp('(' + _v + ')\\s*=(?!=)'), '$1 +=')});
           }

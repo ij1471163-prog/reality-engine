@@ -27,21 +27,21 @@ function analyzeTaintJS(code, fileName) {
       fix: (v) => `db.query(sql, [${v}]) // use parameterized query` },
     // XSS
     { re: /res\.send\s*\(([^)]+)\)/g,
-      type: 'XSS', sev: 'c', sink: 'res.send',
+      type: 'XSS', sev: 'c', sink: 'res.send', strategy: 'XSS_INNER_HTML',
       fix: (v) => `res.json({ message: sanitize(${v}) })` },
     { re: /\.innerHTML\s*=\s*(.+)/g,
-      type: 'XSS', sev: 'c', sink: 'innerHTML',
+      type: 'XSS', sev: 'c', sink: 'innerHTML', strategy: 'XSS_INNER_HTML',
       fix: (v) => `.textContent = ${v}` },
     { re: /document\.write\s*\(([^)]+)\)/g,
-      type: 'XSS', sev: 'c', sink: 'document.write',
+      type: 'XSS', sev: 'c', sink: 'document.write', strategy: 'XSS_INNER_HTML',
       fix: (v) => `// SECURITY: document.write removed` },
     // Command Injection
     { re: /(?:exec|spawn|execSync)\s*\(([^)]+)\)/g,
-      type: 'CMD_INJECTION', sev: 'c', sink: 'exec',
+      type: 'CMD_INJECTION', sev: 'c', sink: 'exec', strategy: 'CMD_INJECTION',
       fix: (v) => `// SECURITY: validate ${v} before exec` },
     // eval
     { re: /\beval\s*\(([^)]+)\)/g,
-      type: 'CODE_INJECTION', sev: 'c', sink: 'eval',
+      type: 'CODE_INJECTION', sev: 'c', sink: 'eval', strategy: 'EVAL_USAGE',
       fix: (v) => `JSON.parse(${v}) // if JSON, else remove eval` },
     // Path traversal
     { re: /(?:readFile|writeFile|readFileSync)\s*\(([^,)]+)/g,
@@ -94,7 +94,7 @@ function analyzeTaintJS(code, fileName) {
     if (t.startsWith('//')) return;
     const ln = i + 1;
 
-    SINKS.forEach(({ re, type, sev, sink, fix }) => {
+    SINKS.forEach(({ re, type, sev, sink, fix, strategy }) => {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(line)) !== null) {
@@ -118,6 +118,7 @@ function analyzeTaintJS(code, fileName) {
             issues.push({
               type: 'taint', sev, line: ln, ev: t,
               title: `🔴 ${type}: ${v} من ${engine.tainted.get(v).source} → ${sink}`,
+              strategy,
               fix: fix(v),
               conf: 88, cIcon: '🔴', cAct: type,
               cEv: [`${v} مصدره: ${engine.tainted.get(v).source}`, `يصل لـ: ${sink} بدون sanitization`]

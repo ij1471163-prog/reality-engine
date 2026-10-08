@@ -170,6 +170,7 @@ class DataFlowAnalyzer {
         this.issues.push({
             type: 'dataflow', sev: 'h', line: ln, ev: line,
             title: `🟠 Data Flow: ${varName} = ${obj}.${prop} داخل loop — يجب +=`,
+            strategy: 'ACCUMULATION',
             fix:   `${varName} += ${obj}.${prop};`,
             conf:  isNumericProp ? 95 : 82,
             cIcon: '🟠', cAct: 'Accumulation Error (Data Flow)',
@@ -387,6 +388,7 @@ class ScopeAnalyzer {
                     this.issues.push({
                         type: 'scope', sev: 'm', line: ln, ev: t,
                         title: `🟡 Scope: var ${varMatch[1]} — استخدم let أو const`,
+                        strategy: 'VAR_USAGE',
                         fix:   t.replace(/^var\s+/, 'let '),
                         conf:  90, cIcon: '🟡', cAct: 'Scope Issue',
                         cEv:   [`var يتجاوز block scope — استخدم let/const`],

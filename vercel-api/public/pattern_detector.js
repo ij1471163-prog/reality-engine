@@ -132,6 +132,7 @@ function detectPatterns(code, fileName) {
         issues.push({
           type: 'stub', sev: 'h',
           title: `دالة ناقصة: ${funcName}()`,
+          strategy: 'EMPTY_FUNCTION',
           line: i + 1, ev: t,
           fix: null,
           conf: 90, cIcon: '🔴',

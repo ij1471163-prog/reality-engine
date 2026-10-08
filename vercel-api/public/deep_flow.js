@@ -344,6 +344,7 @@ var DeepFlow = (() => {
           issues.push({
             type: 'XSS', sev: 'c', line: ln,
             title: `🔴 XSS: ${dangerVars[0]} وصل لـ output بدون sanitize`,
+            strategy: 'XSS_INNER_HTML',
             ev: t, conf: 90, cIcon: '🔴', cAct: 'XSS',
             fix: `// sanitize ${dangerVars[0]} قبل الإخراج`,
           });
@@ -358,6 +359,7 @@ var DeepFlow = (() => {
           issues.push({
             type: 'CMD_INJECTION', sev: 'c', line: ln,
             title: `🔴 Command Injection: ${dangerVars[0]} في system command`,
+            strategy: 'CMD_INJECTION',
             ev: t, conf: 93, cIcon: '🔴', cAct: 'CMD_INJECTION',
           });
         }
@@ -387,6 +389,7 @@ var DeepFlow = (() => {
             issues.push({
               type: 'ACCUMULATION', sev: 'c', line: ln,
               title: `🔴 خطأ تراكم: ${varName} = بدل +=`,
+              strategy: 'ACCUMULATION',
               ev: t, conf: 90, cIcon: '🔴', cAct: 'ACCUMULATION',
               fix: t.replace(`${varName} =`, `${varName} +=`),
             });

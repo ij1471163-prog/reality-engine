@@ -474,6 +474,7 @@ function analyzeCode(code, fileName) {
                     const _dup = issues.some(_x=>_x.line===(_i+1) && /تراكم/.test(String(_x.title)));
                     if (!_dup) issues.push({type:'bug',sev:'c',
                         title:'خطأ تراكم: '+_v+' = بدل +=',
+                        strategy:'ACCUMULATION',
                         line:_i+1,ev:_t,
                         fix:_t.replace(new RegExp('('+_esc+')\\s*=(?!=)'),'$1 +='),
                         conf:90,cIcon:'🟢',cAct:'خطأ تراكم مؤكد',
@@ -835,6 +836,7 @@ function analyzePythonSecurity(code, issues) {
                 if (m) {
                     issues.push({ type:'py', sev:'h', line:ln, ev:t,
                         title:'🟠 خطأ تراكم: ' + m[1] + ' = بدل +=',
+                        strategy:'ACCUMULATION',
                         fix: line.replace(/(\w+)\s*=\s*/, '$1 += '),
                         conf:85, cIcon:'🟠', cAct:'Accumulation Error' });
                 }

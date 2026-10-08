@@ -25,7 +25,7 @@ const STRATEGY_LANGS = {
   CMD_INJECTION_PY: ['py'],
   NONE_COMPARE:     ['py'],
   NAMEERROR:        ['py'],
-  MISSING_AUTH:     [],
+  MISSING_AUTH:     ['js', 'ts'],
   RETURN_NULL:      [],
   NPE_CHAIN:        [],
 };
@@ -55,6 +55,13 @@ const STRATEGIES = {
   NAMEERROR:        { fn: fixNameError,          autoFix: true,  confidence: 0.90 },
   RETURN_NULL:      { fn: null,                  autoFix: false, confidence: 0.10 },
   NPE_CHAIN:        { fn: null,                  autoFix: false, confidence: 0.15 },
+};
+
+// ─── Language variants for explicit strategies ───────
+// detector يضع مفتاحًا واحدًا (CMD_INJECTION)، واللغة تحدد الإصلاح الفعلي —
+// نفس تحويل الـtitle fallback (command → CMD_INJECTION_PY في Python).
+const STRATEGY_LANG_VARIANTS = {
+  CMD_INJECTION: { py: 'CMD_INJECTION_PY' },
 };
 
 // ─── detectExt — امتداد الملف فقط ───────────────────
@@ -615,6 +622,16 @@ function detectStrategy(issue, lang) {
   // لغة غير معروفة أو غير مدعومة = لا إصلاح
   if (!lang || lang === 'unknown') return null;
 
+  // strategy صريح من الـdetector نفسه: يُستخدم قبل الـtitle، لأن الـtitle قد يحمل
+  // بيانات من كود المستخدم (اسم متغير، route path) فتُضلّل الكلمات المفتاحية.
+  // مفتاح غير معروف أو غير مدعوم للغة → نرجع لاستنتاج الـtitle كما كان.
+  if (issue && typeof issue.strategy === 'string') {
+    const variant = STRATEGY_LANG_VARIANTS[issue.strategy];
+    const explicit = (variant && variant[lang]) || issue.strategy;
+    if (Object.prototype.hasOwnProperty.call(STRATEGIES, explicit) &&
+        STRATEGY_LANGS[explicit] && STRATEGY_LANGS[explicit].includes(lang)) return explicit;
+  }
+
   const t = (issue.title || '').toLowerCase();
   let stratKey = null;
 
@@ -641,6 +658,10 @@ function detectStrategy(issue, lang) {
   else if (t.includes('cwe-798') || t.includes('credential'))              stratKey = 'HARDCODED_SECRET';
 
   if (!stratKey) return null;
+
+  // MISSING_AUTH يأتي فقط من strategy صريح (Auth detector) — كلمة auth في الـtitle
+  // قد تكون اسم متغير/دالة من كود المستخدم (authZ, authToken...)، فلا تُعتمد.
+  if (stratKey === 'MISSING_AUTH') return null;
 
   // تحقق من allowlist اللغة — بدون fallback
   const allowed = STRATEGY_LANGS[stratKey];

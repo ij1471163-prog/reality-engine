@@ -233,6 +233,7 @@ function analyzeAccumulation(ast, issues) {
                 type:        'bug',
                 sev:         'c',
                 title:       `خطأ تراكم مؤكد: ${varName} = بدل += (AST ✓)`,
+                strategy: 'ACCUMULATION',
                 line,
                 ev:          `${varName} = ${rightText}`,
                 fix:         `${varName} += ...`,

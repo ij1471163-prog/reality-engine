@@ -186,6 +186,7 @@ var SemanticLayer = (() => {
           issues.push({
             type: 'SECRET_EXPOSURE', sev: 'h', line: ln,
             title: `🟠 ${name} (secret) مكشوف في output`,
+            strategy: 'HARDCODED_SECRET',
             ev: t, conf: 85, cIcon: '🟠', cAct: 'SECRET_EXPOSURE',
             source: 'SemanticLayer',
           });
@@ -221,6 +222,7 @@ var SemanticLayer = (() => {
             issues.push({
               type: 'MISSING_AUTH', sev: 'm', line: ln,
               title: `🟡 ${name}() — تحقق من Auth Middleware`,
+              strategy: 'MISSING_AUTH',
               ev: t, conf: 65, cIcon: '🟡', cAct: 'MISSING_AUTH',
               source: 'SemanticLayer',
             });
@@ -236,6 +238,7 @@ var SemanticLayer = (() => {
           issues.push({
             type: 'COUNTER_ASSIGN', sev: 'c', line: ln,
             title: `🔴 ${name} (counter) يستخدم = بدل += — خطأ تراكم`,
+            strategy: 'ACCUMULATION',
             ev: t,
             fix: t.replace(`${name} =`, `${name} +=`),
             conf: 92, cIcon: '🔴', cAct: 'ACCUMULATION',
