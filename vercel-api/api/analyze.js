@@ -53,7 +53,10 @@ module.exports = async (req, res) => {
   try {
     const ctx = vm.createContext({ console, window: {}, global: {}, F: {}, R: {} });
 
+    // acorn أولًا: GhostMode.syntaxOk تُعطِّل نفسها إذا لم يكن acorn معرّفًا،
+    // فبدونه يمرّ إصلاح لا يُحلَّل بحكم pass. نفس ترتيب index.html.
     const engines = [
+      'acorn.min.js',
       'engine_java.js', 'c_cpp_analyzer.js', 'analyzer.js', 'security_scanner.js',
       'secret_detector.js', 'taint_core.js', 'taint_js.js',
       'taint_py.js', 'taint_php.js', 'context_analyzer.js',
