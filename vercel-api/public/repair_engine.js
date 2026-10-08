@@ -234,33 +234,32 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── Command Injection JS/TS — splice لا string concat ─
-// [FIX] لا يفرّق exec( نصيًا فقط — RegExp.prototype.exec() لها نفس الاسم.
-// نرفض الإصلاح إذا كان الاستدعاء فعليًا RegExp.exec وليس child_process exec.
-function _isRegexExecCall(code, line, execIndex) {
+// [FIX] exec( ليست أمر shell بمجرد الاسم: RegExp.prototype.exec، db.exec،
+// stmt.exec، conn.exec، qb.exec و pattern.exec كلها APIs أخرى. تعقيم أمر
+// shell عليها يخرّب الكود (استعلام SQL يُجرَّد من ترقيمه، و.replace على كائن
+// params ينهار وقت التشغيل).
+// القاعدة: أمر shell فقط إذا أُثبت أنه exec الخاص بـchild_process — exec(
+// مباشر بلا نقطة، أو مستقبِل مربوط بـrequire/import من child_process.
+// المستقبِل المجهول يُرفض (fail-closed): لا إصلاح، وتُمرَّر المشكلة كما هي.
+function _isCommandExecCall(code, line, execIndex) {
   const before = line.slice(0, execIndex);
-  const dotMatch = before.match(/\.\s*$/);
-  if (!dotMatch) return false; // exec( بلا نقطة قبلها = نمط child_process الكلاسيكي (destructured exec)
+  if (!/\.\s*$/.test(before)) return true; // exec( بلا نقطة = نمط child_process الكلاسيكي (destructured exec)
+  if (/require\s*\(\s*['"](?:node:)?child_process['"]\s*\)\s*\.\s*$/.test(before)) return true;
 
-  const beforeDot = before.slice(0, dotMatch.index);
+  // مستقبِل غير معرّف بسيط (/re/.exec، ).exec، this.x.exec) لا يُثبت شيئًا
+  const recv = before.match(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\.\s*$/);
+  if (!recv) return false;
 
-  // 1) new RegExp(...) أو RegExp(...) مباشرة قبل .exec(
-  if (/(?:new\s+)?RegExp\s*\([^)]*\)\s*$/.test(beforeDot)) return true;
-
-  // 2) regex literal /pattern/flags مباشرة قبل .exec(
-  if (/\/(?:[^\/\\\n]|\\.)+\/[a-z]*\s*$/.test(beforeDot)) return true;
-
-  // 3) معرّف بسيط — دوّر في الملف كامل عن تعريفه كـRegExp
-  const idMatch = beforeDot.match(/([A-Za-z_$][\w$]*)\s*$/);
-  if (idMatch) {
-    const name = idMatch[1];
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const assignRe = new RegExp(
-      '\\b' + esc + '\\s*=\\s*(?:new\\s+)?RegExp\\s*\\(|' +
-      '\\b(?:const|let|var)\\s+' + esc + '\\s*=\\s*/(?:[^/\\\\\\n]|\\\\.)+/[a-z]*'
-    );
-    if (assignRe.test(code)) return true;
-  }
-  return false;
+  const esc = recv[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const CP = `['"](?:node:)?child_process['"]`;
+  return new RegExp(
+    // const/let/var cp = require(...)  وكذلك إعادة الإسناد المجرّدة cp = require(...)
+    `\\b${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)` +
+    // import cp / import * as cp / import cp, { spawn } ... from '...'
+    `|\\bimport\\s+(?:\\*\\s+as\\s+)?${esc}\\b[^;\\n]*?from\\s+${CP}` +
+    // TypeScript: import cp = require('...')
+    `|\\bimport\\s+${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)`
+  ).test(code);
 }
 
 function fixCommandInjection(code, issue, lines2, ext2, fileName) {
@@ -273,8 +272,8 @@ function fixCommandInjection(code, issue, lines2, ext2, fileName) {
 
   const execMatch = /\bexec\s*\(/.exec(line);
   if (!execMatch) return null;
-  // [FIX] RegExp.exec() ليست command injection — لا نلمسها.
-  if (_isRegexExecCall(code, line, execMatch.index)) return null;
+  // [FIX] مستقبِل غير مُثبت أنه child_process ليس command injection — لا نلمسه.
+  if (!_isCommandExecCall(code, line, execMatch.index)) return null;
 
   const indent = ' '.repeat(line.search(/\S/));
   const execArg = line.match(/exec\s*\(([^)]+)\)/)?.[1] || 'command';
@@ -1004,8 +1003,8 @@ function cmdCandidateProblem(beforeCode, afterCode, lineNum, stratKey) {
 
   // [FIX] دفاع بالعمق: نفس الفحص المطبَّق داخل fixCommandInjection، هنا كحارس
   // مستقل يمنع أي مصدر candidate ثانٍ (مثل legacy fixer) من تمرير نفس الخطأ.
-  if (!isPy && _isRegexExecCall(beforeCode, line, calls[0].index)) {
-    return `CMD_NOT_COMMAND_EXEC — line ${lineNum}: this is RegExp.prototype.exec(), not a child_process exec() call`;
+  if (!isPy && !_isCommandExecCall(beforeCode, line, calls[0].index)) {
+    return `CMD_NOT_COMMAND_EXEC — line ${lineNum}: the exec() receiver is not a child_process binding (RegExp.prototype.exec, db/stmt/conn/qb.exec, ...), not a shell command`;
   }
 
   if (calls.length > 1) {
