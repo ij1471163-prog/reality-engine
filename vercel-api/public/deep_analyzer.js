@@ -204,6 +204,7 @@ class DataFlowAnalyzer {
             this.issues.push({
                 type: 'dataflow', sev: 'm', line: ln, ev: line,
                 title: `🟡 Type Error: ${varName} هو number لكن يستخدم string method .${method}()`,
+                strategy: null,
                 fix:   `// تحقق من نوع ${varName} أو حوّله: String(${varName}).${method}()`,
                 conf:  88, cIcon: '🟡', cAct: 'Type Violation',
                 cEv:   [`${varName} معرّف كـ number في السطر ${type.line}`],
@@ -214,6 +215,7 @@ class DataFlowAnalyzer {
             this.issues.push({
                 type: 'dataflow', sev: 'm', line: ln, ev: line,
                 title: `🟡 Type Error: ${varName} هو string لكن يستخدم array method .${method}()`,
+                strategy: null,
                 fix:   `// حوّل ${varName} لـ array أولاً`,
                 conf:  85, cIcon: '🟡', cAct: 'Type Violation',
                 cEv:   [`${varName} معرّف كـ string في السطر ${type.line}`],
@@ -236,6 +238,7 @@ class DataFlowAnalyzer {
             this.issues.push({
                 type: 'dataflow', sev: 'l', line: ln, ev: line,
                 title: `🔵 Dead Assignment: ${varName} معرّف لكن لا يُستخدم`,
+                strategy: null,
                 fix:   `// احذف ${varName} إذا لم تكن تحتاجه`,
                 conf:  72, cIcon: '🔵', cAct: 'Dead Code',
                 cEv:   [`${varName} لا يُستخدم بعد السطر ${ln}`],
@@ -298,6 +301,7 @@ class CallGraphAnalyzer {
                 this.issues.push({
                     type: 'callgraph', sev: 'l', line: info.line, ev: funcName,
                     title: `🔵 Call Graph: ${funcName}() recursive — تأكد من base case`,
+                    strategy: null,
                     fix:   `// تأكد إن فيه حالة إيقاف لتجنب stack overflow`,
                     conf:  78, cIcon: '🔵', cAct: 'Recursion Check',
                     cEv:   [`${funcName} تستدعي نفسها`],
@@ -317,6 +321,7 @@ class CallGraphAnalyzer {
                 this.issues.push({
                     type: 'callgraph', sev: 'l', line: info.line, ev: funcName,
                     title: `🔵 Call Graph: ${funcName}() معرّفة لكن لا تُستدعى`,
+                    strategy: null,
                     fix:   `// احذف ${funcName}() أو استدعِها`,
                     conf:  65, cIcon: '🔵', cAct: 'Dead Code',
                     cEv:   [`${funcName} لا تُستدعى في أي مكان`],
@@ -331,6 +336,7 @@ class CallGraphAnalyzer {
                 this.issues.push({
                     type: 'callgraph', sev: 'm', line: info.line, ev: funcName,
                     title: `🟡 Call Graph: ${funcName}() لها ${info.params.length} parameters — كثير`,
+                    strategy: null,
                     fix:   `// استخدم object parameter: function ${funcName}({${info.params.slice(0,3).join(', ')}, ...}) {}`,
                     conf:  80, cIcon: '🟡', cAct: 'Code Quality',
                     cEv:   [`${info.params.length} parameters أكثر من المعتاد (max 4)`],

@@ -201,11 +201,43 @@ function _runIsolatedEngine(F, R, runner, source, report) {
     // الملفات التي لم تتغيّر: لا شيء. والنسخة المؤقتة تُرمى بالكامل.
 }
 
+/**
+ * aiNeeded النهائي لكل ملف — بعد كل المحركات (repairCode، RepairSQL، SmartRepair،
+ * Fallback، Emergency) لا بعد repairCode وحده. يُعاد تحليل الكود النهائي ثم:
+ * ما زال قائمًا من aiNeeded الخاص بـrepairCode + كل security finding باقية
+ * (ضمان P2 نفسه عبر RealityOrchestrator.finalAiNeeded).
+ * فشل إعادة التحليل ⇒ آخر issues معروفة (staleIssues) وتحذير، بلا ادّعاء نظافة.
+ */
+function _collectFinalAiNeeded(F, aiByFile, report) {
+    const RO = (typeof RealityOrchestrator !== 'undefined') ? RealityOrchestrator : null;
+    const hasFinal = RO && typeof RO.finalAiNeeded === 'function';
+    if (!hasFinal) report.warnings.push({ file: '*', reason: 'FINAL_AI_NEEDED_UNAVAILABLE — RealityOrchestrator غير محمّل' });
+
+    Object.keys(F).forEach(fn => {
+        let finalIssues = null;
+        try {
+            if (typeof analyzeCode === 'function') finalIssues = analyzeCode(F[fn], fn);
+        } catch (e) {
+            report.warnings.push({ file: fn, reason: 'ANALYZER_THREW_ON_FINAL: ' + (e && e.message) });
+        }
+        const stale = !Array.isArray(finalIssues);
+        if (stale) {
+            finalIssues = (typeof R !== 'undefined' && R[fn] && Array.isArray(R[fn].issues)) ? R[fn].issues : [];
+            report.warnings.push({ file: fn, reason: 'FINAL_REANALYSIS_FAILED — aiNeeded من آخر issues معروفة' });
+        }
+        const collected = aiByFile[fn] || [];
+        // بلا الـhelper: نُبقي كل ما جُمع (محافظ) بدل فلترة تخمينية
+        const entries = hasFinal ? RO.finalAiNeeded(collected, finalIssues) : collected;
+        entries.forEach(e => report.aiNeeded.push(Object.assign({}, e, { file: fn, staleIssues: stale || undefined })));
+    });
+}
+
 function fixAllEnginePipeline() {
     const origF = {};
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
 
-    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [] };
+    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [] };
+    const aiByFile = {};   // aiNeeded من repairCode لكل ملف — يُفلتر على الحالة النهائية في الآخر
 
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
@@ -233,6 +265,9 @@ function fixAllEnginePipeline() {
                 result = { repaired: hr.fixed, repairs: hr.repairs || [] };
             } else {
                 result = repairCode(beforeCode, issues, fn);
+                if (result && Array.isArray(result.aiNeeded)) {
+                    aiByFile[fn] = (aiByFile[fn] || []).concat(result.aiNeeded);
+                }
                 if (typeof AdvancedRepair !== 'undefined') {
                     const ar = AdvancedRepair.fix(result.repaired || beforeCode, fn);
                     if (ar.changed) {
@@ -359,6 +394,9 @@ function fixAllEnginePipeline() {
             (tF, tR) => applyEmergencyToAll(tF, tR), 'Emergency', report);
     }
 
+    // ─── aiNeeded النهائي ───
+    _collectFinalAiNeeded(F, aiByFile, report);
+
     // ─── التقرير ───
     // totalFixed يعكس ما أزالته البوابة فعليًا، لا ما ادّعته المحركات.
     const rejectedCount = report.rejected.length;
@@ -367,6 +405,7 @@ function fixAllEnginePipeline() {
       const firstReject = report.rejected[0] || {};
       msg += ' • ' + rejectedCount + ' تعديل مرفوض: ' + (firstReject.reason || 'UNKNOWN');
     }
+    if (report.aiNeeded.length > 0) msg += ' • ' + report.aiNeeded.length + ' تحتاج AI';
     toast(msg);
 
     if (typeof globalThis !== 'undefined') globalThis.lastPipelineReport = report;

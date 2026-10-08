@@ -72,6 +72,7 @@ function analyzeTypeScript(code, fileName) {
       issues.push({
         type: 'ts', sev: 'l', line: ln, ev: t,
         title: `🔵 دالة بدون return type: ${fnNoType[1]}()`,
+        strategy: null,
         fix: `// أضف return type: function ${fnNoType[1]}(...): ReturnType`,
         conf: 60, cIcon: '🔵', cAct: 'Missing type annotation',
         cEv: ['إضافة return type يحسن safety والـ autocomplete'],

@@ -206,6 +206,7 @@ var SemanticLayer = (() => {
             issues.push({
               type: 'UNSANITIZED_DB', sev: 'c', line: ln,
               title: `🔴 ${name} (user input) → DB بدون validation`,
+              strategy: null,
               ev: t, conf: 88, cIcon: '🔴', cAct: 'UNSANITIZED_DB',
               source: 'SemanticLayer',
             });

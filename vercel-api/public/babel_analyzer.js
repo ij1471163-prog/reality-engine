@@ -200,6 +200,7 @@
             issues.push({
               type:'HARDCODED_SECRET', sev:'h', line:ln,
               title:`🟠 ${name} مُضمَّن — استخدم process.env`,
+              strategy:null,
               fix:`${name} = process.env.${name}`, conf:90, cIcon:'🟠', cAct:'HARDCODED_SECRET',
             });
           }

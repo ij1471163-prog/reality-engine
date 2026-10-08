@@ -803,6 +803,7 @@ function analyzePythonSecurity(code, issues) {
         if (/^[A-Z_]+(KEY|SECRET|TOKEN|PASSWORD|PASS|PWD)\s*=\s*["'][^"']{6,}["']/i.test(t)) {
             issues.push({ type:'py', sev:'c', line:ln, ev:t,
                 title:'🔐 ' + (t.match(/^(\w+)/)?.[1] || 'Secret') + ' مكشوف في الكود',
+                strategy:'HARDCODED_SECRET',
                 fix: t.replace(/["'][^"']+["']/, "os.environ.get('" + (t.match(/^(\w+)/)?.[1] || 'SECRET') + "', '')"),
                 fixHint: 'يتطلب import os في الملف — محرك الإصلاح يضيفه، والتطبيق اليدوي يجب أن يضيفه.',
                 conf:92, cIcon:'🔐', cAct:'CWE-798' });

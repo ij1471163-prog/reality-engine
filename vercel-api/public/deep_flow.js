@@ -372,6 +372,7 @@ var DeepFlow = (() => {
           issues.push({
             type: 'HARDCODED_SECRET', sev: 'h', line: ln,
             title: `🟠 ${name} مُضمَّن — استخدم process.env.${name}`,
+            strategy: null,
             ev: t, conf: 88, cIcon: '🟠', cAct: 'HARDCODED_SECRET',
             fix: `const ${name} = process.env.${name}`,
           });

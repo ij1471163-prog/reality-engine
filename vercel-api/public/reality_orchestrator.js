@@ -675,6 +675,13 @@ var RealityOrchestrator = (() => {
     return out;
   }
 
+  // Public: the same final-state aiNeeded the pipelines compute, for callers
+  // that run their own repair loop (fix_engine_pipeline.js). `finalIssues`
+  // must be the re-analysis of the FINAL code.
+  function finalAiNeeded(aiNeeded, finalIssues) {
+    return _ensureSecurityNoDrop(_stillUnresolved(aiNeeded || [], finalIssues), finalIssues);
+  }
+
   // ─── Single REPAIR attempt (one engine) ───────────────
   function _tryRepair(engine, code, issues, fileName) {
     try {
@@ -1612,6 +1619,8 @@ var RealityOrchestrator = (() => {
     // Public approval factory (replaces makeResult)
     makeApproval,
     applyApprovedSuggestion,
+    // Final-state aiNeeded for external repair loops
+    finalAiNeeded,
     // Full pipeline
     runPipeline,
     runPipelineAsync,

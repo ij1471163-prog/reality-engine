@@ -162,9 +162,11 @@ test('unknown explicit strategy falls back to title routing', () => {
   assert.strictEqual(route({ title: 'خطأ تراكم: total = بدل +=', strategy: 42 }, 'js'), 'ACCUMULATION');
 });
 
-test('explicit strategy unsupported for the language falls back to title routing', () => {
-  // XSS_INNER_HTML غير مدعوم في py → title (فيه sql) يقرر كما كان
-  assert.strictEqual(route({ title: '🔴 XSS: sqlVar وصل لـ output', strategy: 'XSS_INNER_HTML' }, 'py'), 'SQL_INJECTION');
+test('explicit strategy unsupported for the language → null, no title fallback', () => {
+  // [backlog] كان: XSS_INNER_HTML غير مدعوم في py → title (فيه sql) → SQL_INJECTION.
+  // مفتاح معروف لكن غير مدعوم = لا إصلاح حتمي؛ الـtitle قد يحمل اسمًا يوجّه لإصلاح آخر.
+  assert.strictEqual(route({ title: '🔴 XSS: sqlVar وصل لـ output', strategy: 'XSS_INNER_HTML' }, 'py'), null);
+  assert.strictEqual(route({ title: '🔴 CMD_INJECTION: $sqlCmd → exec', strategy: 'CMD_INJECTION' }, 'php'), null);
   assert.strictEqual(route({ title: '🔴 XSS: sqlVar وصل لـ output', strategy: 'XSS_INNER_HTML' }, 'js'), 'XSS_INNER_HTML');
   // MISSING_AUTH غير مدعوم خارج js/ts ولا fallback له
   assert.strictEqual(route({ title: '🟡 Route حساس بدون Auth Middleware', strategy: 'MISSING_AUTH' }, 'php'), null);

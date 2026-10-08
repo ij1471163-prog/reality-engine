@@ -75,6 +75,50 @@ function detectExt(code, fileName) {
   return ext || 'unknown';
 }
 
+// ─── Python: import os آمن ────────────────────────────
+// إصلاح يكتب os.environ.get(...) بلا import os ينتج NameError وقت التشغيل —
+// إصلاح مزيّف يمر من الـverifier. يُضاف import os بعد shebang/encoding/
+// docstring/__future__ (قبل __future__ = SyntaxError). أي بنية غير مؤكدة ⇒ null
+// (لا إصلاح) بدل التخمين.
+function _pyBindsOs(code) {
+  return code.split('\n').some(l => {
+    const m = l.match(/^import[ \t]+([^#]+)/);
+    return !!m && m[1].split(',').some(item => /^os(\.\w+)*$/.test(item.trim()));
+  });
+}
+function _pyEnsureImportOs(code) {
+  if (_pyBindsOs(code)) return code;
+  const L = code.split('\n');
+  let i = 0;
+  if (L[0] !== undefined && L[0].startsWith('#!')) i = 1;
+  while (i < L.length && i < 2 && /^#.*coding[:=]/.test(L[i])) i++;
+  // تجاوز الأسطر الفارغة والتعليقات قبل أول جملة
+  let j = i;
+  while (j < L.length && /^\s*(#.*)?$/.test(L[j])) j++;
+  // module docstring
+  const doc = j < L.length && L[j].match(/^[rRuUbB]{0,2}("""|''')/);
+  if (doc) {
+    const q = doc[1];
+    const rest = L[j].slice(L[j].indexOf(q) + 3);
+    let end = rest.includes(q) ? j : -1;
+    for (let k = j + 1; end < 0 && k < L.length; k++) if (L[k].includes(q)) end = k;
+    if (end < 0) return null;                 // docstring غير مغلق ⇒ لا حكم
+    i = end + 1;
+  }
+  // from __future__ يجب أن يبقى أولًا
+  for (let k = i; k < L.length; k++) {
+    if (/^\s*(#.*)?$/.test(L[k])) continue;
+    if (/^from[ \t]+__future__[ \t]+import\b/.test(L[k])) {
+      if (L[k].includes('(') && !L[k].includes(')')) return null;   // متعدد الأسطر ⇒ لا حكم
+      i = k + 1;
+      continue;
+    }
+    break;
+  }
+  L.splice(i, 0, 'import os');
+  return L.join('\n');
+}
+
 // ─── Helper ───────────────────────────────────────────
 function replaceLineInCode(code, lineNum, newLine) {
   const lines = code.split('\n');
@@ -164,7 +208,13 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   if (ext === 'py') {
     if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
-    if (fixed !== line && !code.includes('import os')) lines.unshift('import os');
+    // import os يُضاف بعد كتابة السطر: lines.unshift كان يزيح ln فيُكتب السطر في
+    // الموضع الخطأ ويبقى الـsecret الأصلي في الكود
+    if (fixed === line) return null;
+    lines[ln] = fixed;
+    const withOs = _pyEnsureImportOs(lines.join('\n'));
+    if (withOs === null) return null;
+    return { fixed: withOs, patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' };
   } else if (ext === 'js' || ext === 'ts') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   } else if (ext === 'java') {
@@ -420,7 +470,12 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   }
 
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Secret moved to env variable' };
+  let out = replaceLineInCode(code, issue.line, fixed);
+  if (ext === 'py') {
+    out = _pyEnsureImportOs(out);          // بلا import os ⇒ NameError (إصلاح مزيّف)
+    if (out === null) return null;
+  }
+  return { fixed: out, patch: fixed.trim(), reason: 'Secret moved to env variable' };
 }
 
 // ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
@@ -625,11 +680,18 @@ function detectStrategy(issue, lang) {
   // strategy صريح من الـdetector نفسه: يُستخدم قبل الـtitle، لأن الـtitle قد يحمل
   // بيانات من كود المستخدم (اسم متغير، route path) فتُضلّل الكلمات المفتاحية.
   // مفتاح غير معروف أو غير مدعوم للغة → نرجع لاستنتاج الـtitle كما كان.
+  // strategy: null صريح = الـdetector يعلن "لا strategy" (الـtitle يحمل بيانات مستخدم
+  // ولا يوجد إصلاح حتمي لهذا النوع) ⇒ لا استنتاج من الـtitle.
+  if (issue && issue.strategy === null) return null;
   if (issue && typeof issue.strategy === 'string') {
     const variant = STRATEGY_LANG_VARIANTS[issue.strategy];
     const explicit = (variant && variant[lang]) || issue.strategy;
-    if (Object.prototype.hasOwnProperty.call(STRATEGIES, explicit) &&
-        STRATEGY_LANGS[explicit] && STRATEGY_LANGS[explicit].includes(lang)) return explicit;
+    if (Object.prototype.hasOwnProperty.call(STRATEGIES, explicit)) {
+      // مفتاح معروف لكن غير مدعوم لهذه اللغة ⇒ لا إصلاح، بدل fallback للـtitle
+      // (الـtitle قد يحمل اسمًا يوجّه لإصلاح آخر مدعوم، مثل $sqlCmd في PHP).
+      return (STRATEGY_LANGS[explicit] && STRATEGY_LANGS[explicit].includes(lang)) ? explicit : null;
+    }
+    // مفتاح غير معروف ⇒ title fallback كما كان
   }
 
   const t = (issue.title || '').toLowerCase();

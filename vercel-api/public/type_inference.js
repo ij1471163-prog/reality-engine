@@ -378,6 +378,7 @@ var TypeInference = (() => {
         issues.push({
           type: 'HARDCODED_SECRET', sev: 'h', line: ln,
           title: `🟠 ${name} مُضمَّن — استخدم environment variables`,
+          strategy: null,
           ev: t, conf: 88, cIcon: '🟠', cAct: 'HARDCODED_SECRET',
           fix: `${name} = process.env.${name}`,
         });

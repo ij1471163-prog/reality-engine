@@ -10,7 +10,7 @@ function analyzeJava(code, fileName) {
     if (emptyMethod.test(line)) {
       const name = line.match(/\s+(\w+)\s*\(/)?.[1];
       if (name && !['main','toString','hashCode','equals'].includes(name))
-        issues.push({type:'stub', sev:'m', title:'دالة فارغة: '+name+'()', line:i+1, ev:line.trim(), fix:null});
+        issues.push({type:'stub', sev:'m', title:'دالة فارغة: '+name+'()', strategy:null, line:i+1, ev:line.trim(), fix:null});
     }
   });
 
@@ -25,7 +25,7 @@ function analyzeJava(code, fileName) {
     if (inMethod) {
       braceCount += (line.match(/\{/g)||[]).length - (line.match(/\}/g)||[]).length;
       if (t === 'return null;' && braceCount <= 1)
-        issues.push({type:'stub', sev:'m', title:'return null بدون منطق: '+methodName+'()', line:i+1, ev:t, fix:'// أكمل المنطق هنا'});
+        issues.push({type:'stub', sev:'m', title:'return null بدون منطق: '+methodName+'()', strategy:null, line:i+1, ev:t, fix:'// أكمل المنطق هنا'});
       if (braceCount <= 0 && t.includes('}')) inMethod = false;
     }
   });
@@ -114,6 +114,7 @@ function analyzeJava(code, fileName) {
         if (_rdup) return;
         issues.push({type:'stub', sev:'m',
           title:'return null بدون منطق: ' + _methodName + '()',
+          strategy:null,
           line:_i+1, ev:_t, fix:'// أكمل المنطق هنا',
           conf:75, cIcon:'🟡', cAct:'دالة ناقصة', cEv:['الدالة ترجع null دائماً']});
       }

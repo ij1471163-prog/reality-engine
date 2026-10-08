@@ -275,7 +275,10 @@ function _registerEngines() {
     if (typeof repairCode === 'function') {
         reg('repair-engine', RO.EngineType.REPAIR, (code, issues, fileName) => {
             const r = repairCode(code, issues, fileName);
-            return { repaired: r && r.repaired, repairs: (r && r.repairs) || [], aiNeeded: [] };
+            // aiNeeded يُمرَّر كما هو: المنسّق يفلتره على الحالة النهائية (_stillUnresolved)،
+            // ورميه هنا كان يُسقط ما يحتاج AI من غير الـsecurity (مثل CALLBACK_HELL).
+            return { repaired: r && r.repaired, repairs: (r && r.repairs) || [],
+                     aiNeeded: (r && Array.isArray(r.aiNeeded)) ? r.aiNeeded : [] };
         }, ['*'], { priority: 40 });
     }
     if (typeof AdvancedRepair !== 'undefined' && AdvancedRepair && typeof AdvancedRepair.fix === 'function') {
