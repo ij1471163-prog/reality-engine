@@ -633,6 +633,20 @@ var RealityOrchestrator = (() => {
     return out;
   }
 
+  // Final aiNeeded for a REPAIR / FALLBACK result.
+  //
+  // After a failed re-analysis the last issue list describes the code BEFORE
+  // the last verified patch, so it cannot prove anything was fixed: nothing is
+  // dropped against it, and every critical / aiRequired issue it still lists
+  // is forwarded. Over-reporting an issue the last patch may have fixed is the
+  // safe side; passing null here used to hide critical issues entirely.
+  function _finalAiNeeded(aiList, finalRemaining, reanalysisFailed) {
+    if (reanalysisFailed) {
+      return _withUnclaimedCritical(_stillUnresolved(aiList, null), finalRemaining);
+    }
+    return _withUnclaimedCritical(_stillUnresolved(aiList, finalRemaining), finalRemaining);
+  }
+
   // ─── Single REPAIR attempt (one engine) ───────────────
   function _tryRepair(engine, code, issues, fileName) {
     try {
@@ -756,9 +770,7 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must describe the FINAL state, not the pre-repair state.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _withUnclaimedCritical(
-      _stillUnresolved(aiNeeded, finalRemaining),
-      reanalysisFailed ? null : finalRemaining);
+    const unresolvedAi   = _finalAiNeeded(aiNeeded, finalRemaining, reanalysisFailed);
 
     return _deepFreeze({
       phase: 'REPAIR', fileName, original: code,
@@ -939,9 +951,7 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must reflect the FINAL verified state, not the original scan.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _withUnclaimedCritical(
-      _stillUnresolved(allAiNeeded, finalRemaining),
-      reanalysisFailed ? null : finalRemaining);
+    const unresolvedAi   = _finalAiNeeded(allAiNeeded, finalRemaining, reanalysisFailed);
 
     return _deepFreeze({
       phase: 'FALLBACK', fileName, stages,
@@ -1063,6 +1073,8 @@ var RealityOrchestrator = (() => {
         aiRequiredCount: aiNeeded.length,
         fileFullyResolved: false,
         remainingIssues: remainingIssues || null,
+        reanalysisFailed: false,
+        remainingIssuesStale: false,
         origin: 'DETERMINISTIC',
         aiGenerated: false,
         humanApproved: false,
@@ -1088,6 +1100,13 @@ var RealityOrchestrator = (() => {
     const verifyFromFall  = isFallback ? repairOrFallback.verifyResult : null;
     const effectiveVerify = verifyFromFall || verifyPhase;
     const source          = isFallback ? Source.FALLBACK : Source.REPAIR_ENGINE;
+    // Re-analysis failed after a verified patch: the file's state after that
+    // patch is unknown, so it can never be reported as SAFE_AUTO_FIX.
+    const reanalysisFailed = repairOrFallback.reanalysisFailed === true;
+    const staleMeta = reanalysisFailed
+      ? { reanalysisFailed: true, remainingIssuesStale: true } : {};
+    const staleNote = reanalysisFailed
+      ? ' — re-analysis failed, file state unconfirmed' : '';
 
     // ── [v0.4] Path 0: deterministic patch AND a Claude suggestion ──
     // Pre-existing ordering bug: Path 1 returned SAFE_AUTO_FIX as soon as a
@@ -1111,12 +1130,12 @@ var RealityOrchestrator = (() => {
       if (!aiVerified) {
         // Claude's patch failed verification — fall through to the normal
         // deterministic path below by reporting only the verified part.
-        if (detOk && aiNeeded.length > 0) {
+        if (detOk && (aiNeeded.length > 0 || reanalysisFailed)) {
           return _partialFix(source, repairedCode, safeRepairs, aiNeeded,
             effectiveVerify, repairOrFallback.remainingIssues,
             `${safeRepairs.length} repair(s) verified — Claude suggestion failed verification; ` +
-            `${aiNeeded.length} issue(s) still require AI`,
-            { aiSuggestionRejected: true });
+            `${aiNeeded.length} issue(s) still require AI${staleNote}`,
+            Object.assign({ aiSuggestionRejected: true }, staleMeta));
         }
         return _makeResult(_INTERNAL,
           detOk ? Decision.SAFE_AUTO_FIX : Decision.REJECTED,
@@ -1181,11 +1200,11 @@ var RealityOrchestrator = (() => {
         // Reporting SAFE_AUTO_FIX there let callers treat the patch as the
         // fixed file. The verified code moves to meta.deterministicPatch and
         // `patch` stays null, so nothing reads it as a full fix.
-        if (aiNeeded.length > 0) {
+        if (aiNeeded.length > 0 || reanalysisFailed) {
           return _partialFix(source, repairedCode, safeRepairs, aiNeeded,
             effectiveVerify, repairOrFallback.remainingIssues,
-            `${safeRepairs.length} repair(s) verified — ${aiNeeded.length} issue(s) still require AI`,
-            {});
+            `${safeRepairs.length} repair(s) verified — ${aiNeeded.length} issue(s) still require AI${staleNote}`,
+            staleMeta);
         }
         return _makeResult(_INTERNAL,
           Decision.SAFE_AUTO_FIX,
@@ -1198,6 +1217,7 @@ var RealityOrchestrator = (() => {
             aiRequiredCount: 0,
             fileFullyResolved: true,
             remainingIssues: repairOrFallback.remainingIssues || null,
+            reanalysisFailed: false,
             // [v0.4.1] provenance — mirrors applyApprovedSuggestion()
             origin: 'DETERMINISTIC',
             aiGenerated: false,
