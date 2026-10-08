@@ -1137,13 +1137,36 @@ var RealityOrchestrator = (() => {
             `${aiNeeded.length} issue(s) still require AI${staleNote}`,
             Object.assign({ aiSuggestionRejected: true }, staleMeta));
         }
+        if (detOk) {
+          // Nothing left in aiNeeded and re-analysis succeeded: the verified
+          // deterministic patch resolves the file on its own, exactly as in
+          // Path 1. The rejected Claude patch does not change that, so the
+          // meta must agree with SAFE_AUTO_FIX (this used to hard-code
+          // fileFullyResolved=false next to SAFE_AUTO_FIX).
+          return _makeResult(_INTERNAL,
+            Decision.SAFE_AUTO_FIX,
+            source,
+            repairedCode,
+            `${safeRepairs.length} repair(s) verified — Claude suggestion failed verification`,
+            { safeRepairs, aiNeeded, verifyResult: effectiveVerify,
+              partial: false,
+              deterministicRepairCount: safeRepairs.length,
+              aiRequiredCount: 0,
+              fileFullyResolved: true,
+              remainingIssues: repairOrFallback.remainingIssues || null,
+              reanalysisFailed: false,
+              aiSuggestionRejected: true,
+              origin: 'DETERMINISTIC',
+              aiGenerated: false,
+              humanApproved: false,
+              deterministic: true }
+          );
+        }
         return _makeResult(_INTERNAL,
-          detOk ? Decision.SAFE_AUTO_FIX : Decision.REJECTED,
-          detOk ? source : Source.ORCHESTRATOR,
-          detOk ? repairedCode : null,
-          detOk
-            ? `${safeRepairs.length} repair(s) verified — Claude suggestion failed verification`
-            : 'Claude suggestion failed verification and policy blocked the deterministic patch',
+          Decision.REJECTED,
+          Source.ORCHESTRATOR,
+          null,
+          'Claude suggestion failed verification and policy blocked the deterministic patch',
           { safeRepairs, aiNeeded, verifyResult: effectiveVerify,
             partial: aiNeeded.length > 0,
             deterministicRepairCount: safeRepairs.length,
