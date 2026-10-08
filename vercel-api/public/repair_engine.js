@@ -267,14 +267,45 @@ function _isCommandExecCall(code, line, execIndex) {
   const CP = `['"](?:node:)?child_process['"]`;
   // بين الاسم وfrom لا يصحّ إلا بند import حقيقي: `, { ... }` أو `, * as ns`
   const CLAUSE = `(?:,\\s*(?:\\*\\s+as\\s+[A-Za-z_$][\\w$]*|\\{[^}]*\\}))?`;
-  return new RegExp(
+
+  // [FIX] دليل نصّي غامض لا يُثبت الربط، فيُرفض كالمستقبِل المجهول. حلّ الغموض
+  // يحتاج تحليل نطاق/تدفّق، لكن كشفه والرفض عنده لا يحتاجه.
+
+  // (أ) المعرّف يظهر معاملًا لدالة ⇒ قد يُظلّل الربط في نطاق آخر.
+  for (const pm of scan.matchAll(/\bfunction\b[^(]*\(([^()]*)\)|\(([^()]*)\)\s*=>/g)) {
+    const params = (pm[1] !== undefined ? pm[1] : pm[2]).split(',');
+    for (const p of params)
+      if (p.replace(/[=:].*$/, '').replace(/^\s*\.\.\./, '').trim() === recv[1]) return false;
+  }
+
+  // (ب) المعرّف يُسند من شيء غير require('child_process') ⇒ الربط قد يكون بائتًا.
+  const CP_RHS = new RegExp(`^\\s*require\\s*\\(\\s*${CP}\\s*\\)`);
+  // الطرف الأيمن قد يبدأ على السطر التالي (const cp =\n  require(...))، فيُقرأ
+  // حتى الفاصلة المنقوطة؛ والفحص مثبَّت على البداية فلا يضرّ طوله.
+  for (const am of scan.matchAll(new RegExp(`(?:^|[^\\w$.])${esc}\\s*=(?![=>])([^;]*)`, 'g')))
+    if (!CP_RHS.test(am[1])) return false;
+
+  // (ج) الدليل يجب أن يكون كودًا لا محتوى نصٍّ حرفي.
+  const binding = new RegExp(
     // cp = require(...) تعريفًا أو إعادة إسناد — لكن ليس عضوًا مثل obj.cp
     `(?:^|[^\\w$.])${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)` +
     // import cp / import * as cp / import cp, { spawn } / import cp, * as ns
     `|\\bimport\\s+(?:\\*\\s+as\\s+)?${esc}\\b\\s*${CLAUSE}\\s+from\\s+${CP}` +
     // TypeScript: import cp = require('...')
-    `|\\bimport\\s+${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)`
-  ).test(scan);
+    `|\\bimport\\s+${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)`, 'g');
+  // المطابقة تجري على الكود كاملًا (فالربط قد يمتد سطرين)، ثم يُعيَّن موضع
+  // بدايتها إلى سطره لفحص النصوص الحرفية عند ذلك العمود.
+  const srcLines = scan.split('\n');
+  const lineStart = [];
+  for (let i = 0, at = 0; i < srcLines.length; i++) { lineStart.push(at); at += srcLines[i].length + 1; }
+  for (const bm of scan.matchAll(binding)) {
+    let li = 0;
+    while (li + 1 < lineStart.length && lineStart[li + 1] <= bm.index) li++;
+    const col = bm.index - lineStart[li];
+    const lits = _lineLiterals(srcLines[li], 'js');
+    if (!lits.some(q => q.kind === 'string' && col > q.start && col < q.end - 1)) return true;
+  }
+  return false;
 }
 
 function fixCommandInjection(code, issue, lines2, ext2, fileName) {
