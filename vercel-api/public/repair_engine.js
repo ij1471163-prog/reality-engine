@@ -327,6 +327,55 @@ function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
   return { fixed: lines.join('\n'), patch: fixedLine.trim(), reason: 'Weak crypto MD5/SHA1 → SHA256' };
 }
 
+// ─── WEAK_CRYPTO: سياق credential ─────────────────────
+// يُرجع سبب منع إعادة الكتابة أو null. الأسماء هنا تُستخدم فقط لـ"منع" إصلاح
+// (أكثر تحفظًا)، لا لإثبات أمان أي شيء.
+const _CREDENTIAL_RE = /pass(?:word|wd|phrase)|pwd|credential/i;
+
+// توقيع الدالة المحيطة بالسطر (js/ts/php: بموازنة الأقواس، py: بالإزاحة)
+function _enclosingFunctionSig(lines, idx, ext) {
+  if (ext === 'py') {
+    const ind = (lines[idx].match(/^\s*/) || [''])[0].length;
+    for (let k = idx - 1; k >= 0; k--) {
+      const m = lines[k].match(/^(\s*)(?:async\s+)?def\s+\w+\s*\(([^)]*)\)/);
+      if (m && m[1].length < ind) return { line: lines[k], params: m[2] };
+      if (/^\S/.test(lines[k]) && !/^\s*(#|@)/.test(lines[k]) && lines[k].trim()) break;   // خرجنا لمستوى الـmodule
+    }
+    return null;
+  }
+  let depth = 0;
+  for (let k = idx - 1; k >= 0 && k >= idx - 200; k--) {
+    const l = lines[k];
+    depth += (l.split('}').length - 1) - (l.split('{').length - 1);
+    if (depth < 0) {
+      const m = l.match(/function\s*\w*\s*\(([^)]*)\)/) || l.match(/\(([^)]*)\)\s*(?::\s*[\w<>[\]| ]+)?\s*=>/) ||
+                l.match(/(\w+)\s*=>/) || l.match(/^\s*(?:async\s+)?\w+\s*\(([^)]*)\)\s*\{/);
+      if (m) return { line: l, params: m[1] || '' };
+      depth = 0;   // كتلة ليست دالة (if/for) — نكمل للأعلى
+    }
+  }
+  return null;
+}
+
+function weakCryptoCredentialProblem(code, issue, ext) {
+  const raw = [issue.cwe, issue.cAct, issue.title].filter(Boolean).join(' ');
+  if (/CWE-?(916|759|760)\b|password|كلمة\s*(ال)?مرور/i.test(raw)) return 'WEAK_CRYPTO_PASSWORD_HASH';
+  const lines = code.split('\n');
+  const idx = issue.line - 1;
+  const line = lines[idx] || '';
+  if (_CREDENTIAL_RE.test(line)) return 'WEAK_CRYPTO_CREDENTIAL_CONTEXT';
+  const fn = _enclosingFunctionSig(lines, idx, ext);
+  if (fn) {
+    if (_CREDENTIAL_RE.test(fn.line)) return 'WEAK_CRYPTO_CREDENTIAL_CONTEXT';
+    const params = fn.params.split(',')
+      .map(p => p.trim().replace(/^\.\.\./, '').split(/[\s=:]/)[0].replace(/^\$/, ''))
+      .filter(p => /^\w+$/.test(p) && p !== 'self');
+    const used = params.find(p => new RegExp('(^|[^\\w$])\\$?' + p + '\\b').test(line));
+    if (used) return 'WEAK_CRYPTO_INPUT_FROM_CALLER (' + used + ')';
+  }
+  return null;
+}
+
 // ─── NameError Fix — يستخدم issue.line أولاً ─────────
 function fixNameError(code, issue) {
   const lines = code.split('\n');
@@ -1428,6 +1477,22 @@ function repairCode(code, issues, fileName) {
         result = null;
       }
     }
+    // (بعد حارس الـliteral: target داخل نص يُرفض بسببه الأدق أولًا)
+    // WEAK_CRYPTO: md5/sha1 → sha256 ليس إصلاحًا لـhash كلمة مرور (يبقى قابلًا
+    // للكسر، والمحلل يتوقف عن الإبلاغ ⇒ SAFE_AUTO_FIX مزيّف). لا إعادة كتابة إذا
+    // كان السياق credential أو المدخل parameter لا نعرف مصدره (قد يكون ملفًا آخر).
+    if ((stratKey === 'WEAK_CRYPTO' || stratKey === 'MD5_USAGE' || stratKey === 'WEAK_HASH') &&
+        result && result.fixed !== repairedCode) {
+      const problem = weakCryptoCredentialProblem(repairedCode, issue, ext);
+      if (problem) {
+        rejected.push({ line: issue.line, strategy: stratKey, source: 'fixWeakCrypto', reason: problem });
+        aiNeeded.push({ line: issue.line, title: issue.title, strategy: stratKey,
+          reason: problem + ' — needs a password KDF (bcrypt/scrypt/Argon2) or proof the input is not a credential',
+          ev: issue.ev });
+        return;
+      }
+    }
+
 
     if (!result || result.fixed === repairedCode) {
       // SQL fallback: استخدم الـlegacy fixer فقط كمولّد candidate.
