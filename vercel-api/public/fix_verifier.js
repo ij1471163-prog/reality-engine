@@ -409,15 +409,43 @@ var FixVerifier = (() => {
    * هوية مستقرة: لا تعتمد على رقم السطر ولا على نص الكود.
    * لا نفترض وجود i.type - نقبل أي معرّف متاح بالترتيب.
    */
+  // وسم تصنيف: الأرقام فيه ذات معنى (CWE-89 ليست CWE-78) — تُحفظ
+  function _normTag(s) {
+    return String(s).toLowerCase().replace(/\s+/g, " ").trim().slice(0, 80);
+  }
+  // نصّ حر: الأرقام والصياغة لا تصنع هوية جديدة (نفس قاعدة الفرع النصّي)
+  function _normText(s) {
+    return String(s).toLowerCase().replace(/\d+/g, "#").replace(/\s+/g, " ").trim().slice(0, 80);
+  }
+
+  // [FIX] type وحده خشن جدًا: "bug" يغطي == و var و أخطاء التراكم. فمشكلة
+  // جديدة كانت تختفي مقابل مشكلة أخرى مختلفة أُصلحت تحت نفس المفتاح
+  // (bug|f: 2 → 2 ⇒ worsened = 0 ⇒ "بلا تدهور")، والشدّة لا تدخل القرار
+  // حين يكون worsened فارغًا. يُضاف تمييز بنيوي: cwe/cAct/strategy ثوابت
+  // تصنيف لا تحمل أسماء المستخدم — بخلاف title ("Dead Assignment: b") الذي
+  // لو اعتُمد خامًا صارت إعادة تسمية متغيّر مشكلةً جديدة.
+  function issueFacet(issue) {
+    // ruleId/rule/id هوية صريحة بذاتها — لا تُجزَّأ أكثر
+    if (issue.ruleId || issue.rule || issue.id) return "";
+    const structural = issue.cwe || issue.cAct || issue.strategy;
+    if (structural) return _normTag(structural);
+    const text = issue.title || issue.message || issue.name || "";
+    return text ? "t:" + _normText(text) : "";
+  }
+
   function issueKey(issue, fallbackFile) {
     if (issue == null) return "unknown";
     if (typeof issue === "string") {
       return "raw|" + String(issue).replace(/\s+/g, "").toLowerCase().replace(/\d+/g, "#").slice(0, 100);
     }
-    const stable = issue.ruleId || issue.rule || issue.id || issue.type
-      || issue.name || issue.title || issue.category || "issue";
+    // نفس ترتيب الأولوية السابق؛ الفرق أن القيمة النصّية (name/title) تُعيَّر
+    // بدل أن تدخل خامًا، فاختلاف الصياغة أو الأرقام لا يصنع هوية جديدة.
+    let stable = issue.ruleId || issue.rule || issue.id || issue.type, fromText = false;
+    if (!stable) { stable = issue.name || issue.title; fromText = !!stable; }
+    if (!stable) stable = issue.category || "issue";
+    const base = fromText ? "t:" + _normText(stable) : String(stable);
     const file = issue.file || issue.filename || fallbackFile || "";
-    return String(stable) + "|" + String(file);
+    return base + "|" + issueFacet(issue) + "|" + String(file);
   }
 
   function issueCounts(issues, fallbackFile) {
