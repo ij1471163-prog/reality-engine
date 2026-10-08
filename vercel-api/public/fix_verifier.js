@@ -643,16 +643,66 @@ var FixVerifier = (() => {
     return result;
   }
 
+  // المتغيّر يُحَلّ إلى نص حرفي واحد بلا غموض، أو null.
+  // أي إسناد ثانٍ، أو إسناد لغير نص حرفي مفرد (تجميع، template، استدعاء)،
+  // يعني أننا لا نعرف ما يحمله المتغيّر عند الاستدعاء ⇒ null (fail-closed).
+  function _soleStringLiteralOf(code, varName) {
+    const esc = String(varName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(?:^|[^\\w$.])(?:const|let|var)?\\s*${esc}\\s*=(?!=)([^;\\n]*)`, "g");
+    let found = null, seen = 0;
+    for (const m of code.matchAll(re)) {
+      seen++;
+      if (seen > 1) return null;
+      const lit = m[1].trim().replace(/;$/, "").match(/^(['"])((?:\\.|(?!\1)[^\\])*)\1$/);
+      if (!lit) return null;
+      found = lit[2];
+    }
+    return seen === 1 ? found : null;
+  }
+
+  // إثبات parameterization مربوط: الاستعلام في متغيّر، والمعاملات في نفس
+  // الاستدعاء، وعدد ? في الاستعلام نفسه يساوي عدد المعاملات نفسها.
+  // وجود النصين في الملف لا يكفي — الربط هو ما يُثبَت هنا.
+  // أي غموض (spread، مصفوفة غير حرفية، إسناد متعدد، تعبير مركّب، بلا كلمة
+  // SQL، بلا placeholders، عدم تطابق العدد) ⇒ لا إثبات.
+  function _jsBoundQueryProof(code) {
+    const callRe = /\.\s*(?:query|execute)\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*\[([^[\]]*)\]\s*[,)]/g;
+    for (const m of code.matchAll(callRe)) {
+      const argsRaw = m[2].trim();
+      if (!argsRaw || /\.\.\./.test(argsRaw)) continue;
+      const argCount = argsRaw.split(",").map(s => s.trim()).filter(Boolean).length;
+      if (!argCount) continue;
+
+      const lit = _soleStringLiteralOf(code, m[1]);
+      if (lit === null) continue;
+      if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(lit)) continue;
+
+      const placeholders = (lit.match(/\?/g) || []).length;
+      if (placeholders === 0 || placeholders !== argCount) continue;
+
+      return true;
+    }
+    return false;
+  }
+
   // SQL candidate guard — لا يكفي اختفاء SQL Injection من الـAnalyzer.
   // يجب أن يثبت الـcandidate وجود parameterization مناسب للغة.
   function sqlCandidateLooksParameterized(beforeCode, afterCode, fileName) {
     const ext = String(fileName).split('.').pop().toLowerCase();
 
     if (ext === 'js' || ext === 'ts') {
+      // البدائل الثلاثة الأولى كما هي — لا تضييق ولا توسيع لأي منها.
+      // [FIX] أُضيف بديل رابع: البدائل النصّية تشترط أن يلي اقتباسَ نهاية
+      // الاستعلام ", [" مباشرة، أي الاستعلام داخل الاستدعاء. فإصلاح صحيح
+      // يضع الاستعلام في متغيّر ثم db.query(q, [params]) — وهو الشكل الوحيد
+      // الذي يُنتجه SmartRepair، والأشيع في الكود الحقيقي — كان يُرفض رغم
+      // أن ربطه مُثبت: نفس الربط بنقل النص داخل الاستدعاء يُقبل. البديل
+      // الجديد يُثبت الربط نفسه ويعدّه، ولا يورث سَعَة البحث النصّي.
       return (
         /\?\s*["'`]\s*,\s*\[[\s\S]*\]/.test(afterCode) ||
         /\$\d+/.test(afterCode) ||
-        /\bparams?\s*[,)]/.test(afterCode)
+        /\bparams?\s*[,)]/.test(afterCode) ||
+        _jsBoundQueryProof(afterCode)
       );
     }
 
