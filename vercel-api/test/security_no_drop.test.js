@@ -265,3 +265,59 @@ test('browser-style wrapper (aiNeeded: []) still keeps MISSING_AUTH (P1 explicit
   assert.ok(ai.some(e => e.strategy === 'MISSING_AUTH'), 'route auth finding kept with its explicit strategy');
   assert.ok(!ai.some(e => e.strategy === 'EVAL_USAGE'));
 });
+
+// ═══ 10. reanalysisFailed يمنع SAFE_AUTO_FIX ═════════════
+// لا إثبات أن الـverified patch أصلح الحالة النهائية → NEEDS_VERIFY
+// (القرار الموجود لـ"patch موجود، التحقق غير مكتمل")، مع بقاء الـpatch و aiNeeded.
+test('verified patch + reanalysisFailed → not SAFE_AUTO_FIX (NEEDS_VERIFY, patch kept)', () => {
+  const out = pipeline({ initial: [F.bugM], after: 'throw', repair: patchesSomethingElse }).run();
+  const d = out.decision;
+  assert.notStrictEqual(d.decision, 'SAFE_AUTO_FIX');
+  assert.strictEqual(d.decision, 'NEEDS_VERIFY');
+  assert.strictEqual(typeof d.patch, 'string', 'verified patch is carried, not lost');
+  assert.strictEqual(d.meta.reanalysisFailed, true);
+  assert.strictEqual(d.meta.remainingIssuesStale, true);
+  assert.strictEqual(d.meta.fileFullyResolved, false);
+  assert.strictEqual(d.meta.safeAutoFixWithheld, true);
+  assert.strictEqual(out.phases.fallback.reanalysisFailed, true);
+});
+
+test('verified patch + successful re-analysis + no security leftovers → still SAFE_AUTO_FIX', () => {
+  const out = pipeline({ initial: [F.httpM, F.bugM], after: [], repair: patchesSomethingElse }).run();
+  assert.strictEqual(out.decision.decision, 'SAFE_AUTO_FIX');
+  assert.strictEqual(out.decision.meta.fileFullyResolved, true);
+  assert.strictEqual(out.phases.fallback.reanalysisFailed, false);
+  assert.ok(!('safeAutoFixWithheld' in out.decision.meta));
+});
+
+test('security leftovers + successful re-analysis → stay in aiNeeded', () => {
+  const out = pipeline({ initial: [F.httpM, F.auditL, F.bugM], after: [F.httpM, F.auditL], repair: patchesSomethingElse }).run();
+  assert.strictEqual(out.phases.fallback.reanalysisFailed, false);
+  assert.ok(has(aiOf(out), F.httpM) && has(aiOf(out), F.auditL));
+  assert.strictEqual(out.decision.meta.fileFullyResolved, false);
+});
+
+test('security leftovers + reanalysisFailed → stay in aiNeeded and no SAFE_AUTO_FIX', () => {
+  const out = pipeline({ initial: [F.httpM, F.evalC, F.auditL], after: 'throw', repair: patchesSomethingElse }).run();
+  assert.strictEqual(out.decision.decision, 'NEEDS_VERIFY');
+  const ai = out.decision.meta.aiNeeded;
+  assert.ok(has(ai, F.httpM) && has(ai, F.evalC) && has(ai, F.auditL));
+  assert.strictEqual(out.decision.meta.fileFullyResolved, false);
+});
+
+test('reanalysisFailed gate also covers the runRepair path and the Claude path', () => {
+  const p = pipeline({ initial: [F.bugM], after: 'throw', repair: patchesSomethingElse });
+  const out = p.run({ useFallbackChain: false });
+  assert.strictEqual(out.phases.repair.reanalysisFailed, true);
+  assert.strictEqual(out.decision.decision, 'NEEDS_VERIFY');
+  // decide() مباشرة: verified deterministic patch + Claude engine patch، re-analysis فاشلة
+  const RO = p.RO;
+  const fb = { phase: 'FALLBACK', reanalysisFailed: true, verifiedCode: 'x2', safeRepairs: [{ line: 1 }],
+    aiNeeded: [{ line: 1, title: 't' }], verifyResult: { valid: true, improved: true }, remainingIssues: [] };
+  const d = RO.decide(fb, { valid: true, improved: true },
+    { decision: 'AI_SUGGESTION', patch: 'x3', source: 'claude-repair-engine' });
+  assert.notStrictEqual(d.decision, 'SAFE_AUTO_FIX');
+  assert.strictEqual(d.meta.fileFullyResolved, false);
+  const ok = RO.decide(Object.assign({}, fb, { reanalysisFailed: false }), null, null);
+  assert.strictEqual(ok.decision, 'SAFE_AUTO_FIX', 'same input without reanalysisFailed is unchanged');
+});

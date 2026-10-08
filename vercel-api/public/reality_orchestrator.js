@@ -1084,7 +1084,35 @@ var RealityOrchestrator = (() => {
   }
 
   // ─── DECIDE phase (Policy gated) ─────────────────────
+  // [P2] reanalysisFailed gate: when re-analysis failed after a verified patch
+  // there is no proof the patch fixed the final state (remainingIssues is
+  // stale), so SAFE_AUTO_FIX is withheld from every path and downgraded to
+  // NEEDS_VERIFY — the existing "patch present, verification incomplete"
+  // decision. The patch, aiNeeded and all meta are kept; the file is never
+  // reported as fully resolved.
   function decide(repairOrFallback, verifyPhase, aiPhase) {
+    const d = _decideCore(repairOrFallback, verifyPhase, aiPhase);
+    if (repairOrFallback && repairOrFallback.reanalysisFailed === true &&
+        d.decision === Decision.SAFE_AUTO_FIX) {
+      return _makeResult(_INTERNAL,
+        Decision.NEEDS_VERIFY,
+        d.source,
+        d.patch,
+        'Re-analysis failed after verified patch — final state unproven, ' +
+        'SAFE_AUTO_FIX withheld (Fail-Closed)',
+        Object.assign({}, d.meta, {
+          reanalysisFailed: true,
+          remainingIssuesStale: true,
+          fileFullyResolved: false,
+          safeAutoFixWithheld: true,
+          withheldReason: d.reason,
+        })
+      );
+    }
+    return d;
+  }
+
+  function _decideCore(repairOrFallback, verifyPhase, aiPhase) {
     const phase = repairOrFallback && repairOrFallback.phase;
     if (phase !== 'REPAIR' && phase !== 'FALLBACK') {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
