@@ -290,7 +290,10 @@ var GhostMode = (() => {
     } else if (s >= 15 && !noFix) {
       return { verdict: VERDICT.PARTIAL, score: s, reason: 'partial_fix', targetGone: gone };
     } else {
-      return { verdict: VERDICT.FAIL,    score: s, reason: 'no_improvement' };
+      // totalDown معلومة فقط (verdict/score/reason كما هي): fix() يمرّر هذا
+      // المرشّح للبوابة، لأن إزالة مشاكل l/m فقط لا تصل score 75 ولا تغيّر c/h.
+      return { verdict: VERDICT.FAIL,    score: s, reason: 'no_improvement',
+               totalDown: fixedAnalysis.total < origAnalysis.total };
     }
   }
 
@@ -318,7 +321,10 @@ var GhostMode = (() => {
     // المرشّح الأساسي: يُعرض على البوابة إذا لم يسقط في precheck.
     // ملاحظة: PARTIAL لم يعد يخرج مباشرة — صار مرشّحًا كغيره.
     const candidates = [];
-    if (v.verdict === VERDICT.PASS || v.verdict === VERDICT.PARTIAL) {
+    // no_improvement مع نقص العدد الكلي (إصلاح مشاكل l/m فقط، بلا regression):
+    // يُعرض على البوابة أيضًا — FixVerifier هو من يقبل أو يرفض.
+    if (v.verdict === VERDICT.PASS || v.verdict === VERDICT.PARTIAL ||
+        (v.reason === 'no_improvement' && v.totalDown)) {
       candidates.push({ code: fixedCode, method: 'primary', score: v.score, localVerdict: v.verdict });
     }
 
