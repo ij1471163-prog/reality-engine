@@ -66,7 +66,16 @@ function scanSecurity(code, fileName) {
     }
 
     // ─── 5. Command Injection ───────────────────────
-    if (/(?:\bexec\s*\(|\bspawn\s*\(|\bos\.system\s*\(|\bsubprocess\.(?:run|Popen|call|check_output)\s*\()/i.test(t) &&
+    // [FIX] subprocess بقائمة وسائط وبلا shell=True لا يستدعي شِلًّا، فلا تُحقن
+    // metacharacters — وهي بالضبط التوصية في cEv أدناه، فكان الكاشف يُبلّغ عن
+    // علاجه الموصى به كثغرة حرجة. يبقى مكشوفًا: shell=True (ولو مع قائمة)،
+    // وتمرير command string، و os.system/exec/spawn بلا تغيير.
+    const _cmdOtherSink = /(?:\bexec\s*\(|\bspawn\s*\(|\bos\.system\s*\()/i.test(t);
+    const _cmdSubprocess = /\bsubprocess\.(?:run|Popen|call|check_output|check_call)\s*\(/i.test(t);
+    const _cmdShellTrue = /\bshell\s*=\s*True\b/i.test(t);
+    const _cmdArgList = /\bsubprocess\.\w+\s*\(\s*(?:\[|shlex\.split\s*\()/i.test(t);
+    const _cmdSubprocessRisky = _cmdSubprocess && (_cmdShellTrue || !_cmdArgList);
+    if ((_cmdOtherSink || _cmdSubprocessRisky) &&
         /\+|f"|f'|\$\{/.test(t)) {
       issues.push({
         type: 'security', sev: 'c',
