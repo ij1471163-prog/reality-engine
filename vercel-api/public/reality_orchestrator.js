@@ -27,6 +27,9 @@
 //      patch is safe to apply", NOT "the file is now clean".
 //  11. Claude receives ALL remaining AI_REQUIRED issues, and every suggestion
 //      is verified individually. Claude still can never reach SAFE_AUTO_FIX.
+//  12. [P2] Security no-drop: every security finding still present in the
+//      final state is in aiNeeded, whatever its severity or strategy, and
+//      whether or not a repair engine reported it (see _ensureSecurityNoDrop).
 // ═══════════════════════════════════════════════════════
 
 "use strict";
@@ -603,6 +606,75 @@ var RealityOrchestrator = (() => {
     return kept;
   }
 
+  // ─── [P2] Security finding no-drop guarantee ───────────
+  // repair engines only report the AI_REQUIRED entries they know about: a
+  // finding with no strategy, a strategy unsupported for the language, or a
+  // refused/failed deterministic fix produced no entry, so _stillUnresolved()
+  // had nothing to keep and the finding vanished from aiNeeded even though
+  // re-analysis still reported it. The final state now adds every security
+  // finding that is still present and not already covered.
+  //
+  // Classification uses only structural fields set by the detector (type,
+  // cwe, CWE-n in cAct, explicit strategy) — never the title, which carries
+  // user data. Non-security findings are never added here.
+  const _SECURITY_TYPES = new Set([
+    'SECURITY', 'SECRET', 'TAINT', 'CRYPTO', 'THREAT',
+    'XSS', 'DOM_XSS', 'SQL_INJECTION', 'SQLFLOW', 'NOSQL_INJECTION',
+    'CMD_INJECTION', 'CODE_INJECTION', 'PATH_TRAVERSAL', 'FILE_INCLUSION',
+    'OPEN_REDIRECT', 'SSRF', 'SSTI', 'XXE', 'DESERIAL', 'PROTO_POLLUTION',
+    'MASS_ASSIGN', 'REDOS', 'TIMING_ATTACK', 'HARDCODED_SECRET',
+    'SECRET_EXPOSURE', 'WEAK_SECRET', 'WEAK_CRYPTO', 'WEAK_RANDOM',
+    'DATA_EXPOSURE', 'UNSANITIZED_DB', 'INSECURE_HTTP', 'INSECURE_COOKIE',
+    'CORS', 'MISCONFIG', 'DEBUG_MODE', 'ELECTRON', 'BUFFER',
+    'MISSING_AUTH', 'AUTH_WEAKNESS', 'JWT_UNVERIFIED', 'JWT_NONE', 'JWT_EXPIRED',
+  ]);
+  // Explicit (detector-set) strategies that are security classes.
+  const _SECURITY_STRATEGIES = new Set([
+    'XSS_INNER_HTML', 'HTTP_USAGE', 'HARDCODED_SECRET', 'LOG_SECRET', 'API_KEY',
+    'SQL_INJECTION', 'EVAL_USAGE', 'WEAK_CRYPTO', 'MD5_USAGE', 'WEAK_HASH',
+    'HARDCODED_PASS', 'CMD_INJECTION', 'CMD_INJECTION_PY', 'MISSING_AUTH',
+  ]);
+  const _CWE_RE = /^CWE[-_]\d+/i;
+
+  function _isSecurityFinding(i) {
+    if (!i || typeof i !== 'object') return false;
+    const type = String(i.type || '').toUpperCase();
+    if (_SECURITY_TYPES.has(type) || _CWE_RE.test(type)) return true;
+    if (typeof i.cwe === 'string' && _CWE_RE.test(i.cwe.trim())) return true;
+    if (typeof i.cAct === 'string' && _CWE_RE.test(i.cAct.trim())) return true;
+    if (typeof i.strategy === 'string' && _SECURITY_STRATEGIES.has(i.strategy)) return true;
+    return false;
+  }
+
+  // An aiNeeded entry covers a finding when it names the same finding
+  // (title) at the same occurrence (evidence, or line). Each entry covers at
+  // most one finding, so N identical findings need N entries.
+  function _ensureSecurityNoDrop(aiNeeded, remaining) {
+    const out = Array.isArray(aiNeeded) ? aiNeeded.slice() : [];
+    if (!Array.isArray(remaining)) return out;
+    const used = new Set();
+    const covers = (e, f) =>
+      e && String(e.title || '') === String(f.title || '') &&
+      ((_issueEvidence(e) && _issueEvidence(e) === _issueEvidence(f)) ||
+       (e.line !== undefined && e.line === f.line));
+    remaining.forEach(f => {
+      if (!_isSecurityFinding(f)) return;
+      const idx = out.findIndex((e, k) => !used.has(k) && covers(e, f));
+      if (idx >= 0) { used.add(idx); return; }
+      used.add(out.length);
+      out.push({
+        line: f.line, title: f.title, ev: f.ev,
+        sev: f.sev, type: f.type, cwe: f.cwe,
+        strategy: typeof f.strategy === 'string' ? f.strategy : null,
+        reason: 'SECURITY_UNRESOLVED — security finding still present after ' +
+                'deterministic repair and re-analysis (no strategy, unsupported, ' +
+                'refused or failed fix)',
+        securityNoDrop: true,
+      });
+    });
+    return out;
+  }
+
   // ─── Single REPAIR attempt (one engine) ───────────────
   function _tryRepair(engine, code, issues, fileName) {
     try {
@@ -726,7 +798,8 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must describe the FINAL state, not the pre-repair state.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _stillUnresolved(aiNeeded, finalRemaining);
+    const unresolvedAi   = _ensureSecurityNoDrop(
+      _stillUnresolved(aiNeeded, finalRemaining), finalRemaining);
 
     return _deepFreeze({
       phase: 'REPAIR', fileName, original: code,
@@ -907,7 +980,8 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must reflect the FINAL verified state, not the original scan.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _stillUnresolved(allAiNeeded, finalRemaining);
+    const unresolvedAi   = _ensureSecurityNoDrop(
+      _stillUnresolved(allAiNeeded, finalRemaining), finalRemaining);
 
     return _deepFreeze({
       phase: 'FALLBACK', fileName, stages,
