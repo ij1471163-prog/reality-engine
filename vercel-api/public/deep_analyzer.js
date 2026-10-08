@@ -275,7 +275,12 @@ class CallGraphAnalyzer {
 
     _extractFunction(line, ln, lines, idx) {
         let m = line.match(/function\s+(\w+)\s*\(([^)]*)\)/);
-        if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/);
+        // [^()]* لا [^)]*: الأخيرة تبلع "(" الداخلية، فيُسجَّل module IIFE
+        // (const X = (() => {) دالةً اسمها X، فيبلّغ _detectUnusedFunctions
+        // "X() لا تُستدعى" — والاستدعاءات كلها X.method(. والأسوأ أن الفرع
+        // يطابق const/let ولا يطابق var، فتحويل var → let يضيف مشكلة جديدة
+        // فيرى FixVerifier ISSUES_WORSENED ويُلغي كل إصلاحات الملف.
+        if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^()]*)\)\s*=>/);
         if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*function\s*\(([^)]*)\)/);
         if (!m) return;
 
