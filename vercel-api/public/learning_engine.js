@@ -262,8 +262,31 @@ var LearningEngine = (() => {
     }
 
     const stringRe = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g;
+
+    // [FIX] لا يُجرَّد إلا ما لم يُغيّره الإصلاح.
+    //
+    // كانت كل نصوص ومعرّفات السطر تُبدَّل بخانات، بما فيها الرمزُ الذي
+    // يُعرِّف الثغرة. فالقالب يفقد ما يميّز الشكل المعيب ويصير يطابق كوداً
+    // سليماً. والمقيس على الأزواج الصحيحة الثلاثة المقصود تعلّمها:
+    //   secret: const __ID_1__ = __STR_1__;  →  const __ID_1__ = process.env.__ID_1__;
+    //     فيحوّل  const APP_NAME = "Reality Engine"  إلى process.env.APP_NAME
+    //   md5:    const __ID_1__ = __ID_2__.__ID_3__(__STR_1__);  →  … ("sha256");
+    //     فيحوّل  const p = path.join("config")  إلى  path.join("sha256")
+    //   xss:    __ID_1__.__ID_2__ = __ID_3__.__ID_4__;  →  __ID_1__.textContent = …
+    //     فيحوّل  cfg.timeout = opts.value  إلى  cfg.textContent = opts.value
+    // والثلاثة تجتاز GhostMode و learnedSyntaxOk و FixVerifier معاً.
+    //
+    // الرمز الذي يغيّره الإصلاح هو إشارة الثغرة ("md5"، innerHTML، النص
+    // السرّي)، فيبقى حرفياً في القالب فلا يطابق إلا الشكل المعيب. وما يبقى
+    // قابلاً للتجريد هو سياق الإصلاح: ما ورد في الطرفين بلا تغيير.
+    const afterStrings = new Set(String(after).match(stringRe) || []);
+    const afterIds = new Set(
+      maskStrings(after).match(/\b[A-Za-z_$][\w$]*\b/g) || []
+    );
+
     const strings = [];
     const beforeWithStringSlots = before.replace(stringRe, value => {
+      if (!afterStrings.has(value)) return value; // غيّره الإصلاح ⇒ إشارة
       const id = `STR_${strings.length + 1}`;
       strings.push({
         id,
@@ -289,11 +312,14 @@ var LearningEngine = (() => {
     while ((m = identifierRe.exec(beforeForIds)) !== null) {
       const id = m[0];
 
-      if (!KEYWORDS.has(id) && !beforeIds.includes(id)) {
+      // afterIds: المعرّف الذي لم يَرِد في طرف الإصلاح غيّره الإصلاح، فهو
+      // إشارة الثغرة لا سياقها ⇒ يبقى حرفياً.
+      if (!KEYWORDS.has(id) && !beforeIds.includes(id) && afterIds.has(id)) {
         beforeIds.push(id);
       }
     }
 
+    // بلا رمز واحد قابل للتجريد لا تعميم — والتعلّم بالمطابقة الحرفية يبقى.
     if (!beforeIds.length) return null;
 
     const idSlots = beforeIds.map((value, i) => ({
