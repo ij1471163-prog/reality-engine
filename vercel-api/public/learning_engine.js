@@ -168,7 +168,17 @@ var LearningEngine = (() => {
     const bt = assignTarget(beforeLine);
     const at = assignTarget(afterLine);
     if (bt && at && bt === at) return true;   // إسناد لنفس الهدف ⇒ تقابل مؤكد
-    if (!bt && at) return false;              // استدعاء ⇄ تصريح ⇒ ليسا متقابلين
+    // [FIX] كان الفحص اتجاهياً: ‎if (!bt && at)‎ يمنع "استدعاء ⇄ تصريح" ولا
+    // يمنع العكس. فزوج مثل:
+    //     const API_KEY = "sk_live_…";  →  sendKey(process.env.API_KEY);
+    // يسقط إلى تقاطع المعرّفات ويمرّ لمجرد تقاسم API_KEY، فيُخزَّن ويُعتمد،
+    // وتطبيقه يحذف التصريح ويضع مكانه استدعاءً فتصير بقية استعمالات الاسم
+    // غير معرّفة. وهو ضرر من صنف ما أصلحه D2، في الاتجاه المعاكس، ومقيس
+    // أنه يجتاز GhostMode و learnedSyntaxOk و FixVerifier كلها.
+    // التناظر هو العقد المقصود: تغيّر شكل العبارة ⇒ ليسا متقابلين، أياً كان
+    // الأصل. وما يبقى لتقاطع المعرّفات هو الحالتان المتماثلتان شكلاً:
+    // إسنادان لهدفين مختلفين، أو سطران غير إسناديين.
+    if (!bt !== !at) return false;            // أحدهما إسناد والآخر لا
     const anchors = anchorTokens(beforeLine);
     if (!anchors.length) return false;
     const tokens = new Set(anchorTokens(afterLine));

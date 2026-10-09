@@ -229,18 +229,37 @@ for (const [label, [file, before, after, expect]] of Object.entries(GOOD_PAIRS))
 const REV_BEFORE = 'function auth() {\n  const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n  return fetch(URL, { key: API_KEY });\n}\n';
 const REV_AFTER  = 'function auth() {\n  sendKey(process.env.API_KEY);\n  return fetch(URL, { key: API_KEY });\n}\n';
 
-test('الاتجاه المعاكس (تصريح ⇄ استدعاء) يُخزَّن عند HEAD بلا تعطيل أي شيء',
-  { todo: 'خلل مُثبَت: corresponds() اتجاهية فلا تمنع تصريح ⇄ استدعاء. إصلاح إنتاجي مؤجَّل لمرحلة لاحقة بموافقة' },
-  () => {
-    const { stats } = learnPair(REV_BEFORE, REV_AFTER, FILE, LE_HEAD);
-    assert.strictEqual(stats.total, 0,
-      'حذف تصريح واستبداله باستدعاء ضرر من نفس صنف ما أصلحه D2، في الاتجاه المعاكس');
-  });
+// (أ) اتجاهية corresponds() — صار في النطاق، فالتأكيد مُفعَّل لا todo.
+test('الاتجاه المعاكس (تصريح ⇄ استدعاء) لا يُخزَّن', () => {
+  const { stats } = learnPair(REV_BEFORE, REV_AFTER, FILE, LE_HEAD);
+  assert.strictEqual(stats.total, 0,
+    'حذف تصريح واستبداله باستدعاء ضرر من نفس صنف ما أصلحه D2، في الاتجاه المعاكس');
+});
 
-test('القالب المعمَّم للاتجاه المعاكس يعيد كتابة أي ‎const X = "نص"‎ ويُعتمد',
-  { todo: 'خلل مُثبَت: نطاق الانتشار يتعدى السطر المتعلَّم إلى تصريحات غير ذات صلة. مؤجَّل للمرحلة التالية' },
+test('الاتجاه المعاكس يصل الحارس فعلاً — فالرفض منه لا من extractPair', () => {
+  const ctx = loadCtx(LE_HEAD);
+  assert.ok(learnableTypes(ctx.analyzeCode(REV_BEFORE, FILE)).length >= 1,
+    'نوع البلاغ قابل للتعلّم');
+  // والمرشّح يطابق regex إصلاح secret في TYPE_FIXES، فيصل pickCorresponding
+  assert.match(REV_AFTER, /process\.env/, 'المرشّح يطابق regex النوع');
+});
+
+test('وبتعطيل الحارس يُخزَّن الاتجاه المعاكس ⇒ الحارس هو من يرفضه', () => {
+  const { stats } = learnPair(REV_BEFORE, REV_AFTER, FILE, LE_NO_GATE);
+  assert.ok(stats.total >= 1,
+    'بلا الحارس يُخزَّن — فالرفض في الاختبار السابق مصدره corresponds() وحدها');
+});
+
+// (ب) القالب المعمَّم — خارج نطاق هذه الجولة، ويبقى حيًّا بعد إصلاح (أ).
+// مقيس: الزوج الصحيح المقصود تعلّمه (إسناد ↔ إسناد نفس الهدف) يُعمَّم إلى
+//   const __ID_1__ = __STR_1__;  →  const __ID_1__ = process.env.__ID_1__;
+// فيعيد كتابة أي ثابت نصّي في الملف. البذرة هنا زوج صحيح لا مسموم، حتى لا
+// يصير هذا الاختبار نجاحًا شكليًا بعد (أ) بسبب تعذّر تخزين البذرة القديمة.
+test('القالب المعمَّم يعيد كتابة ثوابت غير مرتبطة ويُعتمد',
+  { todo: 'خلل مُثبَت في generalizeLinePair/applyLearned، لا في corresponds(). خارج نطاق الجزء (أ) — الجزء (ب) بموافقة' },
   () => {
-    const { raw } = seedApprovedPoison(LE_HEAD, REV_BEFORE, REV_AFTER);
+    const { raw, stats } = seedApprovedPoison(LE_HEAD, C_BEFORE, C_AFTER);
+    assert.ok(stats.approved >= 1, 'البذرة زوج صحيح معتمد — لا نمط مسموم');
     const run = loadCtx(LE_HEAD);
     run.__store.set(STORAGE_KEY, raw);
     // ضحية فيها سرّ حقيقي (فيُسقِط التعديل بلاغًا ويجتاز requireImprovement)
@@ -255,7 +274,7 @@ test('القالب المعمَّم للاتجاه المعاكس يعيد كت�
     const v = run.FixVerifier.verifyFix(victim, lr.fixed, 'app.js', run.analyzeCode);
     assert.ok(!(lr.applied > 1 && v.accepted),
       `أُعيدت كتابة ${lr.applied} تصريحات والبوابة ${v.accepted ? 'قبلت' : 'رفضت'} — ` +
-      'الثوابت غير ذات الصلة صارت غير معرّفة فترمي ReferenceError');
+      'الثوابت غير ذات الصلة صارت تقرأ من process.env فتصير undefined');
   });
 
 test('سطح التعلّم: زوج التراكم (= → +=) لا يصل التعلّم إطلاقًا',
@@ -268,6 +287,82 @@ test('سطح التعلّم: زوج التراكم (= → +=) لا يصل الت
       'مفتاح accumul في TYPE_FIXES يتطلب أن يكون ACCUMULATION في type لا في strategy');
     assert.ok(stats.total >= 1, 'الزوج الصحيح للتراكم يجب أن يُتعلَّم');
   });
+
+// ═══ 4ب. تناظر القاعدة: أي تغيّر لشكل العبارة يُرفض ══════
+// corresponds() كانت تمنع "استدعاء ⇄ تصريح" فقط. والمطلوب أن يُرفض تغيّر
+// الشكل في الاتجاهين: إسناد ⇄ غير إسناد، أيهما كان الأصل.
+
+// أزواج تغيّر شكل العبارة ⇒ يجب ألا تُخزَّن، كلها على المسار الحقيقي.
+const SHAPE_CHANGE = {
+  'تصريح متغيّر ← استدعاء دالة': [FILE, REV_BEFORE, REV_AFTER],
+  'استدعاء دالة ← تصريح متغيّر': [FILE, NC_BEFORE, NC_AFTER],
+  'تصريح سرّ ← استدعاء يقرأ من process.env': [FILE,
+    'function auth() {\n  const TOKEN = "sk_live_7YQ3xZ9abcdefghijKLMN";\n  return use(TOKEN);\n}\n',
+    'function auth() {\n  loadToken(process.env.TOKEN);\n  return use(TOKEN);\n}\n'],
+  'إسناد خاصية ← استدعاء': [FILE,
+    'function show(user) {\n  el.innerHTML = user.bio;\n}\nshow({});\n',
+    'function show(user) {\n  el.setText(sanitize(user.bio));\n}\nshow({});\n'],
+};
+
+for (const [label, [file, before, after]] of Object.entries(SHAPE_CHANGE)) {
+  test(`تغيّر الشكل لا يُخزَّن: ${label}`, () => {
+    // أولاً: الزوج يصل الحارس فعلاً (وإلا لا يقيس الاختبار الحارس)
+    const ctx = loadCtx(LE_HEAD);
+    assert.ok(learnableTypes(ctx.analyzeCode(before, file)).length >= 1,
+      `${label}: لا نوع قابل للتعلّم ⇒ extractPair يرفض قبل الحارس`);
+    const { stats } = learnPair(before, after, file, LE_HEAD);
+    assert.strictEqual(stats.total, 0, `${label}: تغيّر شكل العبارة ⇒ لا تقابل`);
+  });
+}
+
+// تصريح سرّ ← قراءة من process.env في **نفس** شكل الإسناد: يجب أن يُتعلَّم.
+// هذا هو الإصلاح الحقيقي الذي يُنتجه المحرك، والتشديد لا يجوز أن يكسره.
+test('تصريح سرّ ← قراءة process.env بنفس الشكل: يُتعلَّم', () => {
+  const { stats } = learnPair(
+    'function auth() {\n  const TOKEN = "sk_live_7YQ3xZ9abcdefghijKLMN";\n  return use(TOKEN);\n}\n',
+    'function auth() {\n  const TOKEN = process.env.TOKEN;\n  return use(TOKEN);\n}\n',
+    FILE, LE_HEAD);
+  assert.ok(stats.total >= 1, 'إسناد لنفس الهدف ⇒ تقابل مؤكد');
+  assert.ok(stats.patterns.some(p => /process\.env\.TOKEN/.test(p.after)));
+});
+
+// معيار الإغلاق: النمط المسموم لا يصل الاعتماد النهائي، ولا لسبب لاحق.
+test('إغلاق: النمط المسموم لا يُخزَّن ولا يُعتمد ولا يُطبَّق — في الاتجاهين', () => {
+  for (const [label, before, after] of [
+    ['استدعاء ← تصريح', NC_BEFORE, NC_AFTER],
+    ['تصريح ← استدعاء', REV_BEFORE, REV_AFTER],
+  ]) {
+    const { raw, stats } = seedApprovedPoison(LE_HEAD, before, after);
+    assert.strictEqual(stats.total, 0, `${label}: لا يُخزَّن`);
+    assert.strictEqual(stats.approved, 0, `${label}: فلا يُعتمد`);
+
+    const run = loadCtx(LE_HEAD);
+    if (raw) run.__store.set(STORAGE_KEY, raw);
+    const victim = 'function send(key) {\n  console.log("sk_live_51H8xQ2abcdefghijKLMN");\n' +
+                   '  const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n  return post(key, API_KEY);\n}\nsend("x");\n';
+    const lr = run.LearningEngine.applyLearned(victim, 'victim.js');
+    assert.strictEqual(lr.applied, 0, `${label}: ولا يُطبَّق`);
+    assert.strictEqual(lr.fixed, victim, `${label}: والكود يبقى كما هو`);
+  }
+});
+
+// وهذا يثبت أن الإغلاق أعلاه ليس بسبب رفض لاحق: لو خُزِّن النمط لاجتاز
+// كل البوابات. (نفس تتبّع القسم 2، لكن للاتجاه المعاكس تحديدًا.)
+test('إغلاق: ولو خُزِّن الاتجاه المعاكس لاجتاز Ghost و FixVerifier', () => {
+  const { raw, stats } = seedApprovedPoison(LE_NO_GATE, REV_BEFORE, REV_AFTER);
+  assert.ok(stats.approved >= 1, 'بتعطيل الحارس يُخزَّن ويُعتمد');
+  const run = loadCtx(LE_HEAD);
+  run.__store.set(STORAGE_KEY, raw);
+  const victim = 'function boot() {\n  const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n  return connect(API_KEY);\n}\nboot();\n';
+  const lr = run.LearningEngine.applyLearned(victim, 'app.js');
+  assert.ok(lr.applied >= 1 && lr.fixed !== victim, 'يُطبَّق');
+  const lv = run.GhostMode.verdict(victim, lr.fixed, 'app.js', run.analyzeCode);
+  assert.notStrictEqual(lv.verdict, run.GhostMode.VERDICT.FAIL, 'Ghost لا يرفضه');
+  assert.notStrictEqual(lv.verdict, run.GhostMode.VERDICT.REGRESSION, 'ولا يعتبره ارتدادًا');
+  assert.strictEqual(run.learnedSyntaxOk('app.js', victim, lr.fixed), true, 'الفحص النحوي لا يرفضه');
+  const v = run.FixVerifier.verifyFix(victim, lr.fixed, 'app.js', run.analyzeCode);
+  assert.ok(v.accepted, `والبوابة لا ترفضه — ${v.reason}`);
+});
 
 // ═══ 5. احتمالات على مستوى الدالة فقط — غير مُثبتة الوصول ══
 // تقاطع المعرّفات يقبل تقاسم اسم واحد، وهذا ضعيف نظريًا. لكن الوصول إليه
@@ -289,13 +384,17 @@ test('documented: corresponds تقبل تقاسم معرّف واحد بين س�
 
   // السلوك المقصود
   assert.strictEqual(C('const API_KEY = "x";', 'const API_KEY = process.env.API_KEY;'), true, 'نفس الهدف');
-  assert.strictEqual(C('console.log(API_KEY);', 'const API_KEY = process.env.API_KEY;'), false, 'استدعاء ⇄ تصريح');
   assert.strictEqual(C('foo(1);', 'const bar = baz();'), false, 'بلا تقاسم');
 
-  // السَعَة المقيسة: تقاسم اسم واحد يكفي
-  assert.strictEqual(C('a = user.id;', 'b = user.id;'), true, 'هدفان مختلفان يتقاسمان user/id');
+  // تناظر القاعدة بعد إصلاح الجزء (أ): تغيّر شكل العبارة يُرفض في الاتجاهين.
+  // التأكيد الثالث كان يوثّق السلوك المعيب (true) وصار false بفعل الإصلاح.
+  assert.strictEqual(C('console.log(API_KEY);', 'const API_KEY = process.env.API_KEY;'), false, 'استدعاء ⇄ تصريح');
+  assert.strictEqual(C('const API_KEY = "x";', 'sendKey(API_KEY);'), false, 'تصريح ⇄ استدعاء');
+
+  // السَعَة التي لم يعالجها هذا الإصلاح، وتبقى مقيسة كما هي: الحالتان
+  // المتماثلتان شكلاً ما زالتا تمرّان بتقاسم اسم واحد.
+  assert.strictEqual(C('a = user.id;', 'b = user.id;'), true, 'إسنادان لهدفين مختلفين يتقاسمان user/id');
   assert.strictEqual(C('deleteUser(id);', 'logAccess(id);'), true, 'استدعاءان مختلفان يتقاسمان id');
-  assert.strictEqual(C('const API_KEY = "x";', 'sendKey(API_KEY);'), true, 'تصريح ⇄ استدعاء (أساس القسم 4)');
 
   // ومنع نظري لتعلّم صحيح: بلا معرّف مشترك
   assert.strictEqual(C('eval("1+1");', 'JSON.parse("1+1");'), false,
