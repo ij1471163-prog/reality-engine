@@ -1,0 +1,263 @@
+{
+ "_python": "3.13.16",
+ "cases": {
+  "assert": {
+   "code": "def f(x):\n    assert x, \"msg\"\n    return x\n",
+   "valid": true
+  },
+  "async await": {
+   "code": "async def f():\n    r = await g()\n    return r\n",
+   "valid": true
+  },
+  "backslash arbitrary indent": {
+   "code": "def f(a, b):\n    t = a + \\\nb\n    return t\n",
+   "valid": true
+  },
+  "backslash deeper indent": {
+   "code": "def f(a, b):\n    t = a + \\\n            b\n    return t\n",
+   "valid": true
+  },
+  "backslash then brackets": {
+   "code": "def f(a):\n    t = a + \\\n        g(\n1,\n        )\n    return t\n",
+   "valid": true
+  },
+  "blank line in brackets": {
+   "code": "def f():\n    d = [\n\n        1,\n    ]\n    return d\n",
+   "valid": true
+  },
+  "block header spans lines": {
+   "code": "def f():\n    if foo(\n        1\n    ):\n        return 1\n",
+   "valid": true
+  },
+  "call back indent": {
+   "code": "def f():\n    g(\n1,\n  2,\n)\n    return 1\n",
+   "valid": true
+  },
+  "class two methods": {
+   "code": "class A:\n    def a(self):\n        return 1\n    def b(self):\n        return 2\n",
+   "valid": true
+  },
+  "comment in brackets": {
+   "code": "def f():\n    d = [\n        # c\n        1,\n    ]\n    return d\n",
+   "valid": true
+  },
+  "comment with apostrophe": {
+   "code": "def f():\n    # it's ok\n    return 1\n",
+   "valid": true
+  },
+  "conditional expr spans": {
+   "code": "def f(a):\n    v = (1 if a\n         else 2)\n    return v\n",
+   "valid": true
+  },
+  "decorator": {
+   "code": "@app.route(\"/x\")\ndef f():\n    return 1\n",
+   "valid": true
+  },
+  "dict arbitrary indent": {
+   "code": "def f():\n    d = {\n\"a\": 1,\n            \"b\": 2,\n    }\n    return d\n",
+   "valid": true
+  },
+  "dict continuation": {
+   "code": "def f():\n    d = {\n        \"a\": 1,\n    }\n    return d\n",
+   "valid": true
+  },
+  "dict key ends with colon": {
+   "code": "def f():\n    d = {\n        \"a\":\n            1,\n    }\n    return d\n",
+   "valid": true
+  },
+  "docstring triple double": {
+   "code": "def f():\n    \"\"\"\n    d\n    \"\"\"\n    return 1\n",
+   "valid": true
+  },
+  "docstring triple single": {
+   "code": "def f():\n    '''d\n    e'''\n    return 1\n",
+   "valid": true
+  },
+  "elif chain": {
+   "code": "def f(x):\n    if x == 1:\n        return 1\n    elif x == 2:\n        return 2\n    else:\n        return 0\n",
+   "valid": true
+  },
+  "err colon no body eof": {
+   "code": "def f():\n",
+   "line": 1,
+   "msg": "expected an indented block after function definition on line 1",
+   "valid": false
+  },
+  "err extra bracket": {
+   "code": "def f():\n    g(1))\n",
+   "line": 2,
+   "msg": "unmatched ')'",
+   "valid": false
+  },
+  "err inconsistent indent": {
+   "code": "def f():\n    if x:\n            return 1\n      return 2\n",
+   "line": 4,
+   "msg": "unindent does not match any outer indentation level",
+   "valid": false
+  },
+  "err indent after backslash": {
+   "code": "def f(a, b):\n    t = a + \\\n        b\n        x = 2\n",
+   "line": 4,
+   "msg": "unexpected indent",
+   "valid": false
+  },
+  "err indent after brackets": {
+   "code": "def f():\n    d = {\n        \"a\": 1,\n    }\n        x = 2\n",
+   "line": 5,
+   "msg": "unexpected indent",
+   "valid": false
+  },
+  "err indent after triple": {
+   "code": "def f():\n    s = \"\"\"\nx\n\"\"\"\n        y = 1\n",
+   "line": 5,
+   "msg": "unexpected indent",
+   "valid": false
+  },
+  "err no block after colon": {
+   "code": "def f():\nreturn 1\n",
+   "line": 2,
+   "msg": "expected an indented block after function definition on line 1",
+   "valid": false
+  },
+  "err plain string spans": {
+   "code": "def f():\n    s = \"abc\ndef\"\n    return s\n",
+   "line": 2,
+   "msg": "unterminated string literal (detected at line 2)",
+   "valid": false
+  },
+  "err spanned header no body": {
+   "code": "def f():\n    if foo(\n        1\n    ):\n    return 1\n",
+   "line": 5,
+   "msg": "expected an indented block after 'if' statement on line 2",
+   "valid": false
+  },
+  "err unclosed bracket": {
+   "code": "def f():\n    g(1\n    return 2\n",
+   "line": 2,
+   "msg": "'(' was never closed",
+   "valid": false
+  },
+  "err unexpected indent": {
+   "code": "def f():\n    return 1\n        x = 2\n",
+   "line": 3,
+   "msg": "unexpected indent",
+   "valid": false
+  },
+  "err unterminated string": {
+   "code": "def f():\n    s = \"abc\n    return s\n",
+   "line": 2,
+   "msg": "unterminated string literal (detected at line 2)",
+   "valid": false
+  },
+  "err unterminated triple": {
+   "code": "def f():\n    s = \"\"\"abc\n    return s\n",
+   "line": 2,
+   "msg": "unterminated triple-quoted string literal (detected at line 3)",
+   "valid": false
+  },
+  "for else": {
+   "code": "def f(xs):\n    for x in xs:\n        return x\n    else:\n        return None\n",
+   "valid": true
+  },
+  "fstring nested": {
+   "code": "def f(x):\n    return f\"{f'{x}'}\"\n",
+   "valid": true
+  },
+  "fstring single line": {
+   "code": "def f(x):\n    return f\"v={x}\"\n",
+   "valid": true
+  },
+  "fstring spans braces": {
+   "code": "def f(x):\n    s = f\"{\n        x\n    }\"\n    return s\n",
+   "valid": true
+  },
+  "fstring spans single quote": {
+   "code": "def f(x):\n    s = f'{\n        x\n    }'\n    return s\n",
+   "valid": true
+  },
+  "fstring spans with expr": {
+   "code": "def f(x):\n    s = f\"{\n        x + 1\n    }\"\n    return s\n",
+   "valid": true
+  },
+  "fstring triple spans": {
+   "code": "def f(x):\n    s = f\"\"\"\n    {x}\n    \"\"\"\n    return s\n",
+   "valid": true
+  },
+  "global statement": {
+   "code": "x = 1\ndef f():\n    global x\n    x = 2\n    return x\n",
+   "valid": true
+  },
+  "import spans lines": {
+   "code": "from os import (\n    path,\n    sep,\n)\nprint(path, sep)\n",
+   "valid": true
+  },
+  "lambda ends with colon": {
+   "code": "def f(x):\n    g = sorted(x, key=lambda v:\n        v.k)\n    return g\n",
+   "valid": true
+  },
+  "match case": {
+   "code": "def f(x):\n    match x:\n        case 1:\n            return \"a\"\n        case _:\n            return \"b\"\n",
+   "valid": true
+  },
+  "nested brackets": {
+   "code": "def f():\n    d = {\n        \"a\": [\n1,\n        ],\n    }\n    return d\n",
+   "valid": true
+  },
+  "nested def": {
+   "code": "def o():\n    def i():\n        return 1\n    return i()\n",
+   "valid": true
+  },
+  "plain string backslash join": {
+   "code": "def f():\n    s = \"abc\\\ndef\"\n    return s\n",
+   "valid": true
+  },
+  "rb triple string": {
+   "code": "def f():\n    s = rb\"\"\"\nx\n\"\"\"\n    return s\n",
+   "valid": true
+  },
+  "simple function": {
+   "code": "def f():\n    return 1\n",
+   "valid": true
+  },
+  "string containing hash": {
+   "code": "def f():\n    s = \"a # b\"\n    return s\n",
+   "valid": true
+  },
+  "tab indentation": {
+   "code": "def f(x):\n\tif x:\n\t\treturn 1\n\treturn 2\n",
+   "valid": true
+  },
+  "triple single line": {
+   "code": "def f():\n    s = \"\"\"x\"\"\"\n    return s\n",
+   "valid": true
+  },
+  "triple with bracket inside": {
+   "code": "def f():\n    s = \"\"\"(\n\"\"\"\n    return s\n",
+   "valid": true
+  },
+  "triple with colon inside": {
+   "code": "def f():\n    s = \"\"\"x:\n\"\"\"\n    return s\n",
+   "valid": true
+  },
+  "triple with def inside": {
+   "code": "def f():\n    s = \"\"\"\ndef g():\n\"\"\"\n    return s\n",
+   "valid": true
+  },
+  "triple with inner quotes": {
+   "code": "def f():\n    s = \"\"\"he said \"hi\"\n    ok\"\"\"\n    return s\n",
+   "valid": true
+  },
+  "try except finally": {
+   "code": "def f():\n    try:\n        return g()\n    except ValueError:\n        return 0\n    finally:\n        c()\n",
+   "valid": true
+  },
+  "with block": {
+   "code": "def f():\n    with open(\"f\") as h:\n        return h.read()\n",
+   "valid": true
+  },
+  "yield": {
+   "code": "def f():\n    yield 1\n    yield 2\n",
+   "valid": true
+  }
+ }
+}

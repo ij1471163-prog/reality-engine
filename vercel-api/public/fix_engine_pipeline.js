@@ -164,6 +164,102 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
     return true;
 }
 
+// ═══ [P2] نسبة نتيجة الإصلاح المتعلَّم إلى أنماطه ═══════════════════════
+// أربعة أحكام، ولا واحد منها يغيّر عدّادات الأنماط في هذه المرحلة:
+//   PASS          قُبل التعديل، وهذا النمط أسهم فيه
+//   FAIL          رُفض، وعُزل هذا النمط بعينه مسؤولًا
+//   INCONCLUSIVE  رُفض ولم يُعزل مسؤول — أو سبب الرفض خارج النمط
+//   SKIPPED       لا تعديل أصلاً فلا حكم
+// القيد: لا verify() ولا مسّ لـverified/failures/confidence/approved.
+const LEARNED_OUTCOME = {
+    PASS: 'PASS', FAIL: 'FAIL', INCONCLUSIVE: 'INCONCLUSIVE', SKIPPED: 'SKIPPED'
+};
+
+// حدّ محاولات التنصيف. ما لم يُحسم داخله يبقى INCONCLUSIVE — لا يُخمَّن مسؤول.
+const BISECT_MAX_ATTEMPTS = 8;
+
+// منع التعلّم الدائري: لا يُتعلَّم من تعديل مصدره applyLearned، وإلا عزّز
+// المحرك أنماطه بأدلة من نفسه. الشرط مكتوب صراحةً هنا حتى لا يسقط بصمت لو
+// نُقل موضع learn() إلى البوابة لاحقًا.
+const LEARN_EXCLUDED_SOURCES = ['applyLearned'];
+function _learnableSource(source) {
+    const s = String(source || '');
+    return !LEARN_EXCLUDED_SOURCES.some(ex => s.indexOf(ex) !== -1);
+}
+
+/**
+ * تقييم جاف لمرشّح متعلَّم: نفس الفحوص الثلاثة التي يعبرها المسار الحقيقي
+ * (Ghost ثم نحوي ثم FixVerifier)، وبلا أي كتابة على F أو R.
+ */
+function _dryCheckLearned(beforeCode, candidate, fn) {
+    if (typeof candidate !== 'string' || candidate === beforeCode) {
+        return { ok: true, reason: 'NO_CHANGE' };
+    }
+    if (typeof GhostMode !== 'undefined') {
+        const lv = GhostMode.verdict(beforeCode, candidate, fn, analyzeCode);
+        if (lv.verdict === GhostMode.VERDICT.FAIL || lv.verdict === GhostMode.VERDICT.REGRESSION) {
+            return { ok: false, reason: 'GHOST_' + lv.verdict };
+        }
+    }
+    if (!learnedSyntaxOk(fn, beforeCode, candidate)) {
+        return { ok: false, reason: 'LEARNED_SYNTAX_BROKEN' };
+    }
+    const _fv = _getFixVerifier();
+    if (!_fv) return { ok: false, reason: 'REJECTED_VERIFIER_UNAVAILABLE' };
+    const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+    const v = _fv.verifyFix(beforeCode, candidate, fn, analyzer, {});
+    return { ok: !!v.accepted, reason: v.reason };
+}
+
+/**
+ * تنصيف: يعزل أصغر مجموعة أنماط ترفضها البوابة. كل تقييم جاف محاولة واحدة،
+ * والحدّ BISECT_MAX_ATTEMPTS. culprits فارغة ⇒ لم يُحسم مسؤول، فالجميع
+ * INCONCLUSIVE. ولا تُخمَّن مسؤولية: كل نصف مقبول وحده ⇒ الرفض من التجميع.
+ */
+function _bisectLearned(beforeCode, fn, ids) {
+    let attempts = 0;
+    const evalSet = set => {
+        attempts++;
+        const r = LearningEngine.applyLearned(beforeCode, fn, { onlyIds: set });
+        if (!r.applied || r.fixed === beforeCode) return { ok: true, reason: 'NO_CHANGE' };
+        return _dryCheckLearned(beforeCode, r.fixed, fn);
+    };
+    const search = set => {
+        if (attempts >= BISECT_MAX_ATTEMPTS) return null;
+        if (set.length === 1) return evalSet(set).ok ? [] : set.slice();
+        const mid = Math.floor(set.length / 2);
+        const left = set.slice(0, mid), right = set.slice(mid);
+        if (!evalSet(left).ok) return search(left);
+        if (attempts >= BISECT_MAX_ATTEMPTS) return null;
+        if (!evalSet(right).ok) return search(right);
+        return [];
+    };
+    const culprits = search(ids.slice());
+    return {
+        culprits: culprits || [],
+        attempts,
+        exhausted: culprits === null || attempts >= BISECT_MAX_ATTEMPTS
+    };
+}
+
+/** يسجّل حكمًا واحدًا لكل نمط مُسهم. تسجيلٌ محض: لا عدّاد ولا حالة اعتماد. */
+function _recordLearnedOutcomes(report, fn, uses, outcomeOf, extra) {
+    if (!Array.isArray(report.learnedOutcomes)) report.learnedOutcomes = [];
+    const seen = new Set();
+    for (const u of uses) {
+        if (seen.has(u.patternId)) continue;
+        seen.add(u.patternId);
+        report.learnedOutcomes.push(Object.assign({
+            file: fn,
+            patternId: u.patternId,
+            via: u.via,
+            lineIndex: u.lineIndex,
+            source: 'applyLearned',
+            outcome: outcomeOf(u.patternId)
+        }, extra || {}));
+    }
+}
+
 /**
  * يشغّل محركًا يعدّل F/R بالمرجع، على **نسخة مؤقتة**، ثم يمرر كل ملف تغيّر
  * عبر البوابة. المحرك نفسه لا يُعدَّل، ولا يلمس F الحقيقي إطلاقًا.
@@ -236,7 +332,8 @@ function fixAllEnginePipeline() {
     const origF = {};
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
 
-    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [] };
+    // [P2] learnedOutcomes: حكم لكل نمط أسهم في إصلاح متعلَّم — تسجيل لا حكم.
+    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [], learnedOutcomes: [] };
     const aiByFile = {};   // aiNeeded من repairCode لكل ملف — يُفلتر على الحالة النهائية في الآخر
 
     if (typeof detectDangerousTypos !== 'undefined') {
@@ -303,8 +400,9 @@ function fixAllEnginePipeline() {
             }
 
             // ─── البوابة الإلزامية: هنا فقط تحدث الكتابة ───
+            const _src = 'repairCode' + (ghostVerdict ? '+Ghost:' + ghostVerdict : '');
             const committed = _gateAndCommit(
-                F, R, fn, candidate, 'repairCode' + (ghostVerdict ? '+Ghost:' + ghostVerdict : ''),
+                F, R, fn, candidate, _src,
                 report, (result.repairs || []).length
             );
 
@@ -324,7 +422,10 @@ function fixAllEnginePipeline() {
             // `if (!committed) break;` أعلاه)، أي أن FixVerifier قبل التعديل
             // وكُتب فعلاً. Ghost يبقى مرحلة تحقق سابقة لا تمنح قبولاً.
             // ⚠️ رفض FixVerifier ⇒ لا learn() ولا verify() — الكود لا يصل هنا.
-            if (typeof LearningEngine !== 'undefined') {
+            // [P2] ومصدر التعديل يجب أن يكون قابلاً للتعلّم: لا تعلّم دائري من
+            // applyLearned. الشرط لا يغيّر شيئًا اليوم (المصدر هنا repairCode)،
+            // لكنه يمنع الدائرية بالبناء لو نُقل التعلّم إلى البوابة لاحقًا.
+            if (typeof LearningEngine !== 'undefined' && _learnableSource(_src)) {
                 // F[fn] هنا هو الكود المعتمد من البوابة حصرًا
                 const patternIds = LearningEngine.learn(beforeCode, F[fn], issues, fn);
                 if (Array.isArray(patternIds) && patternIds.length > 0) {
@@ -337,25 +438,66 @@ function fixAllEnginePipeline() {
         if (typeof LearningEngine !== 'undefined') {
             const beforeLearned = F[fn];
             const lr = LearningEngine.applyLearned(beforeLearned, fn);
-            if (lr.applied > 0 && lr.fixed !== beforeLearned) {
-                let preApproved = true;
+            const uses = Array.isArray(lr.uses) ? lr.uses : [];
+            const changed = lr.applied > 0 && lr.fixed !== beforeLearned;
+
+            if (!changed) {
+                // [P2] لا تعديل ⇒ لا حكم على أي نمط.
+                if (uses.length) {
+                    _recordLearnedOutcomes(report, fn, uses, () => LEARNED_OUTCOME.SKIPPED);
+                }
+            } else {
+                let rejectReason = null;
 
                 if (typeof GhostMode !== 'undefined') {
                     const lv = GhostMode.verdict(beforeLearned, lr.fixed, fn, analyzeCode);
-                    preApproved = lv.verdict !== GhostMode.VERDICT.FAIL &&
-                                  lv.verdict !== GhostMode.VERDICT.REGRESSION;
-                    if (!preApproved) {
-                        report.rejected.push({ file: fn, source: 'applyLearned', reason: 'GHOST_' + lv.verdict });
+                    if (lv.verdict === GhostMode.VERDICT.FAIL ||
+                        lv.verdict === GhostMode.VERDICT.REGRESSION) {
+                        rejectReason = 'GHOST_' + lv.verdict;
+                        report.rejected.push({ file: fn, source: 'applyLearned', reason: rejectReason });
                     }
                 }
 
-                if (preApproved && !learnedSyntaxOk(fn, beforeLearned, lr.fixed)) {
-                    preApproved = false;
-                    report.rejected.push({ file: fn, source: 'applyLearned', reason: 'LEARNED_SYNTAX_BROKEN' });
+                if (!rejectReason && !learnedSyntaxOk(fn, beforeLearned, lr.fixed)) {
+                    rejectReason = 'LEARNED_SYNTAX_BROKEN';
+                    report.rejected.push({ file: fn, source: 'applyLearned', reason: rejectReason });
                 }
 
-                if (preApproved) {
-                    _gateAndCommit(F, R, fn, lr.fixed, 'applyLearned', report, lr.applied);
+                let committed = false;
+                if (!rejectReason) {
+                    committed = _gateAndCommit(F, R, fn, lr.fixed, 'applyLearned', report, lr.applied);
+                    if (!committed) {
+                        const last = report.rejected[report.rejected.length - 1];
+                        rejectReason = (last && last.reason) || 'GATE_REJECTED';
+                    }
+                }
+
+                if (committed) {
+                    // [P2] الدفتر بعد قرار البوابة حصرًا، ولا عدّاد يُلمَس.
+                    if (typeof LearningEngine.markUsed === 'function') {
+                        LearningEngine.markUsed(uses.map(u => u.patternId));
+                    }
+                    _recordLearnedOutcomes(report, fn, uses, () => LEARNED_OUTCOME.PASS);
+                } else {
+                    // [P2] رُفض: مُسهم واحد ⇒ مسؤول بالضرورة. أكثر من واحد ⇒
+                    // تنصيف لعزل المسؤول، وما لم يُحسم يبقى INCONCLUSIVE.
+                    const ids = Array.from(new Set(uses.map(u => u.patternId)));
+                    let culprits = [];
+                    let bis = null;
+                    if (ids.length === 1) {
+                        culprits = ids.slice();
+                    } else if (ids.length > 1) {
+                        bis = _bisectLearned(beforeLearned, fn, ids);
+                        culprits = bis.culprits;
+                    }
+                    const cul = new Set(culprits);
+                    _recordLearnedOutcomes(report, fn, uses,
+                        id => (cul.has(id) ? LEARNED_OUTCOME.FAIL : LEARNED_OUTCOME.INCONCLUSIVE),
+                        {
+                            gateReason: rejectReason,
+                            bisectAttempts: bis ? bis.attempts : 0,
+                            bisectExhausted: bis ? bis.exhausted : false
+                        });
                 }
                 // مرفوض ⇒ F[fn] لم يُمَس أصلاً (لا كتابة إلا داخل البوابة)
             }
@@ -421,7 +563,13 @@ if (typeof fixAllEngine === 'undefined' && typeof globalThis !== 'undefined') {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { fixAllEnginePipeline, fixAllEngine: fixAllEnginePipeline, learnedSyntaxOk, _gateAndCommit, _runIsolatedEngine };
+    module.exports = {
+        fixAllEnginePipeline, fixAllEngine: fixAllEnginePipeline, learnedSyntaxOk,
+        _gateAndCommit, _runIsolatedEngine,
+        // [P2] مُصدَّرة للاختبار: النسبة والتنصيف وحرس الدائرية
+        LEARNED_OUTCOME, BISECT_MAX_ATTEMPTS, LEARN_EXCLUDED_SOURCES,
+        _learnableSource, _dryCheckLearned, _bisectLearned, _recordLearnedOutcomes
+    };
 }
 
 

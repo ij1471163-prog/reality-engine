@@ -376,6 +376,24 @@ var LearningEngine = (() => {
 
     if (count > 8) return false;
 
+    // [V4] ترتيب الخانات لا يُبدَّل بين الطرفين.
+    // قالب يعيد ترتيب الخانات يُركِّب المعامِلات في مواضع غير مواضعها، فيغيّر
+    // دلالة السطر مع ثبات هدف الإسناد — فلا يراه حرس الهدف ولا المرجع الخلفي.
+    // والمقيس أن الأزواج الصحيحة الخمسة (secret / md5 / xss / sql parameterized /
+    // ذاتي المرجع) تحفظ الترتيب كلها، فالشرط بلا تكلفة ويمنع التبديل.
+    const seqOf = src => {
+      const out = [];
+      for (const tok of (src.match(/__LEARN_(?:ID|STR)_\d+__/g) || [])) {
+        if (out.indexOf(tok) === -1) out.push(tok);
+      }
+      return out;
+    };
+    const beforeSeq = seqOf(pattern.beforeTemplate);
+    const afterSeq  = seqOf(pattern.afterTemplate).filter(x => beforeSeq.indexOf(x) !== -1);
+    let seqAt = 0;
+    for (const tok of beforeSeq) if (afterSeq[seqAt] === tok) seqAt++;
+    if (seqAt !== afterSeq.length) return false;
+
     const fixed = pattern.beforeTemplate
       .replace(/__LEARN_ID_\d+__/g, '')
       .replace(/\s+/g, '');
@@ -598,7 +616,19 @@ var LearningEngine = (() => {
     const template = pattern.beforeTemplate;
     const tokenRe = /__LEARN_(ID_[0-9]+|STR_[0-9]+)__/g;
 
+    // [VBR] خانة تتكرّر في القالب كانت تُنتج مجموعة التقاط مستقلة لكل ظهور،
+    // بلا مرجع خلفي. فيترتّب على ذلك أمران مقيسان:
+    //   (1) القالب يطابق سطورًا تختلف فيها مواضع الخانة الواحدة، و
+    //   (2) حلقة القيم تكتب فوق القيمة فيبقى آخر ظهور وحده فيُركَّب في الكل.
+    // المقيس:  a.innerHTML = b.innerHTML + m   ⇒   b.textContent = b.textContent + m
+    //          (وجهة الكتابة تبدّلت، والكتابة إلى a اختفت)
+    //          db.query("a=" + x + " b=" + y)  ⇒   db.query("a=? b=?", [y, y])
+    //          (x فُقد صامتًا)
+    // groupOf يربط كل خانة بمجموعتها، فالظهور التالي مرجع خلفي لا مجموعة جديدة،
+    // أي أن القالب يشترط تساوي المواضع — وهو المعنى المقصود من تكرار الخانة.
     let regex = "";
+    const groupOf = {};
+    let groupNo = 0;
     let last = 0;
     let match;
 
@@ -610,6 +640,15 @@ var LearningEngine = (() => {
       const slot = (pattern.beforeSlots || []).find(x => x.id === slotId);
 
       if (!slot) return null;
+
+      // ظهور تالٍ لخانة سبقت ⇒ مرجع خلفي، فالموضعان يجب أن يتساويا.
+      if (Object.prototype.hasOwnProperty.call(groupOf, slotId)) {
+        regex += "\\" + groupOf[slotId];
+        last = match.index + match[0].length;
+        continue;
+      }
+      groupNo++;
+      groupOf[slotId] = groupNo;
 
       if (slot.kind === "string") {
         regex += '((?:"(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'|`(?:\\\\.|[^`\\\\])*`))';
@@ -626,12 +665,9 @@ var LearningEngine = (() => {
     const result = new RegExp("^" + regex + "$").exec(line);
     if (!result) return null;
 
+    // قيمة واحدة لكل خانة، من مجموعتها وحدها — لا كتابة فوق قيمة سابقة.
     const values = {};
-    let group = 1;
-
-    for (const token of template.matchAll(tokenRe)) {
-      values[token[1]] = result[group++];
-    }
+    for (const slotId in groupOf) values[slotId] = result[groupOf[slotId]];
 
     return { values };
   }
@@ -650,25 +686,127 @@ var LearningEngine = (() => {
     );
   }
 
+  // ─── Assignment Target Preservation ─────────────────
+  // [V2′] الإصلاح المتعلَّم لا يجوز أن يغيّر وجهة الكتابة.
+  // مسار المطابقة الحرفية (t === p.before) لا يعبر matchGeneralPattern أصلًا،
+  // فالمرجع الخلفي لا يراه. والمقيس أن زوجًا مثل:
+  //     const A_KEY = "sk_live_…";  →  const B_KEY = process.env.A_KEY;
+  // تقبله corresponds (إسنادان يتقاسمان معرّفًا، وهي سَعَة موثَّقة) فيُخزَّن
+  // ويُعتمد، وتطبيقه يعيد تسمية التصريح فتصير كل استعمالات A_KEY غير معرَّفة.
+  // تُقارَن بادئة المسار كاملةً لا جذره وحده: el.innerHTML → el.textContent
+  // مقبول (المقطع الأخير هو ما يُصلحه الإصلاح)، و a.b.c → a.z.c مرفوض.
+  // وهدفٌ من مقطع واحد يُطابَق تامًّا، لأن الاسم المجرَّد هوية لا خاصية.
+  // نقاط عمى مسجَّلة (assignTarget تُرجع null): الفهرسة a[i]= والتفكيك
+  // و{**=, &&=, %=, &=, |=, ^=, >>=} — لا حماية ولا رفض، وتوسيعها يمسّ
+  // assignTarget المشتركة مع corresponds فيؤجَّل إلى جولة مستقلة.
+  function preservesTarget(beforeLine, afterLine) {
+    const b = assignTarget(beforeLine);
+    const a = assignTarget(afterLine);
+    if ((b === null) !== (a === null)) return false;  // تغيّر شكل العبارة
+    if (b === null) return true;                      // ليس إسنادًا ⇒ لا حكم
+    const bs = b.split('.'), as = a.split('.');
+    if (bs.length !== as.length) return false;
+    if (bs.length === 1) return bs[0] === as[0];
+    return bs.slice(0, -1).join('.') === as.slice(0, -1).join('.');
+  }
+
+  // ─── Value Order Preservation ───────────────────────
+  // [V4″] ترتيب القيم لا يُبدَّل — على مستوى السطر هذه المرة لا القالب.
+  //
+  // V4 يحرس القالب وقت التخزين، وV4′ يعيد حرسه وقت التطبيق. لكن المطابقة
+  // الحرفية (t === p.before) لا قالب لها أصلاً، فزوجٌ حرفي يعكس وسطاء
+  // الاستعلام يُطبَّق كما هو. والمقيس:
+  //   before: conn.exec("… a=" + userId + " AND b=" + tenantId);
+  //   after : conn.exec("… a=? AND b=?", [tenantId, userId]);
+  // صحيح نحويًا، وتقبله البوابات الثلاث (المحلّل يُنتج نفس قائمة البلاغات
+  // للمقلوب والسليم)، ودلالته مقلوبة: قيمة العمود a تذهب إلى b والعكس.
+  //
+  // والفحص على المعرّفات **خارج النصوص** حصرًا: محتوى النص يعيد ترتيب نفسه
+  // بطبيعة هذا الإصلاح (‎"… a=" + x + " AND b="‎ ⇒ ‎"… a=? AND b=?"‎)، فقياسه
+  // يرفض الإصلاح السليم رفضًا كاذبًا — مقيس قبل الاستقرار على هذه الصيغة.
+  // والكلمات المفتاحية تُستثنى كما تفعل generalizeLinePair.
+  //
+  // يسري على المسارين معًا لأنه عند نقطة الخانق الوحيدة قبل الكتابة.
+  // تُبنى مرة واحدة لا في كل نداء: الدالة على المسار الساخن (نداء لكل سطر
+  // يُستبدَل)، وبناء الـSet والregex داخلها قاس +184% على حالة "كل سطر
+  // يُطبَّق" — مقيس. الثابتان هنا يُلغيان ذلك.
+  const VO_KEYWORDS = new Set([
+    'const','let','var','function','def','return','new','this','self',
+    'class','public','private','protected','static','final','import',
+    'from','require','if','else','for','while','try','catch',
+    'async','await','true','false','null','undefined'
+  ]);
+  const VO_STRING_RE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g;
+  const VO_IDENT_RE  = /\b[A-Za-z_$][\w$]*\b/g;
+
+  function preservesValueOrder(beforeLine, afterLine) {
+    const seq = src => {
+      const bare = String(src).replace(VO_STRING_RE, ' ');
+      const out = [];
+      let m;
+      VO_IDENT_RE.lastIndex = 0;   // regex مشترك ‎/g‎ ⇒ تصفير lastIndex إلزامي
+      while ((m = VO_IDENT_RE.exec(bare)) !== null) {
+        if (!VO_KEYWORDS.has(m[0]) && out.indexOf(m[0]) === -1) out.push(m[0]);
+      }
+      return out;
+    };
+    const b = seq(beforeLine);
+    const a = seq(afterLine).filter(x => b.indexOf(x) !== -1);
+    let at = 0;
+    for (const tok of b) if (a[at] === tok) at++;
+    return at === a.length;
+  }
+
   // ─── Apply Learned ──────────────────────────────────
-  function applyLearned(code, fileName) {
+  function applyLearned(code, fileName, opts) {
     const db = load();
-    if (!db.patterns.length) return { fixed: code, applied: 0 };
+    if (!db.patterns.length) return { fixed: code, applied: 0, uses: [] };
 
     const fileLang = inferLanguage(fileName);
+
+    // [P2] onlyIds: حصر التطبيق بأنماط بعينها. يُستعمل في التنصيف لعزل النمط
+    // المسؤول عن تعديل رفضته البوابة. بلا الخيار لا يتغيّر أي سلوك.
+    const onlyIds = (opts && Array.isArray(opts.onlyIds)) ? new Set(opts.onlyIds) : null;
 
     const goodPatterns = db.patterns.filter(p =>
       p.approved &&
       p.confidence >= THRESHOLDS.MIN_CONFIDENCE &&
       p.verified >= THRESHOLDS.MIN_VERIFIED &&
-      (!p.language || p.language === fileLang)
+      (!p.language || p.language === fileLang) &&
+      (!onlyIds || onlyIds.has(p.id))
     );
 
     if (!goodPatterns.length) {
-      return { fixed: code, applied: 0 };
+      return { fixed: code, applied: 0, uses: [] };
     }
 
+    // [V4′] سياسة صلاحية القالب المعمَّم تُطبَّق على **الطرفين** لا على طرف.
+    //
+    // كان isGeneralPatternUsable يُنادى من موضع واحد: داخل learn() وقت
+    // التخزين. وapplyLearned يثق بـp.generalized ثقةً مطلقة. فقالبٌ دخل
+    // المخزن بطريق لا يمرّ بـlearn() — مخزن أقدم من V4، أو زرع، أو مسار
+    // كود آخر — يُطبَّق كما هو. والمقيس على عائلة SQL concat:
+    //     قالب "بعد" يعكس وسطاء الاستعلام  ⇒  applied=1، وGhost pass،
+    //     والفحص النحوي يقبل، وFixVerifier يقبل («أزال مشكلتين بلا تدهور»)،
+    //     ثم يُكتب فعلاً وحكم P2 عليه PASS. والربط مقلوب: قيمة العمود a
+    //     تذهب إلى b والعكس. صحيح نحويًا، مُعامَل بالمعامِلات، ودلالته عكسية.
+    // ولا تنقذنا البوابة: المحلّل يُنتج نفس قائمة البلاغات بالضبط للنسخة
+    // المقلوبة والنسخة السليمة — لا كاشف يمثّل تقابل المعامِل بالعمود.
+    //
+    // والدالة محضة وحتمية، وlearn() لا يضع generalized إلا بعد اجتيازها
+    // ⇒ إعادة الفحص no-op لكل ما خزّنه هذا المحرك، ولا تعضّ إلا على قالب
+    // ما كان ليخزّنه. والحساب مرة واحدة لكل نمط لا لكل سطر: القياس المتشابك
+    // أعطى النداء لكل سطر +74.8% على applyLearned، وهذه الصيغة +15.3%
+    // بمدى متقاطع مع الأصل.
+    //
+    // ⚠️ النطاق: المسار المعمَّم وحده. المطابقة الحرفية (via='exact') تبقى
+    // خارج الحماية — زوجٌ حرفي يعكس الوسطاء يُطبَّق كما كان، وهو حدّ مُعلَن
+    // ومُختبَر صراحةً، وتغطيته تحتاج فحص ترتيب على مستوى قيم الخانات.
+    const genUsable = new Set(goodPatterns.filter(
+      p => p.generalized && isGeneralPatternUsable(p.generalized, fileLang)));
+
     const lines = code.split('\n');
+    const uses = [];
     let applied = 0;
 
     for (let i = 0; i < lines.length; i++) {
@@ -680,12 +818,14 @@ var LearningEngine = (() => {
 
       let selected = null;
       let replacement = null;
+      let via = null;          // [P2] أي مسار أنتج الاستبدال: حرفي أم معمَّم
 
       // 1. Exact match first.
       for (const p of goodPatterns) {
         if (t === p.before) {
           selected = p;
           replacement = p.after;
+          via = 'exact';
           break;
         }
       }
@@ -694,6 +834,7 @@ var LearningEngine = (() => {
       if (!selected) {
         for (const p of goodPatterns) {
           if (!p.generalized) continue;
+          if (!genUsable.has(p)) continue;   // [V4′] عضوية بالهوية لا بالمعرّف
 
           const match = matchGeneralPattern(t, p.generalized);
           if (!match) continue;
@@ -707,24 +848,53 @@ var LearningEngine = (() => {
 
           selected = p;
           replacement = rendered;
+          via = 'general';
           break;
         }
       }
 
       if (!selected || !replacement || replacement === t) continue;
 
+      // الخانق الوحيد قبل الكتابة — يسري على المسارين: الحرفي والمعمَّم.
+      if (!preservesTarget(t, replacement)) continue;
+      if (!preservesValueOrder(t, replacement)) continue;   // [V4″]
+
       const leading = originalLine.match(/^\s*/)?.[0] || '';
       lines[i] = leading + replacement;
-      selected.lastUsed = Date.now();
+      // [P2] نسبة صريحة: أي نمط أسهم، في أي سطر، عبر أي مسار. ولا يُسجَّل
+      // استعمال هنا — الدفتر (lastUsed) صار بعد قرار البوابة عبر markUsed.
+      uses.push({ patternId: selected.id, lineIndex: i, via, before: t, after: replacement });
       applied++;
     }
 
-    save(db);
-
+    // [P2] applyLearned صارت قراءة محضة: لا lastUsed ولا save(). كانت تكتب
+    // الدفتر داخل الحلقة قبل أن تحكم البوابة، فيُسجَّل استعمالٌ لتعديل قد
+    // يُرفض؛ وكانت تكتب المخزن في كل نداء حتى عند applied === 0.
     return {
       fixed: lines.join('\n'),
-      applied
+      applied,
+      uses
     };
+  }
+
+  // ─── Usage Bookkeeping (post-gate) ──────────────────
+  // [P2] يُستدعى من خط الأنابيب **بعد** قبول البوابة حصرًا. يسجّل lastUsed
+  // ولا يلمس verified ولا failures ولا confidence ولا approved: نسبة الأدلة
+  // في هذه المرحلة تسجيلٌ لا حكم على حالة النمط.
+  function markUsed(patternIds) {
+    if (!Array.isArray(patternIds) || !patternIds.length) return 0;
+    const db = load();
+    if (!db || !Array.isArray(db.patterns)) return 0;
+    const wanted = new Set(patternIds);
+    const now = Date.now();
+    let marked = 0;
+    for (const p of db.patterns) {
+      if (!wanted.has(p.id)) continue;
+      p.lastUsed = now;
+      marked++;
+    }
+    if (marked) save(db);
+    return marked;
   }
 
   function learnSafe(code, fileName) {
@@ -787,7 +957,7 @@ var LearningEngine = (() => {
     try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
   }
 
-  return { learn, learnSafe, applyLearned, verify, markResult, getStats, getBoosts, reset };
+  return { learn, learnSafe, applyLearned, markUsed, verify, markResult, getStats, getBoosts, reset };
 })();
 
 if (typeof window !== 'undefined') window.LearningEngine = LearningEngine;

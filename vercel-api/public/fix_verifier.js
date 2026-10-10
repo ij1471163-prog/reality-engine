@@ -82,10 +82,12 @@ var FixVerifier = (() => {
     const pairs = { "(": ")", "[": "]", "{": "}" };
     const closing = new Set([")", "]", "}"]);
 
-    function scanLine(raw) {
+    // [FIX] تستلم حالة الاقتباس الثلاثي الواردة بدل أن تبدأ من null. بلا
+    // ذلك يُرفض كل نص متعدد الأسطر عند سطر افتتاحه.
+    function scanLine(raw, carriedTriple) {
       let out = "";
       let quote = null;
-      let triple = null;
+      let triple = carriedTriple || null;
       let escaped = false;
 
       for (let i = 0; i < raw.length; i++) {
@@ -143,16 +145,41 @@ var FixVerifier = (() => {
       return { code: out, quote, triple };
     }
 
+    /*
+     * [FIX] وحدة الفحص هي السطر المنطقي لا الفيزيائي.
+     *
+     * كان كل سطر فيزيائي يُعامَل كعبارة مستقلة، فسطر الاستمرار — داخل أقواس
+     * مفتوحة، أو بعد backslash، أو داخل نص ثلاثي — تُفحَص إزاحته فيُرفض
+     * بـ"unexpected indentation"، ويُرفض كل نص متعدد الأسطر بـ"unterminated
+     * Python string". سبع حالات كود صحيح مقيسة.
+     *
+     * والقاعدة مأخوذة من CPython (ast.parse) لا مُستنتجة: داخل الاستمرار
+     * الإزاحة بلا معنى نحوي، أما السطر الذي يلي **انتهاء** الاستمرار فيُفحَص
+     * كالمعتاد. ولهذا لا يكفي تخطّي الإزاحة عند depth > 0: لو فُعل ذلك وحده
+     * لضاع كشف الإزاحة الخاطئة بعد انتهاء الاستمرار. فالضبط على الوحدة:
+     *   • السطر المنطقي يبدأ عند سطر فيزيائي ليس استمرارًا.
+     *   • إزاحته إزاحة سطره الأول.
+     *   • نصه تجميع نصوص أسطره، فترويسة ممتدة مثل  if foo(\n 1\n):  تنتهي
+     *     بـcolon فتُعدّ ترويسة كتلة، ومفتاح dict مثل  "a":  وسطُها فلا يُعدّ.
+     * ومنطق الإزاحة والكتل أدناه لم يتغيّر — تغيّر ما يُطبَّق عليه فقط.
+     */
+    const logical = [];
+    let current = null;
+    let carriedTriple = null;
+    let pendingJoin = false;
+
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
+      const isContinuation = !!carriedTriple || pendingJoin || stack.length > 0;
 
-      if (!raw.trim()) continue;
+      if (!isContinuation && !raw.trim()) continue;
 
       const leadingMatch = raw.match(/^[ \t]*/);
       const leading = leadingMatch ? leadingMatch[0] : "";
 
-      // لا نسمح بخلط tab وspaces داخل نفس indentation.
-      if (leading.includes(" ") && leading.includes("\t")) {
+      // لا نسمح بخلط tab وspaces داخل نفس indentation — لبداية العبارة فقط،
+      // فإزاحة سطر الاستمرار بلا معنى نحوي.
+      if (!isContinuation && leading.includes(" ") && leading.includes("\t")) {
         return {
           ok: false,
           available: true,
@@ -161,13 +188,11 @@ var FixVerifier = (() => {
         };
       }
 
-      const indent = leading
-        .replace(/\t/g, "    ")
-        .length;
+      const scanned = scanLine(raw.slice(leading.length), carriedTriple);
 
-      const scanned = scanLine(raw.slice(leading.length));
-
-      if (scanned.quote || scanned.triple) {
+      // اقتباس مفرد غير منتهٍ على سطر واحد خطأ فعلي. أما الثلاثي فيُحمَل،
+      // ويُفحَص عند نهاية الملف.
+      if (scanned.quote) {
         return {
           ok: false,
           available: true,
@@ -176,60 +201,7 @@ var FixVerifier = (() => {
         };
       }
 
-      const clean = scanned.code.trim();
-
-      if (!clean) continue;
-
-      // بعد block header، السطر التالي يجب أن يكون أعمق.
-      if (expectIndent) {
-        const parentIndent = indentStack[indentStack.length - 1];
-
-        if (indent <= parentIndent) {
-          return {
-            ok: false,
-            available: true,
-            language: "python",
-            reason: "expected indented block after line " + i
-          };
-        }
-
-        // مستوى الجسم الجديد يصبح المستوى الحالي.
-        indentStack.push(indent);
-        expectIndent = false;
-      } else {
-        const currentIndent = indentStack[indentStack.length - 1];
-
-        if (indent === currentIndent) {
-          // نفس مستوى الـblock الحالي — صحيح.
-        } else if (indent < currentIndent) {
-          // الرجوع إلى مستوى سابق.
-          while (
-            indentStack.length > 1 &&
-            indent < indentStack[indentStack.length - 1]
-          ) {
-            indentStack.pop();
-          }
-
-          if (indent !== indentStack[indentStack.length - 1]) {
-            return {
-              ok: false,
-              available: true,
-              language: "python",
-              reason: "inconsistent indentation at line " + (i + 1)
-            };
-          }
-        } else {
-          // زيادة indentation بدون block header.
-          return {
-            ok: false,
-            available: true,
-            language: "python",
-            reason: "unexpected indentation at line " + (i + 1)
-          };
-        }
-      }
-
-      // تحقق الأقواس خارج strings/comments.
+      // تحقق الأقواس خارج strings/comments — بأرقام الأسطر الفيزيائية.
       for (let j = 0; j < scanned.code.length; j++) {
         const c = scanned.code[j];
 
@@ -255,9 +227,91 @@ var FixVerifier = (() => {
         }
       }
 
+      carriedTriple = scanned.triple;
+      pendingJoin = !carriedTriple && /\\$/.test(raw.replace(/\s+$/, ""));
+
+      if (isContinuation) {
+        if (current) current.text += " " + scanned.code;
+        continue;
+      }
+
+      current = {
+        line: i + 1,
+        indent: leading.replace(/\t/g, "    ").length,
+        text: scanned.code
+      };
+      logical.push(current);
+    }
+
+    if (carriedTriple) {
+      return {
+        ok: false,
+        available: true,
+        language: "python",
+        reason: "unterminated Python string at end of file"
+      };
+    }
+
+    // ── الإزاحة والكتل: نفس المنطق، مطبَّقًا على الأسطر المنطقية ──
+    for (const entry of logical) {
+      const clean = entry.text.trim();
+
+      if (!clean) continue;
+
+      const indent = entry.indent;
+
+      // بعد block header، السطر التالي يجب أن يكون أعمق.
+      if (expectIndent) {
+        const parentIndent = indentStack[indentStack.length - 1];
+
+        if (indent <= parentIndent) {
+          return {
+            ok: false,
+            available: true,
+            language: "python",
+            reason: "expected indented block after line " + (entry.line - 1)
+          };
+        }
+
+        // مستوى الجسم الجديد يصبح المستوى الحالي.
+        indentStack.push(indent);
+        expectIndent = false;
+      } else {
+        const currentIndent = indentStack[indentStack.length - 1];
+
+        if (indent === currentIndent) {
+          // نفس مستوى الـblock الحالي — صحيح.
+        } else if (indent < currentIndent) {
+          // الرجوع إلى مستوى سابق.
+          while (
+            indentStack.length > 1 &&
+            indent < indentStack[indentStack.length - 1]
+          ) {
+            indentStack.pop();
+          }
+
+          if (indent !== indentStack[indentStack.length - 1]) {
+            return {
+              ok: false,
+              available: true,
+              language: "python",
+              reason: "inconsistent indentation at line " + entry.line
+            };
+          }
+        } else {
+          // زيادة indentation بدون block header.
+          return {
+            ok: false,
+            available: true,
+            language: "python",
+            reason: "unexpected indentation at line " + entry.line
+          };
+        }
+      }
+
       /*
        * Block header محافظ:
-       * نعترف بالـcolon عندما يكون آخر token في السطر.
+       * نعترف بالـcolon عندما يكون آخر token في السطر المنطقي.
        * هذا يغطي def/if/for/while/class/try/except/with...
        * ولا يعتبر colon داخل expression بداية block.
        */
@@ -685,6 +739,202 @@ var FixVerifier = (() => {
     return false;
   }
 
+  // ─── Python: الكود غير القابل للوصول ─────────────────
+  // معيار القبول في البوابة هو "أنقص بلاغًا بلا تدهور". والكود غير القابل
+  // للوصول ليس شيئًا يبلّغ عنه المحلل في بايثون، وفحوص quickCheck البنيوية
+  // موسومة "خاص بـJS/TS" وتُتخطّى هناك. فمولِّد يزرع
+  //     return cursor.fetchall()
+  // قبل سطر الإرجاع الأصلي يُنتج كودًا سليم الصياغة ينقص بلاغ SQL، فيُقبل،
+  // مع أن ناتج الدالة تغيّر وما بعد الـreturn صار ميتًا. مقيس أن هذا يحدث
+  // حتى بتسليم الناتج مباشرة بلا أي ترتيب مسارات.
+  //
+  // هذا ماسح مستقل عن pythonStructuralSyntaxCheck عمدًا: ذاك يعيد ضبط حالة
+  // الاقتباس الثلاثي عند كل سطر ولا يعرف أسطر الاستمرار، وله بسبب ذلك
+  // إيجابيات كاذبة مُثبتة. والبناء عليه يورثها.
+  //
+  // عقد الماسح، وكل بند منه أثبته كوربوس عدائي:
+  //   • حالة """ محمولة بين الأسطر — وإلا صار docstring كودًا.
+  //   • أسطر الاستمرار (عمق أقواس > 0 أو نهاية بـ backslash) ليست عبارات.
+  //   • التعليقات ليست عبارات.
+  //   • elif/else/except/finally/case تفتح مسارًا جديدًا لا عبارة تالية.
+  //   • المستويات الأعمق تُنسى عند الرجوع إلى مستوى أقل.
+  // حدوده المعروفة ولا يدّعي غيرها: لا يكشف عبارتين على سطر واحد بفاصلة
+  // منقوطة، ولا كودًا بعد شرط دائم الصدق (يحتاج تحليل قيم)، ولا تغيّر قيمة
+  // الإرجاع بلا كود ميت (هذا فحص وصول لا فحص مكافئة دلالية).
+  const PY_TERMINATOR = /^(?:return|raise|break|continue)\b|^(?:sys\.exit|os\._exit)\s*\(/;
+  const PY_NEW_BRANCH = /^(?:elif|else|except|finally|case)\b/;
+  const PY_SCOPE_HEAD = /^(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)/;
+
+  // يُرجع كل عبارة منطقية مع موضعها وحالة وصولها:
+  //   { masked, raw, indent, scope, dead }
+  // النصّ وحده لا يكفي: لا يُميّز عبارةً أُسكتت من عبارةٍ كانت ميتة أصلًا في
+  // موضع آخر. والنطاق سلسلة أسماء def/class الحاوية مفصولة بـ'>' . وهو تقريب
+  // معلن: دالتان بالاسم نفسه على المستوى نفسه تندمجان.
+  function pyLogicalStatements(code) {
+    const lines = String(code).replace(/\r\n?/g, "\n").split("\n");
+    const terminatedAt = new Map();
+    const out = [];
+    const scopes = new Set(["<module>"]);
+    const stack = [];
+    let triple = null, depth = 0, continuing = false;
+
+    for (const raw of lines) {
+      if (!raw.trim()) continue;
+
+      const startedInTriple = !!triple;
+      let clean = "", quote = null, escaped = false;
+
+      for (let k = 0; k < raw.length; k++) {
+        const c = raw[k], n1 = raw[k + 1], n2 = raw[k + 2];
+
+        if (triple) {
+          if (c === triple && n1 === triple && n2 === triple) { clean += "   "; k += 2; triple = null; }
+          else clean += " ";
+          continue;
+        }
+        if (quote) {
+          clean += " ";
+          if (escaped) escaped = false;
+          else if (c === "\\") escaped = true;
+          else if (c === quote) quote = null;
+          continue;
+        }
+        if ((c === "'" || c === '"') && n1 === c && n2 === c) { triple = c; clean += "   "; k += 2; continue; }
+        if (c === "'" || c === '"') { quote = c; clean += " "; continue; }
+        if (c === "#") break;
+        clean += c;
+      }
+
+      const wasContinuing = continuing;
+      for (const c of clean) {
+        if (c === "(" || c === "[" || c === "{") depth++;
+        else if (c === ")" || c === "]" || c === "}") depth--;
+      }
+      continuing = depth > 0 || /\\$/.test(raw.replace(/\s+$/, ""));
+
+      const stmt = clean.trim();
+      if (!stmt || startedInTriple || wasContinuing) continue;
+
+      const lead = raw.match(/^[ \t]*/)[0];
+      const indent = lead.replace(/\t/g, "    ").length;
+
+      while (stack.length && indent <= stack[stack.length - 1].indent) stack.pop();
+      for (const level of Array.from(terminatedAt.keys())) {
+        if (level > indent) terminatedAt.delete(level);
+      }
+
+      const scope = stack.map(x => x.name).join(">") || "<module>";
+      const dead = !!(terminatedAt.get(indent) && !PY_NEW_BRANCH.test(stmt));
+      out.push({ masked: stmt, raw: raw.trim(), indent, scope, dead });
+
+      const head = PY_SCOPE_HEAD.exec(stmt);
+      if (head) { stack.push({ name: head[1], indent }); scopes.add(stack.map(x => x.name).join(">")); }
+      if (PY_TERMINATOR.test(stmt)) terminatedAt.set(indent, true);
+      if (PY_NEW_BRANCH.test(stmt)) terminatedAt.delete(indent);
+    }
+
+    return { all: out, dead: out.filter(x => x.dead), scopes };
+  }
+
+  // العقد القديم محفوظ: قائمة نصوص الأسطر الميتة المُعمَّاة.
+  function pyUnreachableStatements(code) {
+    const out = pyLogicalStatements(code).dead.map(x => x.masked);
+    return out;
+  }
+
+  // فارقي: الحكم على ما **يضيفه** التعديل، كما تفعل diffCounts مع البلاغات.
+  // كود ميت موجود في الأصل لا يُحاسَب عليه الـcandidate، وإزالته تحسين.
+  //
+  // أربع قواعد: ثلاث أدلّة وواحدة اشتباه. وكلّها مقيسة على 3,910 أزواج من
+  // مكتبة بايثون القياسية، بحقيقة أرضية من شجرة CPython وبذرة ثابتة.
+  //
+  //   (أ) ارتفاع العدد الكلي للعبارات غير القابلة للوصول.           [دليل]
+  //       سطر ميت واحد صار اثنين داخلٌ فيها: العدد ارتفع.
+  //   (ب) نصّ **خام** كان قابلًا للوصول ولم يكن ميتًا في أي موضع،    [دليل]
+  //       وصار ميتًا ⇒ هذه العبارة بعينها توقّفت. والخام لا المُعمَّى،
+  //       وإلا تصادم log("abc") مع log("xyz") فضاع الضرر.
+  //   (و) في نطاق واحد ولنصّ واحد: تعداد الأحياء ينقص وتعداد الميت   [دليل]
+  //       يرتفع ⇒ العبارة توقّفت **هنا**. وهي التي تفصل نقل الضرر بين
+  //       الدوال عن نقل كود ميت سليم: في الثاني لم يكن للنصّ وجود حيّ
+  //       في نطاق الوصول، فلا نقص.
+  //   (هـ) ظهور نصّ ميت جديد (مُعمَّى) مع نقص في تعداد الأحياء        [اشتباه]
+  //       (مُعمَّى) ⇒ الشكل الذي يُنتجه "قتل سطر حيّ وإعادة كتابته"،
+  //       وهو نفسه شكل "حذف سطر حيّ وإعادة صياغة سطر ميت" السليم. لا
+  //       يفصلهما النص، فنرفض كما يرفض السلوك السابق. والمُعمَّى لا الخام،
+  //       وإلا رُفض كل تعديل يمسّ نصًّا حرفيًّا داخل كود ميت.
+  //
+  // ولا يُعدّ ضررًا: إعادة صياغة كود ميت وحده، ونقل الميت بين النطاقات،
+  // وحذف سطر حيّ حذفًا تامًّا (ذاك شأن quickCheck وdiffCounts).
+  function pyReachabilityVerdict(beforeCode, afterCode) {
+    const B = pyLogicalStatements(beforeCode);
+    const A = pyLogicalStatements(afterCode);
+    const added = [];
+    const push = t => { if (added.indexOf(t) === -1) added.push(t); };
+
+    // (أ)
+    if (A.dead.length > B.dead.length) {
+      const budget = new Map();
+      for (const d of B.dead) budget.set(d.raw, (budget.get(d.raw) || 0) + 1);
+      for (const d of A.dead) {
+        const left = budget.get(d.raw) || 0;
+        if (left > 0) budget.set(d.raw, left - 1);
+        else push(d.raw);
+      }
+      if (!added.length) push(A.dead[A.dead.length - 1].raw);
+    }
+
+    // فهارس تُبنى مرّة: الخام للهوية، والمُعمَّى للتعداد.
+    const liveRaw = new Set(), deadRaw = new Set();
+    const liveAt = new Map(), deadAt = new Map();          // "نطاق\0مُعمَّى" -> عدد
+    const liveText = new Map(), deadTextA = new Map();     // مُعمَّى -> عدد
+    const index = (src, scoped, flat, rawSet, isAfter) => {
+      for (const x of src.all) {
+        if (!isAfter) rawSet(x);
+        const k = x.scope + "\u0000" + x.masked;
+        const m = x.dead ? scoped.dead : scoped.live;
+        m.set(k, (m.get(k) || 0) + 1);
+        const f = x.dead ? flat.dead : flat.live;
+        f.set(x.masked, (f.get(x.masked) || 0) + 1);
+      }
+    };
+    const bScoped = { live: new Map(), dead: new Map() };
+    const aScoped = { live: liveAt, dead: deadAt };
+    const bFlat = { live: liveText, dead: new Map() };
+    const aFlat = { live: new Map(), dead: deadTextA };
+    index(B, bScoped, bFlat, x => (x.dead ? deadRaw : liveRaw).add(x.raw), false);
+    index(A, aScoped, aFlat, null, true);
+
+    // (ب)
+    for (const d of A.dead) {
+      if (liveRaw.has(d.raw) && !deadRaw.has(d.raw)) push(d.raw);
+    }
+
+    // (و)
+    for (const [k, n] of deadAt) {
+      if (n <= (bScoped.dead.get(k) || 0)) continue;
+      if ((liveAt.get(k) || 0) < (bScoped.live.get(k) || 0)) push(k.split("\u0000")[1]);
+    }
+
+    if (added.length) return { added, suspect: [] };
+
+    // (هـ)
+    let fresh = null;
+    for (const [t, n] of deadTextA) {
+      if (n > (bFlat.dead.get(t) || 0)) { fresh = t; break; }
+    }
+    if (fresh === null) return { added, suspect: [] };
+    for (const [t, n] of liveText) {
+      if ((aFlat.live.get(t) || 0) < n) return { added, suspect: [fresh] };
+    }
+    return { added, suspect: [] };
+  }
+
+  // العقد القديم محفوظ: أسطر الضرر المؤكَّد وحدها.
+  function pyUnreachableAdded(beforeCode, afterCode) {
+    const added = pyReachabilityVerdict(beforeCode, afterCode).added;
+    return added;
+  }
+
   // SQL candidate guard — لا يكفي اختفاء SQL Injection من الـAnalyzer.
   // يجب أن يثبت الـcandidate وجود parameterization مناسب للغة.
   function sqlCandidateLooksParameterized(beforeCode, afterCode, fileName) {
@@ -836,6 +1086,45 @@ var FixVerifier = (() => {
         quick,
         diff: deep.diff
       };
+    }
+
+    // بايثون حصرًا: تعديل يُدخل كودًا غير قابل للوصول يُرفض، ولو أنقص بلاغًا.
+    // مقصور على python لأن الماسح يعتمد على الإزاحة وعلى عودة عمق الأقواس
+    // إلى صفر بين العبارات — وهما صحيحان في بايثون لا في لغات الأقواس. وهو
+    // على JS خامل لا خاطئ (كل الأسطر تُعدّ استمرارًا بسبب `{`)، فلا يُعتمد
+    // عليه هناك: كشف JS أداته acorn وهو بند منفصل.
+    if (syn.language === "python") {
+      const reach = pyReachabilityVerdict(beforeCode, afterCode);
+
+      if (reach.added.length) {
+        return {
+          accepted: false,
+          reason: "REJECTED_PY_UNREACHABLE_CODE (+" + reach.added.length + "): "
+            + reach.added.slice(0, 3).join(" | ")
+            + " — التعديل يُدخل كودًا غير قابل للوصول، فناتج الدالة تغيّر",
+          syntaxStatus,
+          language: syn.language,
+          afterIssues: null,
+          quick,
+          diff: deep.diff
+        };
+      }
+
+      // اشتباه لا دليل: الشكل نفسه يحتمل حذفًا سليمًا وقتلًا مُقنّعًا، ولا
+      // يفصلهما النص. نرفض كما يرفض السلوك السابق، لكن بسبب مُميَّز كي يظهر
+      // الصنف في السجلات ولا يُحسب ضررًا مؤكَّدًا.
+      if (reach.suspect.length) {
+        return {
+          accepted: false,
+          reason: "REJECTED_PY_UNREACHABLE_CODE (مشتبه): " + reach.suspect[0]
+            + " — نصّ ميت جديد ظهر مع نقص في عبارات قابلة للوصول",
+          syntaxStatus,
+          language: syn.language,
+          afterIssues: null,
+          quick,
+          diff: deep.diff
+        };
+      }
     }
 
     if (requireImprovement && !deep.improved) {

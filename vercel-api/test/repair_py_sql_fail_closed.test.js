@@ -229,16 +229,22 @@ for (const label of ['A: 2 params, cursor موجود', 'C: param واحد، curs
   });
 }
 
-// 3ج) عطل مُقاس في محرك آخر — لم يُصلَح في هذه الجولة بحكم النطاق.
-test('pipeline: emergency_fixes.js يُنتج نفس patch القَولَبة لبايثون — B',
-  { todo: 'عطل emergency_fixes.js، خارج نطاق D1-SQL-PY (smart_repair.js). مقيس: SmartRepair يرفض، وEmergency يُعتمد ويُدخل return مزروعًا' },
-  () => {
-    const [file, code] = CASES['B: param واحد، بلا cursor تحت'];
-    const { out, report } = runPipeline(file, code);
-    assert.ok((report.accepted || []).some(a => /Emergency/i.test(String(a.source))),
-      'التشخيص: Emergency هو من يُعتمد هنا');
-    assertCommittedSafe('B', code, out);
-  });
+// 3ج) كان هذا todo يسجّل عطل emergency_fixes.js: SmartRepair يرفض fail-closed،
+// ثم يأتي Emergency ويُعتمد ويُدخل return مزروعًا. أُغلق بفحص الوصول في
+// البوابة (REJECTED_PY_UNREACHABLE_CODE)، فصار التأكيد مُفعَّلاً.
+// والمولِّد نفسه ما زال يُنتج الـpatch المدمّر — إصلاحه نطاق جولة لاحقة —
+// لكن البوابة تحجبه فلا يُعتمد شيء، والبلاغ يبقى قائمًا لمسار AI.
+test('pipeline: patch القَولَبة من محرك آخر يُحجَب عند البوابة — B', () => {
+  const [file, code] = CASES['B: param واحد، بلا cursor تحت'];
+  const { out, report } = runPipeline(file, code);
+  assert.ok(!(report.accepted || []).some(a => /Emergency/i.test(String(a.source))),
+    'Emergency لا يجوز أن يُعتمد');
+  assert.ok((report.rejected || []).some(a => /Emergency/i.test(String(a.source)) &&
+    /UNREACHABLE/.test(String(a.reason))),
+    'ويُرفض بفحص الوصول تحديدًا، لا بسبب عارض');
+  assert.strictEqual(out, code, 'والكود يبقى كما هو');
+  assertCommittedSafe('B', code, out);
+});
 
 // وهذا يبقى تأكيدًا حقيقيًا يمر: SmartRepair نفسها fail-closed في B.
 test('pipeline: SmartRepair لا تُنتج شيئًا في B (fail-closed)', () => {

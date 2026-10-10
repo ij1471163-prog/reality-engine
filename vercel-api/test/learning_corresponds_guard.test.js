@@ -10,17 +10,26 @@
 // وتطبيقه لاحقًا يحذف الاستدعاء ويضع مكانه تصريحًا. الإصلاح كان بوابة
 // corresponds() على كل مسارات الاختيار، بما فيها حالة المرشّح الوحيد.
 //
-// هذا الملف يثبّت ثلاثة أشياء، كلها مقيسة:
+// هذا الملف يثبّت أربعة أشياء، كلها مقيسة:
 //
 //  1) الحارس حامل للحمل: الزوج غير المتقابل يُرفض عند HEAD، ويُخزَّن إذا
 //     عُطِّل سطر confirm وحده (نسخة في الذاكرة — لا يُمَسّ أي ملف إنتاج).
 //
-//  2) لا بوابة لاحقة تنقذنا: لو خُزِّن النمط المسموم واعتُمد، فإن تطبيقه
-//     يجتاز GhostMode.verdict و learnedSyntaxOk و FixVerifier.verifyFix
-//     كلها. فالاختبار في (1) لا يمرّ لأن مرحلة أخرى ترفض — بل لأن
-//     corresponds() وحدها تمنع التخزين.
+//  2) البوابات الموروثة لا تنقذنا، وحرس V2′ ينقذنا. لو خُزِّن النمط المسموم
+//     واعتُمد، فإن تطبيقه يجتاز GhostMode.verdict و learnedSyntaxOk و
+//     FixVerifier.verifyFix كلها — وهذا مقيس ومحفوظ هنا كما كان. والذي
+//     يمنع التطبيق هو preservesTarget في applyLearned، فصار الدفاع طبقتين:
+//       corresponds() يمنع **التخزين**،
+//       وV2′ يمنع **التطبيق** ولو كان النمط مزروعًا في المخزن أصلاً.
+//     [P1] قبل V2′ كان هذا القسم يؤكّد أن النمط المسموم يُطبَّق فعلاً — أي
+//     يؤكّد غياب حماية. صار يؤكّد وجودها، مع إبقاء تتبّع البوابات الموروثة
+//     دليلاً على أن الأخضر ليس مصدره مرحلة أخرى.
 //
 //  3) الحارس ليس مفرط التقييد: الأزواج الصحيحة المعروفة ما زالت تُتعلَّم.
+//
+//  4) [V4] حفظ ترتيب الخانات في التعميم: القالب الذي يبدّل مواضع المعامِلات
+//     لا يُخزَّن معمَّمًا، والقالب الذي يحفظ ترتيبها يُخزَّن. والقسم 6 يثبت
+//     أن V4 وحده هو الفاعل — بتعطيله يُخزَّن القالب المبدِّل فعلاً.
 //
 // وتُسجَّل في القسمين 4 و5 نتائج التدقيق التي لم تُصلَح بعد (todo)، مع
 // تمييز صريح بين خلل مُثبَت الوصول واحتمال على مستوى الدالة فقط.
@@ -46,6 +55,17 @@ const STORAGE_KEY = 're_learned_patterns_v2';
 // صراحةً بدل أن يمرّ بصمت وهو يقيس نسخة لم تُعطَّل فعلاً.
 const GATE_LINE = 'const confirm = c => (c && corresponds(beforeLine, c.line)) ? c : null;';
 const LE_NO_GATE = LE_HEAD.replace(GATE_LINE, 'const confirm = c => (c || null);');
+
+// [P1] حرس V2′ في applyLearned — نقطة الخانق الوحيدة قبل الكتابة. نسخة
+// بتعطيله وحده تُثبت أنه هو الفاعل لا مرحلة أخرى، بنفس انضباط GATE_LINE.
+const V2_LINE   = '      if (!preservesTarget(t, replacement)) continue;';
+const LE_NO_V2  = LE_HEAD.replace(V2_LINE, '      if (false) continue;');
+
+// [P1/V4] شرط حفظ ترتيب الخانات في isGeneralPatternUsable — يرفض **التعميم**
+// لا الزوج. نسخة بتعطيله وحده تُثبت أنه هو من يرفض القالب المبدِّل، بنفس
+// انضباط GATE_LINE و V2_LINE. القسم 6 أدناه هو انحدار هذه الحماية.
+const V4_LINE   = '    if (seqAt !== afterSeq.length) return false;';
+const LE_NO_V4  = LE_HEAD.replace(V4_LINE, '    if (false) return false;');
 
 function loadCtx(learningEngineSrc) {
   const noop = () => {};
@@ -111,6 +131,14 @@ test('tripwire: سطر البوابة موجود حرفيًا في الملف ا
   assert.notStrictEqual(LE_NO_GATE, LE_HEAD, 'نسخة التعطيل يجب أن تختلف فعلاً عن HEAD');
 });
 
+test('tripwire: سطر حرس V2′ موجود حرفيًا في الملف المُسلَّم', () => {
+  assert.ok(LE_HEAD.includes(V2_LINE),
+    'سطر preservesTarget تغيّر — نسخة "V2′ معطَّل" لم تعطّل شيئًا، فكل قياس بعدها باطل');
+  assert.notStrictEqual(LE_NO_V2, LE_HEAD, 'نسخة التعطيل يجب أن تختلف فعلاً عن HEAD');
+  assert.ok(/function preservesTarget\(beforeLine, afterLine\)/.test(LE_HEAD),
+    'دالة الحرس يجب أن تكون موجودة بالاسم المتوقَّع');
+});
+
 test('tripwire: المخزن في الـharness حقيقي، لا stub يُرجع null', () => {
   const ctx = loadCtx(LE_HEAD);
   ctx.localStorage.setItem('k', 'v');
@@ -166,23 +194,49 @@ test('النمط المسموم يبلغ approved بتحققين فقط (MIN_VER
   assert.ok(stats.approved >= 1, 'تحققان يكفيان للاعتماد — فعتبة الاعتماد ليست حاجزًا');
 });
 
-test('تتبّع الأثر: النمط المسموم يُطبَّق ويجتاز Ghost و learnedSyntaxOk و FixVerifier', () => {
-  const { raw } = seedApprovedPoison(LE_NO_GATE, NC_BEFORE, NC_AFTER);
+// ضحية مشتركة بين الاختبارين التاليين: ناتجها يُحلَّل نحويًا، فأي رفض ليس
+// بسبب صياغة مكسورة.
+const NC_VICTIM = 'function send(key) {\n  console.log("sk_live_51H8xQ2abcdefghijKLMN");\n' +
+                  '  return post(key);\n}\nsend("x");\n';
+
+test('V2′ يمنع تطبيق النمط المسموم ولو كان مزروعًا في المخزن ومعتمدًا', () => {
+  const { raw, stats } = seedApprovedPoison(LE_NO_GATE, NC_BEFORE, NC_AFTER);
+  // عزل: النمط مزروع ومعتمد فعلاً — وإلا فالأخضر بلا معنى
+  assert.ok(stats.total >= 1,    'العزل: النمط المسموم مخزَّن في المخزن المزروع');
+  assert.ok(stats.approved >= 1, 'العزل: ومعتمد — فالمنع ليس سببه عتبة الاعتماد');
+
   const run = loadCtx(LE_HEAD);
   run.__store.set(STORAGE_KEY, raw);
+  const lr = run.LearningEngine.applyLearned(NC_VICTIM, 'victim.js');
 
-  // ضحية ناتجها يُحلَّل نحويًا — حتى لا يكون الرفض بسبب صياغة مكسورة
-  const victim = 'function send(key) {\n  console.log("sk_live_51H8xQ2abcdefghijKLMN");\n  return post(key);\n}\nsend("x");\n';
-  const lr = run.LearningEngine.applyLearned(victim, 'victim.js');
-  assert.ok(lr.applied >= 1 && lr.fixed !== victim, 'النمط المعتمد يُطبَّق فعلاً');
+  assert.strictEqual(lr.applied, 0, 'V2′ يمنع التطبيق: استدعاء ⇄ تصريح تغيّرُ شكلٍ');
+  assert.strictEqual(lr.fixed, NC_VICTIM, 'والكود الناتج لم يتغيّر حرفًا واحدًا');
+  assert.match(lr.fixed, /console\.log\(/, 'والاستدعاء الوظيفي باقٍ — لا ضرر');
+
+  // ولا يصل مسار القبول أصلاً: خط الأنابيب يشترط applied>0 و fixed!==before
+  // قبل أن يعرض المرشّح على البوابة (fix_engine_pipeline.js:340).
+  assert.ok(!(lr.applied > 0 && lr.fixed !== NC_VICTIM),
+    'شرط دخول البوابة غير مستوفى — فالنمط المسموم لا يُعرض كإصلاح صالح');
+});
+
+test('ومصدر المنع هو V2′ وحده: بتعطيله يُطبَّق النمط ويجتاز Ghost و learnedSyntaxOk و FixVerifier', () => {
+  const { raw } = seedApprovedPoison(LE_NO_GATE, NC_BEFORE, NC_AFTER);
+  const run = loadCtx(LE_NO_V2);
+  run.__store.set(STORAGE_KEY, raw);
+  const lr = run.LearningEngine.applyLearned(NC_VICTIM, 'victim.js');
+
+  assert.ok(lr.applied >= 1 && lr.fixed !== NC_VICTIM,
+    'بتعطيل V2′ يُطبَّق — فالرفض في الاختبار السابق مصدره V2′ لا مرحلة أخرى');
   assert.doesNotMatch(lr.fixed, /console\.log/, 'الاستدعاء الوظيفي حُذف — هذا هو الضرر');
 
-  const lv = run.GhostMode.verdict(victim, lr.fixed, 'victim.js', run.analyzeCode);
+  // التتبّع الأصلي محفوظ كما هو: البوابات الموروثة لا ترفض هذا الضرر.
+  const lv = run.GhostMode.verdict(NC_VICTIM, lr.fixed, 'victim.js', run.analyzeCode);
   assert.notStrictEqual(lv.verdict, run.GhostMode.VERDICT.FAIL, 'Ghost لا يرفضه');
   assert.notStrictEqual(lv.verdict, run.GhostMode.VERDICT.REGRESSION, 'Ghost لا يعتبره ارتدادًا');
-  assert.strictEqual(run.learnedSyntaxOk('victim.js', victim, lr.fixed), true, 'الفحص النحوي لا يرفضه');
-  const v = run.FixVerifier.verifyFix(victim, lr.fixed, 'victim.js', run.analyzeCode);
-  assert.ok(v.accepted, `البوابة لا ترفضه — ${v.reason}`);
+  assert.strictEqual(run.learnedSyntaxOk('victim.js', NC_VICTIM, lr.fixed), true,
+    'الفحص النحوي لا يرفضه');
+  const v = run.FixVerifier.verifyFix(NC_VICTIM, lr.fixed, 'victim.js', run.analyzeCode);
+  assert.ok(v.accepted, `والبوابة لا ترفضه — ${v.reason}`);
 });
 
 test('وعند HEAD لا يوجد ما يُطبَّق أصلاً: النمط لم يُخزَّن', () => {
@@ -344,22 +398,64 @@ test('إغلاق: النمط المسموم لا يُخزَّن ولا يُعت�
   }
 });
 
-// وهذا يثبت أن الإغلاق أعلاه ليس بسبب رفض لاحق: لو خُزِّن النمط لاجتاز
-// كل البوابات. (نفس تتبّع القسم 2، لكن للاتجاه المعاكس تحديدًا.)
-test('إغلاق: ولو خُزِّن الاتجاه المعاكس لاجتاز Ghost و FixVerifier', () => {
+// الاتجاه المعاكس: نفس الطبقتين. corresponds يمنع التخزين، وV2′ يمنع التطبيق
+// لو كان النمط مزروعًا — والبوابات الموروثة لا تمنع شيئًا، وهو ما يُثبته
+// الاختبار الثاني بتعطيل V2′ وحده.
+const REV_VICTIM = 'function boot() {\n  const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n' +
+                   '  return connect(API_KEY);\n}\nboot();\n';
+
+test('إغلاق: V2′ يمنع تطبيق الاتجاه المعاكس ولو كان مزروعًا ومعتمدًا', () => {
   const { raw, stats } = seedApprovedPoison(LE_NO_GATE, REV_BEFORE, REV_AFTER);
-  assert.ok(stats.approved >= 1, 'بتعطيل الحارس يُخزَّن ويُعتمد');
+  assert.ok(stats.approved >= 1, 'العزل: بتعطيل الحارس يُخزَّن ويُعتمد فعلاً');
+
   const run = loadCtx(LE_HEAD);
   run.__store.set(STORAGE_KEY, raw);
-  const victim = 'function boot() {\n  const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n  return connect(API_KEY);\n}\nboot();\n';
-  const lr = run.LearningEngine.applyLearned(victim, 'app.js');
-  assert.ok(lr.applied >= 1 && lr.fixed !== victim, 'يُطبَّق');
-  const lv = run.GhostMode.verdict(victim, lr.fixed, 'app.js', run.analyzeCode);
+  const lr = run.LearningEngine.applyLearned(REV_VICTIM, 'app.js');
+
+  assert.strictEqual(lr.applied, 0, 'V2′ يمنع التطبيق: تصريح ⇄ استدعاء تغيّرُ شكلٍ');
+  assert.strictEqual(lr.fixed, REV_VICTIM, 'والكود الناتج لم يتغيّر حرفًا واحدًا');
+  assert.match(lr.fixed, /const API_KEY = /, 'والتصريح باقٍ — فلا مرجع يصير غير معرَّف');
+  assert.ok(!(lr.applied > 0 && lr.fixed !== REV_VICTIM),
+    'شرط دخول البوابة غير مستوفى — فلا يُعرض كإصلاح صالح');
+});
+
+test('إغلاق: ومصدر المنع V2′ — بتعطيله يُطبَّق الاتجاه المعاكس ويجتاز Ghost و FixVerifier', () => {
+  const { raw } = seedApprovedPoison(LE_NO_GATE, REV_BEFORE, REV_AFTER);
+  const run = loadCtx(LE_NO_V2);
+  run.__store.set(STORAGE_KEY, raw);
+  const lr = run.LearningEngine.applyLearned(REV_VICTIM, 'app.js');
+
+  assert.ok(lr.applied >= 1 && lr.fixed !== REV_VICTIM,
+    'بتعطيل V2′ يُطبَّق — فهو الفاعل في الاختبار السابق');
+  const lv = run.GhostMode.verdict(REV_VICTIM, lr.fixed, 'app.js', run.analyzeCode);
   assert.notStrictEqual(lv.verdict, run.GhostMode.VERDICT.FAIL, 'Ghost لا يرفضه');
   assert.notStrictEqual(lv.verdict, run.GhostMode.VERDICT.REGRESSION, 'ولا يعتبره ارتدادًا');
-  assert.strictEqual(run.learnedSyntaxOk('app.js', victim, lr.fixed), true, 'الفحص النحوي لا يرفضه');
-  const v = run.FixVerifier.verifyFix(victim, lr.fixed, 'app.js', run.analyzeCode);
+  assert.strictEqual(run.learnedSyntaxOk('app.js', REV_VICTIM, lr.fixed), true,
+    'الفحص النحوي لا يرفضه');
+  const v = run.FixVerifier.verifyFix(REV_VICTIM, lr.fixed, 'app.js', run.analyzeCode);
   assert.ok(v.accepted, `والبوابة لا ترفضه — ${v.reason}`);
+});
+
+// الطرف الإيجابي: V2′ ليس حظرًا شاملاً. إصلاح سليم بنفس شكل العبارة ونفس
+// هدف الإسناد ما زال يُطبَّق ويُقبل. بلا هذا الاختبار يمكن أن يُرضى شرط
+// «صفر ضرر» برفض كل شيء.
+test('إيجابي: V2′ لا يمنع إصلاحًا سليمًا — نفس الهدف ونفس الشكل', () => {
+  const { raw, stats } = seedApprovedPoison(LE_HEAD, C_BEFORE, C_AFTER);
+  assert.ok(stats.approved >= 1, 'العزل: البذرة زوج صحيح مخزَّن ومعتمد بلا تعطيل أي حارس');
+
+  const run = loadCtx(LE_HEAD);
+  run.__store.set(STORAGE_KEY, raw);
+  const victim = 'function z() {\n  const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n' +
+                 '  return API_KEY;\n}\nz();\n';
+  const lr = run.LearningEngine.applyLearned(victim, 'z.js');
+
+  assert.ok(lr.applied >= 1, 'الإصلاح السليم ما زال يُطبَّق');
+  assert.match(lr.fixed, /const API_KEY = process\.env\.API_KEY;/, 'والناتج هو الإصلاح الصحيح');
+  const sec = c => run.analyzeCode(c, 'z.js')
+    .filter(i => /secret|hardcoded/i.test(String(i.type || ''))).length;
+  assert.ok(sec(lr.fixed) < sec(victim), 'وبلاغ السرّ انخفض فعلاً');
+  const v = run.FixVerifier.verifyFix(victim, lr.fixed, 'z.js', run.analyzeCode);
+  assert.ok(v.accepted, `والبوابة تقبله — ${v.reason}`);
 });
 
 // ═══ 5. احتمالات على مستوى الدالة فقط — غير مُثبتة الوصول ══
@@ -420,4 +516,110 @@ test('documented: زوج eval→JSON.parse لا يُتعلَّم، والمان�
   assert.deepStrictEqual(Array.from(ids), [], 'ولا شيء يُخزَّن');
   assert.strictEqual(ctx.LearningEngine.getStats().total, 0,
     'المانع أن JSON.parse لا يطابق regex إصلاح XSS، لا أن الزوج غير متقابل');
+});
+
+// ═══ 6. V4: ترتيب الخانات لا يُبدَّل في التعميم ══════════
+//
+// قالب يعيد ترتيب الخانات يُركِّب المعامِلات في مواضع غير مواضعها مع ثبات
+// هدف الإسناد ومع تساوي مجموعات الخانات — فلا يراه حرس الهدف (V2′) ولا
+// المرجع الخلفي (VBR). والزوج المقيس من عائلة SQL concat → parameterized:
+//
+//   before:  db.query("… a=" + x + " AND b=" + y);
+//   after :  db.query("… a=? AND b=?", [y, x]);        ← الوسطاء معكوسان
+//
+// تطبيق قالب كهذا على سطر آخر من العائلة يبني استعلامًا يربط كل قيمة
+// بالعمود الخطأ: صحيح نحويًا، يجتاز الفحوص اللاحقة، ودلالته مقلوبة.
+//
+// ثلاثة قياسات تحدّد V4 تحديدًا لا تقريبًا:
+//   (أ) مبدِّل الترتيب عند HEAD      ⇒ لا قالب معمَّم
+//   (ب) نفس الزوج وV4 مُعطَّل وحده   ⇒ القالب يُخزَّن، وترتيبه معكوس فعلاً
+//   (ج) حافظ الترتيب عند HEAD       ⇒ القالب يُخزَّن (لا إفراط في التقييد)
+// (ب) تمنع أن يكون (أ) أخضرَ لسبب آخر، و(ج) تمنع أن يكون V4 مانعًا شاملاً.
+//
+// ملاحظة: V4 يرفض **التعميم** لا الزوج. فالنمط الحرفي يُخزَّن في الحالات
+// الثلاث، والفرق كله في p.generalized — ولذلك يُقاس هذا الحقل لا getStats.
+
+// ترتيب أول ظهور لكل خانة في القالب. مكتوب هنا مستقلًا عن seqOf الإنتاجية
+// حتى يصف الاختبار الخاصية بنفسه لا أن يعيد استدعاء ما يختبره.
+const seqOfTemplate = src => {
+  const out = [];
+  for (const tok of (String(src).match(/__LEARN_(?:ID|STR)_\d+__/g) || [])) {
+    if (out.indexOf(tok) === -1) out.push(tok);
+  }
+  return out;
+};
+
+// هل sub متتالية جزئية من seq بحفظ الترتيب؟ هذا هو معنى "الترتيب محفوظ".
+const isSubsequence = (sub, seq) => {
+  let at = 0;
+  for (const tok of seq) if (sub[at] === tok) at++;
+  return at === sub.length;
+};
+
+// يتعلّم الزوج ويُرجع ما خُزِّن فعلاً: عدد الأنماط، والقوالب المعمَّمة منها.
+function generalizedOf(before, after, file, src) {
+  const { ctx, ids } = learnPair(before, after, file, src);
+  const raw = ctx.__store.get(STORAGE_KEY);
+  const ps  = raw ? (JSON.parse(raw).patterns || []) : [];
+  return {
+    ids:     Array.from(ids || []).length,
+    stored:  ps.length,
+    general: ps.filter(p => p.generalized).map(p => p.generalized),
+  };
+}
+
+const SQL_FILE   = 'db.js';
+const SQL_BEFORE = 'function q(x, y) {\n  db.query("SELECT * FROM t WHERE a=" + x + " AND b=" + y);\n}\n';
+// نفس الإصلاح مرتين: مرة بعكس ترتيب الوسطاء ومرة بحفظه.
+const SQL_SWAP   = 'function q(x, y) {\n  db.query("SELECT * FROM t WHERE a=? AND b=?", [y, x]);\n}\n';
+const SQL_KEEP   = 'function q(x, y) {\n  db.query("SELECT * FROM t WHERE a=? AND b=?", [x, y]);\n}\n';
+
+test('tripwire: سطر V4 موجود حرفيًا في الملف المُسلَّم ومرة واحدة', () => {
+  const hits = LE_HEAD.split(V4_LINE).length - 1;
+  assert.strictEqual(hits, 1,
+    'سطر V4 يجب أن يظهر مرة واحدة بالضبط — وإلا فنسخة التعطيل تُعطّل غيره أو لا تُعطّل شيئًا');
+  assert.notStrictEqual(LE_NO_V4, LE_HEAD,
+    'ونسخة التعطيل تختلف فعلاً عن الملف المُسلَّم');
+});
+
+test('isolation: زوج SQL المقيس يصل التعلّم فعلاً (النوع قابل للتعلّم)', () => {
+  const ctx = loadCtx(LE_HEAD);
+  const issues = ctx.analyzeCode(SQL_BEFORE, SQL_FILE);
+  assert.ok(learnableTypes(issues).some(t => /sql|cwe_89/i.test(t)),
+    'بلاغ SQL قابل للتعلّم موجود — فأي صفر لاحق ليس سببه النوع');
+});
+
+test('V4 يرفض القالب الذي يبدّل ترتيب الخانات (عند HEAD)', () => {
+  const r = generalizedOf(SQL_BEFORE, SQL_SWAP, SQL_FILE, LE_HEAD);
+  assert.strictEqual(r.stored, 1, 'النمط الحرفي يُخزَّن — V4 يرفض التعميم لا الزوج');
+  assert.strictEqual(r.general.length, 0,
+    'ولا قالب معمَّم: القالب المبدِّل مرفوض');
+});
+
+test('والمصدر V4 وحده: بتعطيله يُخزَّن القالب المبدِّل، وترتيبه معكوس فعلاً', () => {
+  const r = generalizedOf(SQL_BEFORE, SQL_SWAP, SQL_FILE, LE_NO_V4);
+  assert.strictEqual(r.general.length, 1,
+    'بتعطيل V4 وحده يُخزَّن القالب ⇒ الصفر عند HEAD مصدره V4 لا شيء آخر');
+
+  const g = r.general[0];
+  const b = seqOfTemplate(g.beforeTemplate);
+  const a = seqOfTemplate(g.afterTemplate).filter(t => b.indexOf(t) !== -1);
+
+  assert.ok(b.length >= 2, 'القالب يحمل خانتين على الأقل — وإلا فلا ترتيب يُبدَّل');
+  assert.strictEqual(isSubsequence(a, b), false,
+    `ترتيب الخانات مبدَّل فعلاً: before=[${b}] after=[${a}]`);
+  assert.deepStrictEqual(a.slice(-2), [b[b.length - 1], b[b.length - 2]],
+    'والخانتان الأخيرتان متبادلتان بالضبط — وهما وسيطا الاستعلام');
+});
+
+test('إيجابي: V4 لا يمنع القالب الذي يحفظ ترتيب الخانات (عند HEAD)', () => {
+  const r = generalizedOf(SQL_BEFORE, SQL_KEEP, SQL_FILE, LE_HEAD);
+  assert.strictEqual(r.general.length, 1,
+    'القالب الحافظ للترتيب يُخزَّن عند HEAD — فV4 ليس مانعًا شاملاً');
+
+  const g = r.general[0];
+  const b = seqOfTemplate(g.beforeTemplate);
+  const a = seqOfTemplate(g.afterTemplate).filter(t => b.indexOf(t) !== -1);
+  assert.strictEqual(isSubsequence(a, b), true,
+    `الترتيب محفوظ: before=[${b}] after=[${a}]`);
 });
