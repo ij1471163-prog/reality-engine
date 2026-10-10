@@ -339,10 +339,17 @@ function _runIsolatedEngine(F, R, runner, source, report) {
 
     const claimed = (out && typeof out.totalFixed === 'number') ? out.totalFixed : null;
 
-    Object.keys(tmpF).forEach(fn => {
-        if (tmpF[fn] !== F[fn]) {
-            _gateAndCommit(F, R, fn, tmpF[fn], source, report, claimed);
-        }
+    // [P4] المحرك يُرجع مجموعًا على كل الملفات، وكان يُسجَّل كما هو في سجل
+    // **كل** ملف تغيّر، فيقرأ التقرير ادّعاءً مضاعفًا. المقيس: Emergency على
+    // ملفَّي py ادّعى 2، فسُجِّل claimedCount=2 لكل ملف — أي 4 ادّعاءً لمحرك
+    // ادّعى 2. ولا يُخمَّن توزيع المجموع على الملفات: يُنسب العدد حين يتغيّر
+    // ملف واحد فقط، وإلا null أي «غير معروف لهذا الملف». وremovedIssues من
+    // البوابة يبقى الرقم الموثوق في الحالتين.
+    const changedFiles = Object.keys(tmpF).filter(fn => tmpF[fn] !== F[fn]);
+    const perFileClaim = (changedFiles.length === 1) ? claimed : null;
+
+    changedFiles.forEach(fn => {
+        _gateAndCommit(F, R, fn, tmpF[fn], source, report, perFileClaim);
     });
     // الملفات التي لم تتغيّر: لا شيء. والنسخة المؤقتة تُرمى بالكامل.
 }
@@ -391,10 +398,21 @@ function fixAllEnginePipeline() {
         if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — ستُفحص الإصلاحات قبل اعتمادها');
     }
 
-    Object.keys(R).forEach(fn => {
-        if (typeof repairCode !== 'function') return;
-
-        for (let pass = 0; pass < 2; pass++) {
+    // [P4] الحلقة تدور على F لا على R. كانت Object.keys(R)، فملفٌ موجود في F
+    // وغائب عن R — تحليلُه لم يُنتج مدخلًا، أو رمى المحلل وقت بناء R — لا يراه
+    // repairCode ولا applyLearned ولا مزامنة R، بصمت وبلا تحذير. ثم تلمسه
+    // محركات ما بعد الحلقة لأنها تدور على F، فيختلف مسار معالجته.
+    // المقيس: ملفان متطابقان حرفيًا وأحدهما وحده في R ⇒ الأول أصلحه
+    // repairCode+Ghost:pass والثاني Emergency وحده، وخَرجاهما مختلفان،
+    // وwarnings فارغة. والحلقة لا تحتاج R أصلًا: issues تُحسب داخلها، و
+    // _safeSync يتحمّل غياب المدخل السابق.
+    Object.keys(F).forEach(fn => {
+        // [P4] غياب repairCode كان يُسقط جسم الملف كله (return)، فيسقط معه
+        // مسار التعلّم ومزامنة R، وهما لا يعتمدان عليه. المقيس: بلا repairCode
+        // صارت الأحكام المتعلَّمة 0 ولم يُكتب الإصلاح المتعلَّم، ومعه 1 وكُتب.
+        // فالشرط صار على مراحل الإصلاح وحدها: شرطُ الحلقة يمنع تكرارها بلا
+        // إعادة إزاحة جسمها (تغييرٌ أقل خطرًا من إعادة لفّ ‎88‎ سطرًا).
+        for (let pass = 0; typeof repairCode === 'function' && pass < 2; pass++) {
             const beforeCode = F[fn];
             let issues;
             try {
