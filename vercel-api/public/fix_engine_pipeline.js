@@ -178,6 +178,56 @@ const LEARNED_OUTCOME = {
 // حدّ محاولات التنصيف. ما لم يُحسم داخله يبقى INCONCLUSIVE — لا يُخمَّن مسؤول.
 const BISECT_MAX_ATTEMPTS = 8;
 
+// [P3] أي رفض يُعدّ ضرراً من النمط نفسه، وأيّه لا؟ الفرق ليس تجميلياً:
+// الأول يستحق تسجيل فشل على النمط (وثلاثةٌ منه تحظره)، والثاني لا.
+//
+//   ضارّ      — التعديل أسوأ من الأصل أو مكسور أو يدّعي إصلاحاً لا يثبته.
+//   غير ضارّ  — «بلا تحسّن مقيس»: التعديل سليم ولم يُقِس المحلل تحسناً.
+//               وقد يكون السبب عمى في المحلل لا عيباً في النمط (مقيس على
+//               الاستيراد المُستعار: hashlib as hl ⇒ hl.sha256، تحقّق منه
+//               مفسّر Python فعلاً ورفضه Ghost بـno_improvement).
+//   بيئي      — لا بوابة، لا فاحص نحوي للغة، لا محلل، أو تحليل متعذّر.
+//               هذه أحكام على البيئة لا على النمط، فتسجيلها فشلاً يحظر
+//               خبرة سليمة لأن ملفاً نُشر بلا فاحص لغته.
+//   مجهول     — يُعدّ غير ضارّ. فشلٌ مبنيّ على سبب لا نعرفه تخمين.
+//
+// ⚠️ والقاعدة بالبناء: الضرر يحتاج إثباتاً صريحاً، والافتراضُ عدمُ العقوبة.
+// (كانت الصيغة الأولى تعدّ «كل ما تبقّى» رفضَ بوابةٍ ضارًّا، وهو خطأ مقيس
+//  على ستة أسباب منشورة من البوابة نفسها — منها REJECTED_NO_IMPROVEMENT
+//  وREJECTED_VERIFIER_UNAVAILABLE وREJECTED_NO_SYNTAX_CHECKER — فكانت
+//  تعاقب النمط على «لا تحسّن» وعلى غياب أدوات التحقق.)
+const HARMFUL_GHOST_REASONS = new Set([
+    'structural_invalid', 'syntax_broken', 'analysis_failed', 'verification_unavailable',
+]);
+const BENIGN_GHOST_REASONS = new Set(['no_change', 'no_improvement']);
+
+// أسباب بوابة FixVerifier التي تُعدّ دليل ضرر. المطابقة ببادئة النص لأن
+// البوابة تُلحق بالسبب تفصيلاً (اللغة، العدد، أسماء الفحوص).
+const HARMFUL_GATE_PREFIXES = [
+    'REJECTED_EMPTY_OUTPUT',            // الناتج فارغ
+    'REJECTED_QUICKCHECK',              // فحوص بنيوية سريعة سقطت
+    'REJECTED_SYNTAX_BROKEN',           // الفاحص متاح وحكم بالكسر
+    'REJECTED_ISSUES_WORSENED',         // أضاف بلاغات
+    'REJECTED_SQL_NOT_PARAMETERIZED',   // ادّعى إصلاح SQL ولا يثبته
+    'REJECTED_PY_UNREACHABLE_CODE',     // أدخل نصًّا ميتًا
+];
+// ملاحظة على REJECTED_ANALYZER_THREW: البوابة تحلّل الأصل والمرشّح في نفس
+// المحاولة، فالسبب لا يميّز أيّهما أسقط المحلل. عقوبةٌ على انهيارٍ قد يكون
+// من الأصل تخمين، فيبقى غير ضارّ — ويبقى الرفض قائماً فلا يُكتب شيء.
+
+function _isHarmfulRejection(rejectReason, ghostReason) {
+    if (!rejectReason) return false;
+    if (rejectReason === 'LEARNED_SYNTAX_BROKEN') return true;
+    if (rejectReason === 'GHOST_' + 'regression') return true;
+    if (rejectReason === 'GHOST_fail') {
+        if (BENIGN_GHOST_REASONS.has(ghostReason)) return false;
+        if (HARMFUL_GHOST_REASONS.has(ghostReason)) return true;
+        return false;                       // سبب مجهول ⇒ لا عقوبة
+    }
+    const r = String(rejectReason);
+    return HARMFUL_GATE_PREFIXES.some(p => r.indexOf(p) === 0);
+}
+
 // منع التعلّم الدائري: لا يُتعلَّم من تعديل مصدره applyLearned، وإلا عزّز
 // المحرك أنماطه بأدلة من نفسه. الشرط مكتوب صراحةً هنا حتى لا يسقط بصمت لو
 // نُقل موضع learn() إلى البوابة لاحقًا.
@@ -448,12 +498,17 @@ function fixAllEnginePipeline() {
                 }
             } else {
                 let rejectReason = null;
+                // سبب Ghost الفرعي يُحفظ منفصلاً عن reason المنشور، لأن
+                // التمييز بين «ضارّ» و«بلا تحسّن» يحتاجه — ولا يُغيَّر نصّ
+                // reason حتى لا يتغيّر عقدٌ تعتمده اختبارات قائمة.
+                let ghostReason = null;
 
                 if (typeof GhostMode !== 'undefined') {
                     const lv = GhostMode.verdict(beforeLearned, lr.fixed, fn, analyzeCode);
                     if (lv.verdict === GhostMode.VERDICT.FAIL ||
                         lv.verdict === GhostMode.VERDICT.REGRESSION) {
                         rejectReason = 'GHOST_' + lv.verdict;
+                        ghostReason = lv.reason || null;
                         report.rejected.push({ file: fn, source: 'applyLearned', reason: rejectReason });
                     }
                 }
@@ -491,13 +546,38 @@ function fixAllEnginePipeline() {
                         culprits = bis.culprits;
                     }
                     const cul = new Set(culprits);
+                    const harmful = _isHarmfulRejection(rejectReason, ghostReason);
                     _recordLearnedOutcomes(report, fn, uses,
                         id => (cul.has(id) ? LEARNED_OUTCOME.FAIL : LEARNED_OUTCOME.INCONCLUSIVE),
                         {
                             gateReason: rejectReason,
+                            ghostReason: ghostReason,
+                            harmful: harmful,
                             bisectAttempts: bis ? bis.attempts : 0,
                             bisectExhausted: bis ? bis.exhausted : false
                         });
+
+                    // ─── [P3] إغلاق حلقة التغذية الراجعة ───
+                    // كان الحكم يُسجَّل في التقرير ويُفقد بنهاية التشغيل: لا
+                    // شيء في الإنتاج ينادي verify(id, false)، فحقل failures
+                    // يبقى صفرًا دائمًا، وفرع الفشل في verify والحظر عند
+                    // failures ≥ 3 وsuccessRate في calcConfidence كلها كود
+                    // غير قابل للوصول. فالمحرك يكرّر النمط المرفوض بلا حدّ.
+                    //
+                    // ويُسجَّل الفشل على المسؤول المعزول بالتنصيف حصراً، ولا
+                    // يُسجَّل على INCONCLUSIVE — فالتخمين أسوأ من الصمت.
+                    //
+                    // ⚠️ والأهم: لا يُسجَّل إلا على الرفض **الضارّ**.
+                    // المقيس: قالب صحيح (hashlib as hl ⇒ sha256، تحقّق منه
+                    // مفسّر Python فعلاً) يرفضه Ghost بسبب no_improvement
+                    // لأن المحلل لا يرى الاستيراد المُستعار أصلاً. فتسجيل
+                    // ذلك فشلاً يعاقب خبرة صحيحة ويسير بها نحو الحظر.
+                    // «بلا تحسّن مقيس» ليس «ضرراً»، والتمييز بينهما شرط
+                    // لأن تكون الحلقة إصلاحاً لا عقوبة عشوائية.
+                    if (harmful && culprits.length &&
+                        typeof LearningEngine.verify === 'function') {
+                        culprits.forEach(id => LearningEngine.verify(id, false));
+                    }
                 }
                 // مرفوض ⇒ F[fn] لم يُمَس أصلاً (لا كتابة إلا داخل البوابة)
             }

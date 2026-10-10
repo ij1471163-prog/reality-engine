@@ -230,21 +230,36 @@ test('INCONCLUSIVE لا يغيّر أي عدّاد ولا حالة اعتماد'
   const o = outcomesOf(report);
   assert.strictEqual(o['p-good'].outcome, 'INCONCLUSIVE', 'العزل: الحكم INCONCLUSIVE فعلاً');
 
-  assert.deepStrictEqual(countersOf(db), [
+  // القيد يسري على غير المحسوم وحده: المسؤول المعزول بالتنصيف يُسجَّل
+  // عليه فشلٌ الآن [P3]، وهو موضوع الاختبار التالي. أما غير المحسوم
+  // فالتخمين عليه أسوأ من الصمت، فعدّاداته تبقى كما زُرعت حرفًا بحرف.
+  const good = db.patterns.find(p => p.id === 'p-good');
+  assert.deepStrictEqual(
+    { id: good.id, verified: good.verified, failures: good.failures, confidence: good.confidence, approved: good.approved },
     { id: 'p-good', verified: 3, failures: 0, confidence: 0.7, approved: true },
-    { id: 'p-bad',  verified: 3, failures: 0, confidence: 0.7, approved: true },
-  ], 'العدّادات وحالة الاعتماد كما زُرعت تمامًا');
+    'عدّادات النمط غير المحسوم تحرّكت — تخمين لا إسناد');
 });
 
-test('FAIL كذلك لا يغيّر عدّادًا في هذه المرحلة — تسجيل لا حكم', () => {
+test('[P3] FAIL ضارّ يُسجَّل فشلاً على المسؤول — الحلقة مُغلقة', () => {
+  // كان هذا الاختبار يُثبّت الحالة السابقة: «تسجيل لا حكم»، أي أن
+  // الحكم يُكتب في التقرير ويُفقد بنهاية التشغيل. وذلك بعينه كان
+  // الانقطاع في دورة العمل: لا شيء في الإنتاج ينادي verify(id,false)،
+  // فحقل failures يبقى صفرًا دائمًا وفرعُ الحظر كود غير قابل للوصول،
+  // والمحرك يكرّر النمط المرفوض بلا حدّ. صار يُسجَّل الآن — على
+  // المسؤول المعزول بالتنصيف وحده، وعلى الرفض الضارّ وحده.
   const ctx = loadCtx();
   const { report, db } = runPipe(ctx, { 'w.js': V_TWO }, mkDb([P_GOOD, P_BAD]));
-  assert.strictEqual(outcomesOf(report)['p-bad'].outcome, 'FAIL', 'العزل: الحكم FAIL فعلاً');
+  const o = outcomesOf(report)['p-bad'];
+  assert.strictEqual(o.outcome, 'FAIL', 'العزل: الحكم FAIL فعلاً');
+  assert.strictEqual(o.harmful, true,
+    `العزل: الرفض مُصنَّف ضارًّا فعلاً (gateReason=${o.gateReason} ghostReason=${o.ghostReason})`);
+
   const bad = db.patterns.find(p => p.id === 'p-bad');
-  assert.strictEqual(bad.failures, 0, 'failures لم تتحرّك');
-  assert.strictEqual(bad.verified, 3, 'verified لم تتحرّك');
-  assert.strictEqual(bad.confidence, 0.7, 'confidence لم تتحرّك');
-  assert.strictEqual(bad.approved, true, 'وحالة الاعتماد لم تتغيّر');
+  assert.strictEqual(bad.failures, 1, 'failures لم تتحرّك ⇒ الحلقة ما زالت مقطوعة');
+  assert.strictEqual(bad.verified, 3, 'verified لا يجب أن يتحرّك بالفشل');
+  assert.ok(bad.confidence < 0.7, `confidence يجب أن ينزل بالفشل (المقيس ${bad.confidence})`);
+  assert.strictEqual(bad.approved, true,
+    'فشل واحد لا يُسقط الاعتماد — الإسقاط عند failures ≥ 3 وحده');
 });
 
 test('PASS كذلك لا يرفع verified — القيد يسري على الحكم الموجب أيضًا', () => {
