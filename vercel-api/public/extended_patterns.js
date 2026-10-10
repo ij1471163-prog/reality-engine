@@ -97,8 +97,8 @@ var ExtendedPatterns = (() => {
     { pattern: /ALLOWED_HOSTS\s*=\s*\[\s*['"]\*['"]\s*\]/, sev: 'h', title: '🟠 Django ALLOWED_HOSTS Wildcard', type: 'MISCONFIG' },
     { pattern: /mark_safe\s*\(/, sev: 'h', title: '🟠 Django mark_safe — XSS Risk', type: 'XSS' },
 
-    // SQL
-    { pattern: /execute\s*\(\s*["'].*SELECT.*%s/, sev: 'c', title: '🔴 SQL Injection via %s format', type: 'SQL_INJECTION' },
+    // SQL — كلمة SQL + ‎%s‎ داخل النص، ثم عامل التنسيق بعده. انظر test/analyzer_sql_param_vs_format
+    { pattern: /execute\s*\(\s*("""|'''|"|')(?:\\[\s\S]|\1\s*\1|(?!\1)(?!\b(?:SELECT|INSERT|UPDATE|DELETE)\b)[^\\])*\b(?:SELECT|INSERT|UPDATE|DELETE)\b(?:\\[\s\S]|\1\s*\1|(?!\1)(?!%s)[^\\])*%s(?:\\[\s\S]|(?!\1\s*%)(?!\1\s*[,)])[^\\])*?\1\s*%/i, sev: 'c', title: '🔴 SQL Injection via %s format', type: 'SQL_INJECTION' },
     { pattern: /execute\s*\(\s*f["'].*SELECT/, sev: 'c', title: '🔴 SQL Injection via f-string', type: 'SQL_INJECTION' },
     { pattern: /\.format\s*\(.*\)\s*.*execute/, sev: 'c', title: '🔴 SQL Injection via .format()', type: 'SQL_INJECTION' },
 
