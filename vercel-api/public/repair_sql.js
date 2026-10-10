@@ -470,6 +470,23 @@
     // ── Python ──────────────────────────────────────
     if (lang === 'python') {
 
+      // [PY-SQL] أنماط الـplaceholder المعلومة في DB-API: '?' لـsqlite3،
+      // و'%s' لـpsycopg2 وPyMySQL. السائق مُثبَت بالاستيراد (detectDriver لا
+      // يُخمّن ويُرجع null بلا دليل)، فالنمط معلوم لا مُخمَّن. وأي سائق بنمط
+      // آخر يبقى بلا إصلاح: نمط خاطئ يكسر الاستعلام وقت التشغيل، والبوابة
+      // تقبله نحويًا فلا تكشفه — فالتحفّظ هنا شرط سلامة لا تزيّد.
+      const PY_PLACEHOLDER = ['?', '%s'];
+      const pyPh = PY_PLACEHOLDER.indexOf(driver.placeholder) !== -1
+        ? driver.placeholder : null;
+
+      // الخانة يجب أن تلي مساواة صريحة لعمود، فالقيمة قيمةٌ لا اسم جدول
+      // أو عمود أو جزء من بنية الاستعلام.
+      const pyValueSlot = prefixText =>
+        /\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*['"]?\s*$/i.test(prefixText);
+
+      // placeholder موجود مسبقًا في بقية النص ⇒ لا نلمس الاستعلام.
+      const pyHasOtherPh = rest => /\?|%s\b|:\w+|\$\d/.test(rest);
+
       // نصلح فقط cursor.execute("... = '" + variable + "'")
       // بمتغير واحد وشرط equality واضح.
       fixed = fixed.replace(
@@ -531,7 +548,12 @@
         /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)(["'])([^"'`]*(?:SELECT|INSERT|UPDATE|DELETE)[^"'`]*)\2\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/gi,
         (match, prefix, quote, queryPart, variable) => {
 
-          if (driver.family !== 'sqlite') {
+          // [PY-SQL] كان الشرط ‎driver.family !== 'sqlite'‎ يحجب هذا المسار
+          // عن psycopg2 وPyMySQL، مع أن نمط الـplaceholder لكليهما معلوم
+          // ('%s') والسائق مُثبَت. والمقيس: psycopg2 و pymysql مع الدمج
+          // ‎scan=1‎ و‎fix=0‎ — كشفٌ بلا تحويل. فصار الشرط على معلومية النمط
+          // لا على عائلة بعينها.
+          if (!pyPh) {
             return match;
           }
 
@@ -569,8 +591,97 @@
         }
       );
 
-      // f-string و SQL assignment متعمدًا بدون auto-fix هنا.
-      // لأنها تحتاج تحليل سياق أعمق، وتذهب لاحقًا إلى AI_REQUIRED.
+      // [PY-SQL] f-string بمتغيّر واحد:
+      //   cur.execute(f"SELECT ... WHERE id={uid}")
+      // كان scan يكشفها وfix لا يحوّلها (مقيس: scan=1، fix=0). والمسار هنا
+      // محافظ: خانة واحدة فقط، محتواها معرّف مجرّد لا تعبير، وتقع بعد مساواة
+      // صريحة. فلا يُخمَّن ترتيب ولا تُفكَّك عبارة.
+      fixed = fixed.replace(
+        /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)f(["'])([^"'\n]*)\2\s*\)/g,
+        (match, prefix, quote, body) => {
+
+          if (!pyPh) return match;
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(body)) return match;
+
+          // أقواس مهروبة ‎{{‎ أو ‎}}‎ تعني نصًّا لا خانة ⇒ لا نحلّلها.
+          if (/\{\{|\}\}/.test(body)) return match;
+
+          const slots = body.match(/\{[^{}]*\}/g) || [];
+          if (slots.length !== 1) return match;
+
+          // معرّف مجرّد فقط: لا نداء دالة ولا فهرسة ولا تنسيق ‎{x:>5}‎.
+          const inner = slots[0].slice(1, -1).trim();
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) return match;
+
+          const at = body.indexOf(slots[0]);
+          if (!pyValueSlot(body.slice(0, at))) return match;
+
+          const rest = body.slice(0, at) + body.slice(at + slots[0].length);
+          if (pyHasOtherPh(rest)) return match;
+
+          const cleanSQL =
+            body.slice(0, at) + pyPh + body.slice(at + slots[0].length);
+
+          const result =
+            `${prefix}${JSON.stringify(cleanSQL)}, (${inner},))`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'python_fstring_parameterization',
+            driver: driver.name
+          });
+
+          count++;
+          return result;
+        }
+      );
+
+      // [PY-SQL] تنسيق ‎%‎ بمتغيّر واحد:
+      //   cur.execute("SELECT ... WHERE id=%s" % uid)
+      // كان scan لا يكشفها أصلًا. والمسار محافظ: علامة ‎%s‎ واحدة بالضبط،
+      // والوسيط معرّف مجرّد لا tuple ولا قاموس — فترتيب الوسطاء غير قابل
+      // للالتباس. و‎% (a, b)‎ و‎%(name)s‎ يبقيان بلا إصلاح.
+      fixed = fixed.replace(
+        /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)(["'])([^"'\n]*)\2\s*%\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g,
+        (match, prefix, quote, body, variable) => {
+
+          if (!pyPh) return match;
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(body)) return match;
+
+          // ‎%(name)s‎ تنسيق بقاموس ⇒ لا.
+          if (/%\(/.test(body)) return match;
+
+          // علامة تنسيق واحدة بالضبط، وتكون ‎%s‎.
+          const marks = body.match(/%[a-zA-Z]/g) || [];
+          if (marks.length !== 1 || marks[0] !== '%s') return match;
+
+          const at = body.indexOf('%s');
+          if (!pyValueSlot(body.slice(0, at))) return match;
+
+          const rest = body.slice(0, at) + body.slice(at + 2);
+          if (pyHasOtherPh(rest)) return match;
+
+          const cleanSQL =
+            body.slice(0, at) + pyPh + body.slice(at + 2);
+
+          const result =
+            `${prefix}${JSON.stringify(cleanSQL)}, (${variable},))`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'python_percent_parameterization',
+            driver: driver.name
+          });
+
+          count++;
+          return result;
+        }
+      );
+
+      // الإسناد إلى متغيّر ثم execute(var) يبقى بلا auto-fix هنا: يحتاج ربط
+      // سطرين، وSmartRepair يغطّيه اليوم. وما لا يُثبَت يبقى AI_REQUIRED.
     }
 
     // ── PHP ─────────────────────────────────────────
