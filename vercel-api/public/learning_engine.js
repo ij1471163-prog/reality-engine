@@ -41,8 +41,76 @@ var LearningEngine = (() => {
     }
   }
 
+  // [P3] سعة المخزن. القياس: نمطٌ متعلَّم واقعي ≈ 1,067 بايت (تشغيل حقيقي
+  // على ملف js: أكبر نمط 1,111B وأصغره 977B)، أي أن حصّة localStorage
+  // المعتادة (5MB) تتسع لـ4,915 نمطًا تقريبًا ثم ترفض الكتابة. السقف أدناه
+  // يترك أكثر من نصف الحصّة هامشًا لقائمة safe ولعبء المتصفح.
+  const MAX_PATTERNS = 2000;
+
+  // [P3] عدّاد كتابات فُقدت في هذه الجلسة. لا يُحفَظ — المخزن نفسه هو ما
+  // يرفض الكتابة — فيُقرأ من getStats() كإشارة تشغيلية حاضرة فقط.
+  let saveFailures = 0;
+
+  // [P3] ترتيب الإخلاء بقيمة السجل = ما يقدّمه ÷ كلفة استعادته:
+  //   رتبة 0 — قيد جمع الأدلة (لا معتمد ولا محظور): لا قدرة إصلاح ولا حماية،
+  //            وكلفة استعادته مشاهدة واحدة. فهو منطقة الفائض الطبيعية.
+  //   رتبة 1 — محظور (failures ≥ 3): شاهدُ قبرٍ نافع — learn() لا تتعلّم قاعدة
+  //            كل مطابقيها محظورون، فإسقاطه يسمح بإعادة تعلّمها. لكن حمايته
+  //            حمايةُ كفاءة لا سلامة: البوابة وGhost يرفضان التعديل الضارّ
+  //            مرة بعد مرة حتى يُحظر النمط من جديد.
+  //   رتبة 2 — معتمد: قدرة إصلاح قائمة، وكلفة استعادتها تحقّقان جديدان. آخر
+  //            ما يُخلى.
+  // وداخل الرتبة: الأقدم لمسًا أولاً (lastUsed ثم lastSeen ثم created).
+  function evictionRank(p) {
+    if ((p.failures || 0) >= 3) return 1;
+    if (!p.approved) return 0;
+    return 2;
+  }
+
+  // [P3] lastUsed كان يُكتب في markUsed ولا يُقرأ في أي موضع — حقلٌ معزول.
+  // هنا يصير معنى: آخر استعمالٍ أقرَّته البوابة هو ما يحمي النمط من الإخلاء.
+  function lastTouch(p) {
+    return p.lastUsed || p.lastSeen || p.created || 0;
+  }
+
+  function pruneToCap(db, cap) {
+    const limit = (typeof cap === 'number' && cap > 0) ? cap : MAX_PATTERNS;
+    if (!db || !Array.isArray(db.patterns) || db.patterns.length <= limit) return 0;
+    const ordered = db.patterns.slice().sort((a, b) =>
+      (evictionRank(a) - evictionRank(b)) || (lastTouch(a) - lastTouch(b)));
+    const drop = new Set(ordered.slice(0, db.patterns.length - limit));
+    db.patterns = db.patterns.filter(p => !drop.has(p));
+    db.meta = db.meta || {};
+    db.meta.evicted = (db.meta.evicted || 0) + drop.size;
+    return drop.size;
+  }
+
+  // [P3] كان الفقد صامتًا: catch فارغ يبتلع QuotaExceededError فتُعلن الدالة
+  // المنادية النجاح والمخزن لم يتغيّر. المقيس على مخزن يرفض الزيادة:
+  //   verify('p', false) أرجعت 'p'  و  failures بقي 0  ⇒  الحظر يُفقد،
+  // وحلقة التغذية الراجعة كلها مبنيّة على أن هذا الرقم يصل. فالآن:
+  //   (1) ترجع الدالة صوابًا/خطأً، (2) تُقلِّص المخزن مرة وتُعيد المحاولة،
+  //   (3) تُسجّل الفقد في عدّاد يظهر في getStats().
   function save(db) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch(e) {}
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      return true;
+    } catch (e) {
+      // محاولة إنعاش واحدة: أخلِ النصف الأقل قيمة ثم أعد الكتابة.
+      try {
+        const half = Math.max(1, Math.floor((db && Array.isArray(db.patterns)
+          ? db.patterns.length : MAX_PATTERNS) / 2));
+        if (pruneToCap(db, half) > 0) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+          return true;
+        }
+      } catch (e2) { /* ما زال يرفض — يُعلَن أدناه */ }
+      saveFailures++;
+      try {
+        console.warn('[LearningEngine] فشل حفظ المخزن — الكتابة فُقدت (' + saveFailures + ')');
+      } catch (e3) {}
+      return false;
+    }
   }
 
   // ─── Safe Whitelist ─────────────────────────────────
@@ -525,12 +593,54 @@ var LearningEngine = (() => {
       const ctx  = extractContext(codeBefore, (issue.line||1)-1);
       const fp   = makeFingerprint(pair.type, lang, pair.before, ctx);
 
-      // مطابقة existing بـ type + language + fingerprint
-      const existing = db.patterns.find(p =>
+      // [C1] الدليل يتراكم على القالب المعمَّم، لا على السطر الحرفي.
+      //
+      // كانت هوية السجل بصمةَ (النوع|اللغة|السطر الحرفي|النطاق:اسم الدالة)،
+      // بينما التطبيق يجري بقالب يجرّد المعرّفات والنصوص. فمفتاح الهوية أضيق
+      // من مفتاح المطابقة، والمقيس أن سطرًا متطابقًا حرفيًا في دالتين مختلفتي
+      // الاسم يُنتج سجلّين ‎observed=1, verified=1‎ ولا يُعتمد أيٌّ منهما،
+      // وثلاثة ملفات يختلف فيها اسم المتغيّر وحده تُنتج ثلاثة سجلات كذلك.
+      // أي أن الاعتماد يشترط تكرارًا نصيًّا والفائدة تشترط تنوّعًا نصيًّا —
+      // شرطان متعارضان، فلا نمط معمَّم يبلغ الاعتماد أبدًا.
+      //
+      // فصار المفتاح، عند وجود قالب صالح، هو القالب نفسه: ‎(beforeTemplate,
+      // afterTemplate)‎ مع النوع واللغة. وبلا قالب صالح تبقى البصمة كما هي،
+      // فالمطابقة الحرفية لا يتغيّر سلوكها.
+      //
+      // ثلاث حدود مقيسة تمنع دمج أدلة غير متكافئة:
+      //   • النوع   — ‎secret‎ و‎HARDCODED_SECRET‎ بنفس القالب يبقيان سجلّين.
+      //   • اللغة   — js وpy بنفس القالب حرفيًا يبقيان سجلّين.
+      //   • الاتجاه — قالب «بعد» داخل المفتاح، فإصلاحان مختلفان لنفس السطر
+      //     لا يُدمجان. ونسخة تطابق قالب «قبل» وحده تدمجهما فعلاً — فالشرط
+      //     فعّال لا زائد.
+      //
+      // ولا تهجير للمخزن: السجلات القديمة تبقى كما هي، ويُراكم الدليل على
+      // أول سجل يطابق القالب. فنسخ قديمة متكافئة لا تُدمَج رجعيًّا — تُسجَّل
+      // كأثر مُعلَن، لا كخطر على البيانات.
+      const gen   = generalizeLinePair(pair.before, pair.after);
+      const genOk = !!(gen && isGeneralPatternUsable(gen, lang));
+      const sameRule = p =>
         p.type === pair.type &&
         p.language === lang &&
-        p.fingerprint === fp
-      );
+        ((genOk && p.generalized)
+          ? (p.generalized.beforeTemplate === gen.beforeTemplate &&
+             p.generalized.afterTemplate  === gen.afterTemplate)
+          : p.fingerprint === fp);
+
+      // [C1] الاختيار من بين المطابقين: السجل غير المحظور. كان find يُرجع
+      // أول مطابق في المصفوفة — أي الأقدم — فلو كان توأمًا محظورًا
+      // (failures ≥ 3) نزل الدليل عليه و verify تُبقيه مرفوضًا، فتُهدَر
+      // المشاهدة ولا تبلغ القاعدة الاعتماد أبدًا. والمقيس: محظور أولًا
+      // ⇒ ‎banned: obs2/ver2/approved=false‎ والسليم باقٍ على ver1.
+      // وهذا أثرٌ أدخله مفتاح القالب نفسه: قبله كان المثيل المختلف نصيًا
+      // يُنشئ سجله الخاص فيبلغ الاعتماد مستقلًا عن التوأم المحظور.
+      const matches  = db.patterns.filter(sameRule);
+      const existing = matches.find(p => (p.failures || 0) < 3);
+
+      // كل المطابق محظور ⇒ لا تعلّم إطلاقًا. لا تراكم على المحظور (فيُهدَر
+      // الدليل) ولا سجل جديد (فيُحيي قاعدة محظورة بعد مشاهدتين). الحظر يبقى
+      // كما هو، والمشاهدة تُسقَط — ولا يُخفَّض عتبة failures ولا يُحذف سجل.
+      if (!existing && matches.length) return;
 
       if (existing) {
         existing.observed = (existing.observed || 0) + 1;
@@ -548,10 +658,9 @@ var LearningEngine = (() => {
           context:     { functionName: ctx.functionName, scope: ctx.scope, fileName: fileName || '' },
           fingerprint: fp,
           fileName:    fileName || '',
-          generalized: (() => {
-            const g = generalizeLinePair(pair.before, pair.after);
-            return (g && isGeneralPatternUsable(g, lang)) ? g : null;
-          })(),
+          // [C1] نفس الكائن الذي صار مفتاح الهوية أعلاه — لا إعادة حساب،
+          // فلا يمكن أن يتباعد المخزَّن عن المفتاح الذي قِيس به.
+          generalized: genOk ? gen : null,
           observed:    1,
           verified:    0,
           failures:    0,
@@ -565,8 +674,17 @@ var LearningEngine = (() => {
     });
 
     db.meta.total++;
+    // [P3] السقف يُطبَّق عند الإضافة لا عند الامتلاء: الإخلاء المرتَّب أفضل من
+    // رفض الحصّة، لأن الرفض يُفقد التعديل كلّه (ومنه حظرٌ مستحق) لا أقلَّ عنصرٍ
+    // قيمة. والأنماط المُضافة الآن محميّة: lastTouch = created = الآن.
+    pruneToCap(db, MAX_PATTERNS);
     save(db);
-    return learnedIds;
+
+    // [C1] معرّفات فريدة. خط الأنابيب ينادي verify(id, true) لكل معرّف يُعاد،
+    // وبلاغان على السطر نفسه يُنتجان الزوج نفسه فيُدفَع معرّفه مرتين — والمقيس
+    // أن إصلاحًا واحدًا كان يرفع verified بمقدار 2، فيبلغ النمط عتبة الاعتماد
+    // (MIN_VERIFIED=2) بتضخيم لا بدليل. العتبة لم تُمَسّ؛ المُصلَح هو العدّ.
+    return Array.from(new Set(learnedIds));
   }
 
   // ─── Verify (Ghost Mode calls this with patternId) ──
@@ -597,16 +715,15 @@ var LearningEngine = (() => {
       p.approved = false;
     }
 
-    save(db);
-    return p.id;
+    // [P3] المعرّف يُرجَع إذا وصل الحكم إلى المخزن فقط. كان يُرجَع دائمًا،
+    // فمنادٍ يرى نجاحًا والحظر لم يُكتب.
+    return save(db) ? p.id : null;
   }
 
-  // ─── markResult (deprecated — use verify instead) ───
-  // @deprecated استخدم verify(patternId, success)
-  function markResult(type, success) {
-    // intentionally empty — لا يرفع verified بشكل جماعي
-    console.warn('[LearningEngine] markResult deprecated. Use verify(patternId, success)');
-  }
+  // [P3] markResult حُذفت: دالة فارغة (تطبع تحذير إهمال ولا تفعل شيئًا) ولا
+  // منادي لها في المستودع كلّه — لا في public/ ولا في api/ ولا في الصفحتين
+  // ولا في الاختبارات. سطحٌ مُصدَّر بلا أثر، وإبقاؤه يوهم بوجود مسار تسجيل
+  // ثانٍ. البديل القائم: verify(patternId, success).
 
 
   // ─── Generalized Pattern Matching ───────────────────
@@ -764,6 +881,16 @@ var LearningEngine = (() => {
 
     const fileLang = inferLanguage(fileName);
 
+    // [P3] 'unknown' ليست لغة بل اسمٌ لغياب المعرفة: inferLanguage تُرجعها لكل
+    // امتداد خارج خريطتها (sh, cpp, rs, yml, sql, tf, …). وشرط التساوي أدناه
+    // كان يُمرّر 'unknown' === 'unknown'، أي أن قالبًا من ملفٍ مجهول الامتداد
+    // يُجرَّب على ملفٍ آخر مجهول الامتداد بلا أي قرابة لغوية — Bash على YAML.
+    // المقيس: لا توجد اليوم أنماط بهذه اللغة (learn() لا يتعلّم من هذه
+    // الامتدادات أصلاً: 0 أنماط من sh/cpp/rs/yml/sql)، وكل محاولة مزروعة
+    // رفضتها البوابة ولم تُكتب. فهذا سدٌّ احتياطي لمنفذ غير مستغَلّ لا إصلاح
+    // لضرر مقيس، وكلفته صفر تغطية: ما لا يُتعلَّم لا يُفقد تطبيقه.
+    if (fileLang === 'unknown') return { fixed: code, applied: 0, uses: [] };
+
     // [P2] onlyIds: حصر التطبيق بأنماط بعينها. يُستعمل في التنصيف لعزل النمط
     // المسؤول عن تعديل رفضته البوابة. بلا الخيار لا يتغيّر أي سلوك.
     const onlyIds = (opts && Array.isArray(opts.onlyIds)) ? new Set(opts.onlyIds) : null;
@@ -772,7 +899,7 @@ var LearningEngine = (() => {
       p.approved &&
       p.confidence >= THRESHOLDS.MIN_CONFIDENCE &&
       p.verified >= THRESHOLDS.MIN_VERIFIED &&
-      (!p.language || p.language === fileLang) &&
+      (p.language === fileLang) &&
       (!onlyIds || onlyIds.has(p.id))
     );
 
@@ -893,7 +1020,9 @@ var LearningEngine = (() => {
       p.lastUsed = now;
       marked++;
     }
-    if (marked) save(db);
+    // [P3] الدفتر إمّا وصل أو لا. وlastUsed صار يحمي النمط من الإخلاء، فكتابةٌ
+    // مفقودة تعني نمطًا مستعملاً يُعَدّ مهملاً — لذا لا يُعلَن تسجيلٌ لم يُحفَظ.
+    if (marked && !save(db)) return 0;
     return marked;
   }
 
@@ -919,11 +1048,24 @@ var LearningEngine = (() => {
   // ─── Stats ──────────────────────────────────────────
   function getStats() {
     const db = load();
+    // [P3] قدرة المخزن على التطبيق تُعرَض لا تُخمَّن:
+    //   banned  — failures ≥ 3: مُسقَط الاعتماد بدليل ضرر، ولا يُطبَّق أبدًا.
+    //   langless — بلا لغة: بعد إحكام بوابة اللغة لا يُطابق أي ملف، فهو ثِقَل
+    //              ميت كان يُعرَض 'unknown' فيبدو كلغةٍ قائمة.
+    //   capacity/evicted — السقف وما أُخلي، وsaveFailures كتابات فُقدت.
+    const banned  = db.patterns.filter(p => (p.failures || 0) >= 3).length;
+    const langless = db.patterns.filter(p => !p.language).length;
     return {
       total:    db.patterns.length,
       approved: db.patterns.filter(p => p.approved).length,
       pending:  db.patterns.filter(p => !p.approved).length,
       safe:     (db.safe || []).length,
+      banned:   banned,
+      langless: langless,
+      inert:    db.patterns.filter(p => (p.failures || 0) >= 3 || !p.language).length,
+      capacity: MAX_PATTERNS,
+      evicted:  (db.meta && db.meta.evicted) || 0,
+      saveFailures: saveFailures,
       patterns: db.patterns.map(p => ({
         id:          p.id,
         type:        p.type,
@@ -957,7 +1099,7 @@ var LearningEngine = (() => {
     try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
   }
 
-  return { learn, learnSafe, applyLearned, markUsed, verify, markResult, getStats, getBoosts, reset };
+  return { learn, learnSafe, applyLearned, markUsed, verify, getStats, getBoosts, reset };
 })();
 
 if (typeof window !== 'undefined') window.LearningEngine = LearningEngine;
