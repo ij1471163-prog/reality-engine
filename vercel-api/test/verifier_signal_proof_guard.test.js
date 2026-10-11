@@ -702,6 +702,31 @@ test('[SINK-NA-b2] والماسح لم يعد يُبلّغ عن SQL على كل�
   assert.ok(!list.some(t => /sql/i.test(t)),
     'بلاغ SQL زائف على ‎req.query‎ عاد: ' + JSON.stringify(list));
 
+  // ولا بلاغَ حقنِ أوامرَ زائفًا على نداءِ قاعدة بيانات. سحبُ التحوّرات
+  // كشف أن لا اختبار يُثبّت هذا: إلغاءُ استثناء المُستقبِل في الماسح
+  // (‎(?<![.\\w$])exec‎) كان ينجو، لأن منطقَ NA في البوابة يستر البلاغ
+  // الزائف. فالكشفُ نفسه يُثبَّت هنا لا أثرُه على البوابة وحده.
+  for (const dbCall of [
+    'function load(conn, id) {\n  conn.exec("SELECT * FROM t WHERE a=" + id);\n}\n',
+    'function load(db, id) {\n  db.exec("SELECT * FROM t WHERE a=" + id);\n}\n',
+    'function load(sheet, v) {\n  sheet.exec("UPDATE t SET a=" + v);\n}\n',
+  ]) {
+    const t = findings(dbCall, 'c.js').map(i => i.type + ' ' + i.title);
+    assert.ok(!t.some(x => /command injection/i.test(x)),
+      'بلاغ حقنِ أوامرَ زائف على نداءِ قاعدة بيانات: ' + JSON.stringify(t));
+    assert.ok(t.some(x => /sql/i.test(x)), 'وبلاغ SQL الحقيقي يجب أن يبقى: ' + JSON.stringify(t));
+  }
+
+  // وحقنُ الأوامر الحقيقي بلا مُستقبِل يبقى مكشوفًا — التضييق ليس تعطيلًا
+  for (const realCmd of [
+    'const { exec } = require("child_process");\nfunction r(d) {\n  exec("ls " + d);\n}\n',
+    'const cp = require("child_process");\nfunction r(d) {\n  cp.exec("ls " + d);\n}\n',
+    'const { spawn } = require("child_process");\nfunction r(d) {\n  spawn("sh", ["-c", "ls " + d]);\n}\n',
+  ]) {
+    assert.ok(findings(realCmd, 'c.js').some(i => /command injection/i.test(i.type + ' ' + i.title)),
+      'حقنُ أوامرَ حقيقي صار غير مكشوف: ' + realCmd.trim());
+  }
+
   // ومتغيّرٌ اسمه query بلا أي استعلام: لا بلاغ إطلاقًا
   const plain = 'function r(x) {\n  const query = "prefix-" + x;\n  return query;\n}\n';
   assert.deepStrictEqual(

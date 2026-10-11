@@ -680,14 +680,45 @@ var EngineSelfDiagnosis = (() => {
     return ops;
   }
 
+  // ─── [DIFF-TRIM] البادئة واللاحقة المشتركتان تُقتَصّان قبل جدول LCS ──────
+  //
+  // السقف كان يُقاس على **طول الملف**، وهو خطأ في موضع القياس: المُكلِف هو
+  // المنطقة المختلفة لا الملف. وأثرُه مقيس لا مُفترَض: سقف 4M خليةً كان
+  // مُعايَرًا على «أكبر وحدة اليوم 1797 سطرًا»، فحين صار fix_verifier.js
+  // 2018 سطرًا (2019² = 4,076,361 خلية) تجاوز السقف، فانقلب تشخيصُ تغييرِ
+  // **سطرٍ واحد** إلى «hunk واحد للملف كله» بثقة LOW — أي أن أصغر مجموعة
+  // تراجع صارت الملف بأكمله، فيفقد HUNK_REGRESSION معناه كله. أسقط ذلك
+  // اختبارًا قائمًا، وسببُه نموُّ ملفٍ لا عطبٌ في منطق التشخيص.
+  //
+  // وحالةُ هذا المُفارِق هي الحالة الغالبة: مرجعٌ وشجرةٌ يختلفان في أسطر
+  // قليلة. فاقتصاصُ ما يتطابق من الطرفين يُنزل الجدول من ملايين الخلايا إلى
+  // عشرات — وهو اقتصاص **مضبوط لا تقريبي**: كل بادئة (أو لاحقة) مشتركة جزءٌ
+  // من أطول تتابعٍ مشترك بالضرورة، فمسافة التحرير لا تتغيّر. وهذا ما تفعله
+  // أدوات المُفارِق المعروفة.
+  //
+  // والسقف يبقى صِمامًا حقيقيًّا: يُقاس على المنطقة المختلفة بعد الاقتصاص،
+  // فيُطلَق على اختلافٍ جوهري واسع لا على مجرّد كِبَرِ ملف.
+  function _commonEdges(a, b) {
+    const lim = Math.min(a.length, b.length);
+    let p = 0;
+    while (p < lim && a[p] === b[p]) p++;
+    let s = 0;
+    while (s < lim - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+    return { p, s };
+  }
+
   function buildHunks(refLines, curLines) {
     // سقف الذاكرة: جدول LCS حجمه (n+1)×(m+1) من Uint32 — أي 4 بايت للخلية.
     // السقف على **الحاصل** لا على طول كل جانب، وإلا فملفان بـ6000 سطر يطلبان
-    // 144MB. 4M خلية ≈ 16MB، وأكبر وحدة اليوم 1797 سطرًا (3.2M خلية مع نفسها).
+    // 144MB. 4M خلية ≈ 16MB. ويُقاس على المنطقة المختلفة — انظر [DIFF-TRIM].
     // وفوق السقف لا نخمّن: hunk واحد للملف كله، فيصير الاقتراح تراجعًا كاملًا
     // بثقة LOW — وهو صادقٌ لا صامت.
+    const edge = _commonEdges(refLines, curLines);
+    const midRef = refLines.slice(edge.p, refLines.length - edge.s);
+    const midCur = curLines.slice(edge.p, curLines.length - edge.s);
+
     if (refLines.length > MAX_DIFF_LINES || curLines.length > MAX_DIFF_LINES ||
-        (refLines.length + 1) * (curLines.length + 1) > MAX_LCS_CELLS) {
+        (midRef.length + 1) * (midCur.length + 1) > MAX_LCS_CELLS) {
       return {
         whole: true,
         ops: null,
@@ -695,7 +726,19 @@ var EngineSelfDiagnosis = (() => {
                   curStart: 0, curEnd: curLines.length }],
       };
     }
-    const ops = lcsOps(refLines, curLines);
+
+    // الـops بمواضعَ **مطلقة** في refLines/curLines — فمَن يستهلكها (rebuild،
+    // describeHunk) لا يعلم بالاقتصاص ولا يحتاج إلى أن يعلم.
+    const ops = [];
+    for (let i = 0; i < edge.p; i++) ops.push({ t: "=", a: i, b: i });
+    for (const o of lcsOps(midRef, midCur)) {
+      ops.push(o.t === "=" ? { t: "=", a: o.a + edge.p, b: o.b + edge.p }
+             : o.t === "-" ? { t: "-", a: o.a + edge.p }
+             :               { t: "+", b: o.b + edge.p });
+    }
+    for (let i = 0; i < edge.s; i++) {
+      ops.push({ t: "=", a: refLines.length - edge.s + i, b: curLines.length - edge.s + i });
+    }
     const hunks = [];
     let ai = 0, bi = 0, k = 0;
     while (k < ops.length) {

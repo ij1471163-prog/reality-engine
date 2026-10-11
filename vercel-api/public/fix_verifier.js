@@ -84,10 +84,43 @@ var FixVerifier = (() => {
 
     // [FIX] تستلم حالة الاقتباس الثلاثي الواردة بدل أن تبدأ من null. بلا
     // ذلك يُرفض كل نص متعدد الأسطر عند سطر افتتاحه.
-    function scanLine(raw, carriedTriple) {
+    //
+    // [PY-QUOTE-CARRY] وتستلم كذلك حالةَ الاقتباس **المفرد**، لكن بشرطَين
+    // لا بإطلاق. فالإطلاق يُفقِد كشفَ خطأين حقيقيين مقيسين:
+    //     s = "abc          ثم  return s     (نصٌّ غير منتهٍ)
+    //     s = "abc          ثم  def"         (نصٌّ يمتدّ بلا استمرار)
+    // والشرطان مأخوذان من قواعد بايثون نفسها لا مُستنتجَين:
+    //   • ‎\‎ في آخر السطر داخل النصّ ⇒ استمرارُ سطر. وهو يُقرأ من حالة
+    //     ‎escaped‎ في الماسح نفسه لا بعدٍّ للـbackslashes، فـ‎"abc\\"‎ نصٌّ
+    //     مُغلَق لا مستمر.
+    //   • f-string وحقلُ استبدالٍ مفتوح ‎{‎ ⇒ السطرُ يمتدّ (PEP 701، بايثون
+    //     3.12+). والعمقُ يُحفَظ، فـ‎}‎ تُغلقه ثم تُغلق الاقتباسَ علامتُه.
+    // وما خرج عن الشرطين يبقى خطأً كما كان. وبهذا تُقبل أربع حالاتٍ صحيحة
+    // كانت تُرفض (ثلاثُ f-string ممتدّة، ونصٌّ عادي مستمرٌّ بـ‎\‎)، ويبقى
+    // الخطآن مكشوفَين — وكلُّها مُثبَّتةٌ على كوربوس CPython.
+    //
+    // والعمقُ يُشترط في إغلاق الاقتباس أيضًا: ‎f"{d["k"]}"‎ صحيحٌ في 3.12+،
+    // فعلامةُ الاقتباس داخل الحقل ليست إغلاقًا.
+    const PY_F_PREFIX = /^(?:[rRbBuU]?[fF]|[fF][rRbBuU]?)$/;
+    function fPrefixAt(raw, i) {
+      let j = i - 1, p = "";
+      while (j >= 0 && /[A-Za-z]/.test(raw[j]) && p.length < 2) { p = raw[j] + p; j--; }
+      // جزءٌ من معرِّفٍ أطول ⇒ ليست بادئةَ نصّ. وهذا حارسٌ احتياطي مُكافئ:
+      // قيس تحوّرُه فنجا، ولم يُصطنَع له اختبار. وعلّتُه أن ‎conf"…"‎ — معرِّفٌ
+      // يلتصق بعلامة اقتباس — خطأٌ في بايثون أصلًا، وهذا فاحصٌ **بنيوي** بلا
+      // نحوِ تعابير فلا يحكم فيه بحال. فالحارس صحيحٌ ورخيص، وأثرُه لا يظهر
+      // على كودٍ صحيح.
+      if (j >= 0 && /[\w$]/.test(raw[j])) return false;
+      return PY_F_PREFIX.test(p);
+    }
+
+    function scanLine(raw, carried) {
+      const c0 = carried || {};
       let out = "";
-      let quote = null;
-      let triple = carriedTriple || null;
+      let quote = c0.quote || null;
+      let triple = c0.triple || null;
+      let fstring = !!c0.fstring;
+      let depth = c0.depth || 0;
       let escaped = false;
 
       for (let i = 0; i < raw.length; i++) {
@@ -113,8 +146,15 @@ var FixVerifier = (() => {
             escaped = false;
           } else if (c === "\\") {
             escaped = true;
-          } else if (c === quote) {
+          } else if (fstring && c === "{") {
+            if (n1 === "{") { out += " "; i++; }          // ‎{{‎ قوسٌ حرفي
+            else depth++;
+          } else if (fstring && c === "}") {
+            if (depth > 0) depth--;
+            else if (n1 === "}") { out += " "; i++; }     // ‎}}‎ قوسٌ حرفي
+          } else if (c === quote && depth === 0) {
             quote = null;
+            fstring = false;
           }
 
           continue;
@@ -133,6 +173,8 @@ var FixVerifier = (() => {
 
         if (c === "'" || c === '"') {
           quote = c;
+          fstring = fPrefixAt(raw, i);
+          depth = 0;
           out += " ";
           continue;
         }
@@ -142,7 +184,7 @@ var FixVerifier = (() => {
         out += c;
       }
 
-      return { code: out, quote, triple };
+      return { code: out, quote, triple, fstring, depth, escaped };
     }
 
     /*
@@ -165,12 +207,13 @@ var FixVerifier = (() => {
      */
     const logical = [];
     let current = null;
-    let carriedTriple = null;
+    let carried = { triple: null, quote: null, fstring: false, depth: 0 };
     let pendingJoin = false;
 
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
-      const isContinuation = !!carriedTriple || pendingJoin || stack.length > 0;
+      const isContinuation = !!carried.triple || !!carried.quote ||
+                             pendingJoin || stack.length > 0;
 
       if (!isContinuation && !raw.trim()) continue;
 
@@ -188,11 +231,13 @@ var FixVerifier = (() => {
         };
       }
 
-      const scanned = scanLine(raw.slice(leading.length), carriedTriple);
+      const scanned = scanLine(raw.slice(leading.length), carried);
 
-      // اقتباس مفرد غير منتهٍ على سطر واحد خطأ فعلي. أما الثلاثي فيُحمَل،
-      // ويُفحَص عند نهاية الملف.
-      if (scanned.quote) {
+      // اقتباس مفرد غير منتهٍ خطأ فعلي — إلا أن تُجيز بايثون استمرارَه:
+      // ‎\‎ في آخره، أو حقلُ استبدالِ f-string مفتوح. انظر [PY-QUOTE-CARRY].
+      // أما الثلاثي فيُحمَل، ويُفحَص عند نهاية الملف.
+      const quoteMayContinue = scanned.escaped || (scanned.fstring && scanned.depth > 0);
+      if (scanned.quote && !quoteMayContinue) {
         return {
           ok: false,
           available: true,
@@ -227,8 +272,15 @@ var FixVerifier = (() => {
         }
       }
 
-      carriedTriple = scanned.triple;
-      pendingJoin = !carriedTriple && /\\$/.test(raw.replace(/\s+$/, ""));
+      carried = {
+        triple: scanned.triple,
+        quote: scanned.quote || null,          // غيرُ فارغ ⇒ استمرارٌ مُجاز
+        fstring: scanned.fstring,
+        depth: scanned.depth,
+      };
+      // استمرارُ **الكود** بـ‎\‎ خارج النصوص — لا شأن له باستمرار النصّ أعلاه
+      pendingJoin = !carried.triple && !carried.quote &&
+                    /\\$/.test(raw.replace(/\s+$/, ""));
 
       if (isContinuation) {
         if (current) current.text += " " + scanned.code;
@@ -243,7 +295,7 @@ var FixVerifier = (() => {
       logical.push(current);
     }
 
-    if (carriedTriple) {
+    if (carried.triple || carried.quote) {
       return {
         ok: false,
         available: true,
@@ -967,11 +1019,33 @@ var FixVerifier = (() => {
   //       يرتفع ⇒ العبارة توقّفت **هنا**. وهي التي تفصل نقل الضرر بين
   //       الدوال عن نقل كود ميت سليم: في الثاني لم يكن للنصّ وجود حيّ
   //       في نطاق الوصول، فلا نقص.
-  //   (هـ) ظهور نصّ ميت جديد (مُعمَّى) مع نقص في تعداد الأحياء        [اشتباه]
-  //       (مُعمَّى) ⇒ الشكل الذي يُنتجه "قتل سطر حيّ وإعادة كتابته"،
-  //       وهو نفسه شكل "حذف سطر حيّ وإعادة صياغة سطر ميت" السليم. لا
-  //       يفصلهما النص، فنرفض كما يرفض السلوك السابق. والمُعمَّى لا الخام،
-  //       وإلا رُفض كل تعديل يمسّ نصًّا حرفيًّا داخل كود ميت.
+  //   (هـ) ظهور نصّ ميت جديد (مُعمَّى) مع نقص في **تعداد** الأحياء      [اشتباه]
+  //       في نطاقه ⇒ الشكل الذي يُنتجه "قتل سطر حيّ وإعادة كتابته مع
+  //       حذف ميتٍ سابق" — وهو الشكل الوحيد الذي تفوته (أ) و(ب) و(و)
+  //       جميعًا: (أ) لأن العدد الكلي ثابت، و(ب) لأن النصّ الخام تغيّر،
+  //       و(و) لأن النصّ المُعمَّى ليس واحدًا. والمُعمَّى لا الخام، وإلا
+  //       رُفض كل تعديل يمسّ نصًّا حرفيًّا داخل كود ميت.
+  //
+  //       ── وثمنُها مقيسٌ ومقصود، لا بندٌ مؤجَّل ───────────────────────
+  //       شرطُ «نقص تعدادِ نصٍّ حيّ» يصدُق على أيّ سطرٍ حيٍّ **أُعيدت
+  //       كتابتُه** — أي على كل إصلاح حقيقي. فيكفي أن يُعيد التعديل تسميةَ
+  //       شيءٍ داخل كود ميت ويُصلح سطرًا حيًّا، ليُرفض:
+  //           q = "… id = " + uid        ⇒  q = "… id = ?"
+  //           cursor.execute(q)          ⇒  cursor.execute(q, (uid,))
+  //           raise SystemExit               raise SystemExit
+  //           p()                        ⇒  r()
+  //       لا عبارةَ حيّة توقّفت: ‎p()‎ كان ميتًا و‎r()‎ ميتٌ، والعدد ثابت —
+  //       ومع ذلك يُرفض. وثلاثة اختبارات تُوثّق ذلك (Z، F1، X).
+  //
+  //       والتضييقُ جُرِّب وقيس: الشرط على **تعداد أحياء النطاق** الذي ظهر
+  //       فيه الميتُ الجديد (فالقتل يُنقصه وإعادةُ الكتابة لا تُنقصه) يُقبِل
+  //       الثلاثة — ويُمرِّر ح6 وح7 من كوربوس الضرر:
+  //           ح6: ‎log(a)‎ حيٌّ يُقتَل ويُعاد العددُ بـ‎audit("ok")‎ حيٍّ جديد
+  //           ح7: ‎keep(1)‎ يُقتَل عبر نطاقٍ ويُعاد العددُ بـ‎pad()‎
+  //       فالتعدادُ وحده لا يرى قتلًا مُعوَّضًا. والمطابقة النصّية المضبوطة
+  //       لا تفصل «قتلٌ + إعادةُ تسمية» عن «إعادةُ صياغةِ كودٍ ميت»، إذ
+  //       تغيُّرُ النصّ هو ما يُفلت الحالتين من (ب) معًا. فالخيار بين قبولِ
+  //       ضررٍ يُغيّر التنفيذ ورفضِ تجميلٍ لا يُغيّره — ويُرفض التجميل.
   //
   // ولا يُعدّ ضررًا: إعادة صياغة كود ميت وحده، ونقل الميت بين النطاقات،
   // وحذف سطر حيّ حذفًا تامًّا (ذاك شأن quickCheck وdiffCounts).
@@ -1379,6 +1453,79 @@ var FixVerifier = (() => {
     return remedies >= gone.length ? PROOF.PROVEN : PROOF.UNPROVEN;
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // [CRED-HASH] تهشيرُ اعتمادٍ لا يُصلَح بتبديل الخوارزمية
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // ‎createHash("md5")‎ على كلمة مرور لا يُصلَح بـ‎sha256‎: تبديلُ خوارزمية
+  // تهشيرِ اعتمادٍ مُخزَّن يُبطل كلَّ كلمات المرور القائمة، والصحيحُ دالةُ
+  // اشتقاق مفتاح (bcrypt/scrypt/argon2/pbkdf2) مع خطّة ترحيل. و‎repair_engine‎
+  // يرفض ذلك بحقّ (WEAK_CRYPTO_CREDENTIAL_CONTEXT) — لكن الرفضَ كان في
+  // **محركٍ واحد**، و‎emergency_fixes‎ يُجري التبديل بلا أي فحص:
+  //     - return crypto.createHash("md5").update(pass).digest("hex");
+  //     + return crypto.createHash("sha256").update(pass).digest("hex");
+  // والبوابة تقبله لأنه يُزيل بلاغَين بلا تدهور. فمسارُ الواجهة كان يُبدّل
+  // تهشيرَ كلمات المرور تلقائيًّا بينما مسارُ الخادم يرفضه — انقسامٌ مقيس
+  // على نفس الملف، كشفه اختبارُ تكافؤ المسارين.
+  //
+  // فالحارس في البوابة لا في المحركات: ما تمنعه البوابة لا يتجاوزه أيُّ
+  // محرك، حاضرٍ أو قادم. وهو ليس منعًا شاملًا: الترحيل إلى دالةِ اشتقاقِ
+  // مفتاحٍ هو الإصلاح الصحيح فيُقبل.
+  //
+  // والقاعدة تُلتمَس من repair_engine إن كان محمَّلًا — مصدرٌ واحد لتعريف
+  // «سياق الاعتماد» لا نسختان تتباعدان. وهو محمَّلٌ في مسارَي الإنتاج كليهما
+  // (index.html، وVM الخادم في server_repair_adapter) وفي سياقات vm في
+  // الاختبارات، فالبديلُ أدناه لا يعمل إلا حين تُحمَّل البوابة وحدها.
+  const KDF_RX = /\bbcrypt\b|\bscrypt\b|\bargon2\b|pbkdf2/i;
+  const CRED_WORD_RX = /pass(?:word|wd|phrase)|pwd|credential/i;
+
+  // ─── وليس كلُّ ما يمنع المحرّكَ يُثبت الاعتماد ────────────────────────
+  // ‎weakCryptoCredentialProblem‎ يُرجع ثلاثة أكواد، واثنان منها فقط **يُثبتان**
+  // أن المُهشَّر اعتماد. والثالث ‎WEAK_CRYPTO_INPUT_FROM_CALLER‎ معناه «المُدخَل
+  // وسيطٌ من المُستدعي فلا أعرف ما هو» — وهو تحفُّظُ محرّكٍ يمتنع عن إعادة
+  // الكتابة، لا دليلَ اعتماد. والمقيس على قبوله هنا:
+  //     function fileChecksum(buf) { createHash("md5").update(buf) … }
+  //   ⇒ INPUT_FROM_CALLER (buf) ⇒ يُطالَب بـbcrypt على مجموع تحقّقٍ لملف،
+  //   فيُرفض إصلاحٌ صحيح. وأغلبُ المُهشَّرات وسيطُ دالة، فالحارس المقصود
+  //   ضيّقًا يصير منعًا شاملًا لصنف التشفير كله — وهو عكسُ ما يُراد.
+  //
+  // ومذهبُ البوابة أن تردّ ما ثبت خطؤه لا ما جُهل: جهالةُ المصدر ليست إثباتًا.
+  // ولا ثقبَ في ذلك: ‎repair_engine‎ يمتنع عن تلك الحالة بنفسه، فما يصل البوابةَ
+  // منها إنما يأتي من ‎emergency_fixes‎، وهو ما يُحاكَم بالدليل لا بالجهل.
+  //
+  // والاعتمادُ على نصّ الأكواد قيدٌ مُعلَن: إعادةُ تسميةٍ في repair_engine تُعطّل
+  // الحارس صامتًا، فيُثبّت اختبارٌ المفرداتَ على المحرّك نفسه لا على نسخةٍ منها.
+  const CRED_PROBLEM_CODES = ['WEAK_CRYPTO_PASSWORD_HASH', 'WEAK_CRYPTO_CREDENTIAL_CONTEXT'];
+
+  function credentialHashContext(beforeCode, beforeIssues, ext) {
+    const issues = beforeIssues || [];
+
+    if (typeof weakCryptoCredentialProblem === 'function') {
+      for (const i of issues) {
+        let code = null;
+        try { code = weakCryptoCredentialProblem(beforeCode, i, ext); }
+        catch (e) { continue; }   // بلاغٌ بلا سطرٍ صالح ⇒ لا حكم منه
+        if (code && CRED_PROBLEM_CODES.indexOf(String(code)) !== -1) return true;
+      }
+      return false;
+    }
+
+    // البديل: الفرعان المُثبِتان بالحرف — نصُّ البلاغ ثم سطرُه. وفرعُ
+    // ‎CREDENTIAL_CONTEXT‎ يفحص كذلك توقيعَ الدالة المحيطة، وذلك يلزمه ماشٍ
+    // في repair_engine، فيُعلَن نقصُه ولا يُخمَّن: حدٌّ **أضيق** من القاعدة لا
+    // أوسع. والفحصُ على سطر البلاغ لا على الملف كله —
+    // ‎CRED_WORD_RX.test(code)‎ كان يجعل أيَّ ملفٍ يذكر كلمة مرور في موضعٍ آخر
+    // يمنع إصلاح md5 سليمًا، فيتباعد المسارانِ من جديد.
+    const lines = String(beforeCode).split('\n');
+    for (const i of issues) {
+      const raw = [i && i.cwe, i && i.cAct, i && i.title].filter(Boolean).join(' ');
+      if (/CWE-?(916|759|760)\b|password|كلمة\s*(ال)?مرور/i.test(raw)) return true;
+      const l = lines[Number(i && i.line) - 1];
+      if (l !== undefined && CRED_WORD_RX.test(l)) return true;
+    }
+    return false;
+  }
+
   // المصارف والعلاجات — قيست على مُدخلات حقيقية لكل صنف
   const SINK_CLASSES = {
     xss: {
@@ -1406,6 +1553,8 @@ var FixVerifier = (() => {
     },
     crypto: {
       issue: /\bmd5\b|\bsha1\b|sha-1|cwe-327(?!\d)|تشفير ضعيف|weak.?(?:crypto|hash)/i,
+      // تبديلُ الخوارزمية لا يُثبت شيئًا على تهشيرِ اعتماد — انظر [CRED-HASH]
+      credentialNeedsKdf: true,
       sink: /createHash\s*\(\s*['"](?:md5|sha1)['"]|\bmd5\s*\(|hashlib\s*\.\s*(?:md5|sha1)\s*\(|MessageDigest\s*\.\s*getInstance\s*\(\s*"(?:MD5|SHA-?1)"|\bsha1\s*\(/i,
       remedy: /sha(?:256|384|512)|sha-(?:256|384|512)|\bbcrypt\b|\bscrypt\b|\bargon2\b|pbkdf2/i,
       reason: "REJECTED_CRYPTO_FIX_UNPROVEN — نقص بلاغ التشفير الضعيف لكن الـcandidate لا يُدخل خوارزمية أقوى ولا دالة اشتقاق مفتاح",
@@ -1465,6 +1614,135 @@ var FixVerifier = (() => {
       if (!proven) return false;
     }
     return true;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // [SUBSET-SALVAGE] أكبر مجموعةٍ جزئية من الرُقعة يُثبتها مُتحقِّق
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // رُقعةُ محركٍ مرفوضة ليست بالضرورة رُقعةً كلّها معطوبة. والمقيس على ملف
+  // حقيقي: SmartRepair يُنتج في رُقعةٍ واحدة إصلاحَ حقنِ SQL صحيحًا **ومحوًا
+  // شكليًّا لـeval**، فتسقط الرُقعة كلها ويُفقَد إصلاحُ SQL. فتُجزَّأ إلى
+  // hunks وتُبنى تدريجيًّا بأكبر مجموعةٍ يقبلها المُتحقِّق نفسه، فالناتج
+  // مُتحقَّقٌ منه بالتعريف لا بالاستنتاج.
+  //
+  // وهي هنا لأن لها **مُستدعيَين**: سلسلةُ RealityOrchestrator ومسارُ
+  // fix_engine_pipeline. ونسختان من منطقٍ كهذا هي بذاتها سببُ تكرار
+  // المشكلة: يُصلَح أحدهما ويبقى الآخر. فالبوابة مالكةُ الحكم، فهي موضعُه.
+  //
+  // وهي دالّةٌ محضة: لا تعرف شيئًا عن مُستدعيها. ‎verifyFn(base, candidate)‎
+  // تُرجع قيمةً صادقة (أو كائن حكم) عند القبول، وكاذبة عند الرفض.
+  const SALVAGE_MAX_CELLS = 4000000;   // حدُّ مصفوفة LCS
+  const SALVAGE_MAX_HUNKS = 40;        // نداءُ مُتحقِّقٍ لكل hunk
+
+  // [DIFF-TRIM] والسقف يُقاس على المنطقة المختلفة لا على طول الملف.
+  //
+  // رُقعةُ محرّكٍ تُغيّر أسطرًا قليلة من ملفٍ كبير — فهذا هو الشكلُ الغالب،
+  // لا الاستثناء. وقياسُ السقف على الطول كان يُلغي الإنقاذ كلّه فوق ~2000
+  // سطر: يُعاد ‎null‎، فتسقط الرُقعة بأكملها وتُفقَد إصلاحاتُها المُثبَتة —
+  // وهو عينُ العطب الذي جاء الإنقاذ لعلاجه، عائدًا من باب الكلفة. ونفسُ
+  // المعايرة أسقطت تشخيصَ engine_self_diagnosis حين نمت أكبرُ وحدة
+  // (المقيس هناك: 2018 سطرًا ⇒ 4,076,361 خلية ⇒ تراجعٌ كامل بدل hunk واحد).
+  //
+  // واقتصاصُ البادئة واللاحقة المتطابقتين مضبوطٌ لا تقريبي: كلُّ بادئةٍ
+  // مشتركة جزءٌ من أطول تتابعٍ مشترك بالضرورة، فالتجزئة لا تتغيّر. ومكسبُه
+  // مقيس: المصفوفة تهبط من ملايين الخلايا إلى عشرات على رُقعةٍ موضعية،
+  // فالإنقاذ يصير متاحًا على ملفٍ كبير **وأسرع** على الصغير.
+  //
+  // والسقف يبقى صِمامًا: يُطلَق على رُقعةٍ تُعيد كتابة الملف فعلًا.
+  function _salvageDiffSegments(aLines, bLines, maxCells) {
+    const lim = Math.min(aLines.length, bLines.length);
+    let p = 0;
+    while (p < lim && aLines[p] === bLines[p]) p++;
+    let s = 0;
+    while (s < lim - p && aLines[aLines.length - 1 - s] === bLines[bLines.length - 1 - s]) s++;
+
+    const a = aLines.slice(p, aLines.length - s);
+    const b = bLines.slice(p, bLines.length - s);
+    const n = a.length, m = b.length;
+    if (n * m > maxCells) return null;
+
+    const dp = [];
+    for (let i = 0; i <= n; i++) dp.push(new Uint32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = a[i] === b[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+
+    const segs = [];
+    for (let x = 0; x < p; x++) segs.push({ kind: 'same', line: aLines[x] });
+
+    let cur = null;
+    const flush = () => { if (cur) { segs.push(cur); cur = null; } };
+    const hunk = () => (cur || (cur = { kind: 'hunk', from: [], to: [] }));
+
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) {
+        flush();
+        segs.push({ kind: 'same', line: a[i] });
+        i++; j++;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        hunk().from.push(a[i]); i++;
+      } else {
+        hunk().to.push(b[j]); j++;
+      }
+    }
+    while (i < n) { hunk().from.push(a[i]); i++; }
+    while (j < m) { hunk().to.push(b[j]); j++; }
+    flush();
+
+    for (let x = aLines.length - s; x < aLines.length; x++) segs.push({ kind: 'same', line: aLines[x] });
+    return segs;
+  }
+
+  function _salvageRender(segs, accepted) {
+    const out = [];
+    let h = -1;
+    for (const seg of segs) {
+      if (seg.kind === 'same') { out.push(seg.line); continue; }
+      h++;
+      const take = accepted.has(h) ? seg.to : seg.from;
+      for (const l of take) out.push(l);
+    }
+    return out.join('\n');
+  }
+
+  // يُرجع { code, verdict, kept, dropped } أو null إن لم يُثبَت شيء.
+  function salvageVerifiedSubset(base, candidate, verifyFn, opts) {
+    opts = opts || {};
+    if (typeof verifyFn !== 'function') return null;
+    if (typeof base !== 'string' || typeof candidate !== 'string') return null;
+    if (base === candidate) return null;
+
+    const maxCells = opts.maxCells || SALVAGE_MAX_CELLS;
+    const maxHunks = opts.maxHunks || SALVAGE_MAX_HUNKS;
+
+    const segs = _salvageDiffSegments(base.split('\n'), candidate.split('\n'), maxCells);
+    if (!segs) return null;
+    const total = segs.filter(x => x.kind === 'hunk').length;
+    // hunk واحد: لا تجزئة ممكنة — المجموعة الوحيدة هي الرُقعة كلها وقد
+    // رُفضت. فالشرط ‎< 2‎ توفيرُ نداءِ مُتحقِّقٍ لا حمايةُ صحة: بدونه يُجرَّب
+    // المُرشَّح نفسه ويُرفض ويُعاد null — نفس النتيجة بكلفةٍ زائدة. ولذلك
+    // لا يُسقط تحوّرُه اختبارًا، وهو متوقَّع ومُعلَن.
+    if (total < 2 || total > maxHunks) return null;
+
+    const accepted = new Set();
+    let bestCode = null, bestVerdict = null;
+    for (let h = 0; h < total; h++) {
+      accepted.add(h);
+      const cand = _salvageRender(segs, accepted);
+      if (cand === base) { accepted.delete(h); continue; }
+      const verdict = verifyFn(base, cand);
+      if (verdict) { bestCode = cand; bestVerdict = verdict; }
+      else accepted.delete(h);
+    }
+    if (!bestCode) return null;
+    return { code: bestCode, verdict: bestVerdict,
+             kept: accepted.size, dropped: total - accepted.size };
   }
 
   function verifyFix(beforeCode, afterCode, fileName, analyzeFunc, opts) {
@@ -1644,12 +1922,41 @@ var FixVerifier = (() => {
       // [SINK-PROOF] الأصناف الأربعة من مُولِّد واحد — بيانات لا حُرّاس
       ...Object.keys(SINK_CLASSES).map(id => {
         const k = SINK_CLASSES[id];
+        // [CRED-HASH] تضييقُ العلاج، لا حارسٌ جديد: صنفٌ يُعلن
+        // ‎credentialNeedsKdf‎ وكان مَصرِفُه على اعتماد ⇒ العلاجُ المقبول دالةُ
+        // اشتقاقِ مفتاحٍ وحدها، فتبديلُ ‎md5→sha256‎ يُصبح UNPROVEN بنفس
+        // المُولِّد. والترحيلُ إلى bcrypt يبقى مقبولًا، وmd5 على غير اعتمادٍ
+        // يبقى مقبولًا بـsha256 — فلا منعَ شاملًا.
+        //
+        // والقياسُ كسولٌ ومحفوظ: نداءُ محلّلٍ إضافي لا يُدفع إلا للصنف الذي
+        // يُعلن الحاجة، ولا يُدفع مرتين. والقراءة عبر ‎_cred()‎ في الموضعين
+        // (الإثبات والسبب) فلا يتعلق الحكم بترتيب استدعائهما.
+        const _cred = (() => {
+          let done = false, rx = k.remedy, hit = false;
+          return () => {
+            if (!done) {
+              done = true;
+              if (k.credentialNeedsKdf) {
+                const ext = String(fileName).split('.').pop().toLowerCase();
+                hit = credentialHashContext(beforeCode, matchingIssues(beforeCode, k.issue), ext);
+                if (hit) rx = KDF_RX;
+              }
+            }
+            return { rx, hit };
+          };
+        })();
         return {
           id,
           count: code => countOf(code, k.issue),
           lines: () => linesOf(k.issue),
-          prove: () => sinkFixProven(beforeCode, afterCode, k.sink, k.remedy),
-          reason: k.reason,
+          prove: () => sinkFixProven(beforeCode, afterCode, k.sink, _cred().rx),
+          get reason() {
+            return _cred().hit
+              ? k.reason + " [تهشيرُ اعتماد: تبديلُ الخوارزمية يُبطل كلمات"
+                + " المرور القائمة ولا يُصلح الضعف — الإصلاح دالةُ اشتقاق"
+                + " مفتاح (bcrypt/scrypt/argon2/pbkdf2) مع خطّة ترحيل]"
+              : k.reason;
+          },
         };
       }),
     ];
@@ -1797,6 +2104,11 @@ var FixVerifier = (() => {
     // تصنيف أسباب الرفض — مالكُه البوابة نفسها
     isHarmfulRejection, HARMFUL_REJECTION_PREFIXES,
     isTargetRejection, TARGET_REJECTION_PREFIXES,
+    // إنقاذُ أكبر مجموعةٍ جزئية — مُستدعاةٌ من المُنسّق ومن خط الأنابيب
+    salvageVerifiedSubset, SALVAGE_MAX_CELLS, SALVAGE_MAX_HUNKS,
+    // [CRED-HASH] مفرداتُ «سياق الاعتماد» — مكشوفةٌ ليُثبّتها اختبارٌ على
+    // repair_engine، فلا تُعطِّل إعادةُ تسميةٍ هناك الحارسَ صامتةً
+    CRED_PROBLEM_CODES,
     // أدوات مشتركة (حتى لا يعيد أحد كتابتها)
     detectLanguage, syntaxCheck, normalizeIssues, normalizeSeverity,
     isHighSeverity, issueKey, issueCounts, diffCounts

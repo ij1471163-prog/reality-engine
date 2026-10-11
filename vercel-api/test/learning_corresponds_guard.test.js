@@ -338,16 +338,27 @@ test('القالب المعمَّم لا يعيد كتابة ثوابت غير �
       'الثوابت غير ذات الصلة صارت تقرأ من process.env فتصير undefined');
   });
 
-test('سطح التعلّم: زوج التراكم (= → +=) لا يصل التعلّم إطلاقًا',
-  { todo: 'خلل مُثبَت: extractPair يقرأ (type || cAct) فقط، وبلاغ التراكم type="bug" وتسميته ACCUMULATION في strategy. مؤجَّل' },
-  () => {
-    const code = 'let totalScore = 0;\nfunction sumScores(ps) {\n  for (const p of ps) {\n    totalScore = p.score;\n  }\n  return totalScore;\n}\nsumScores([]);\n';
-    const fixed = code.replace('totalScore = p.score;', 'totalScore += p.score;');
-    const { stats, issues } = learnPair(code, fixed, 'a.js', LE_HEAD);
-    assert.ok(issues.some(i => /ACCUMULATION/.test(String(i.type || ''))),
-      'مفتاح accumul في TYPE_FIXES يتطلب أن يكون ACCUMULATION في type لا في strategy');
-    assert.ok(stats.total >= 1, 'الزوج الصحيح للتراكم يجب أن يُتعلَّم');
-  });
+// سطحٌ كامل من التعلّم كان مُقطوعًا بحقلٍ لم يُقرأ: ‎extractPair‎ كانت تأخذ
+// ‎(type || cAct)‎، وبلاغُ التراكم ‎type="bug"‎ وتصنيفُه في ‎strategy‎ — فالأول
+// غيرُ فارغ فلا يُقرأ الثاني، ومفتاحُ ‎accumul‎ في TYPE_FIXES لا يطابق ‎"bug"‎،
+// فيُرفَض الزوجُ الصحيح قبل أن يُنظَر فيه. والتصنيفُ يُقرأ الآن من مجموع
+// الحقول، فالسطحُ موصول. وهذا ما يُثبّته الاختبار: الزوجُ يُتعلَّم فعلًا.
+test('سطح التعلّم: زوج التراكم (= → +=) يصل التعلّم ويُخزَّن', () => {
+  const code = 'let totalScore = 0;\nfunction sumScores(ps) {\n  for (const p of ps) {\n    totalScore = p.score;\n  }\n  return totalScore;\n}\nsumScores([]);\n';
+  const fixed = code.replace('totalScore = p.score;', 'totalScore += p.score;');
+  const { stats, issues } = learnPair(code, fixed, 'a.js', LE_HEAD);
+
+  // tripwire: التصنيفُ فعلًا في ‎strategy‎ لا في ‎type‎ — فلو انتقل يومًا
+  // إلى ‎type‎ لصار الاختبار يمرّ بلا أن يختبر الحقلَ المقصود.
+  const acc = issues.filter(i =>
+    /ACCUMULATION/.test([i && i.type, i && i.cAct, i && i.strategy].join(' ')));
+  assert.ok(acc.length >= 1, 'لا بلاغَ تراكم إطلاقًا — العيّنة لا تختبر شيئًا');
+  assert.ok(acc.some(i => !/ACCUMULATION/i.test(String(i.type || ''))),
+    'التصنيف صار في type — راجعْ: الاختبار لم يَعُد يُغطّي قراءةَ strategy');
+
+  assert.ok(stats.total >= 1,
+    'الزوج الصحيح للتراكم لم يُتعلَّم — سطحُ التعلّم مقطوعٌ مرّةً أخرى');
+});
 
 // ═══ 4ب. تناظر القاعدة: أي تغيّر لشكل العبارة يُرفض ══════
 // corresponds() كانت تمنع "استدعاء ⇄ تصريح" فقط. والمطلوب أن يُرفض تغيّر

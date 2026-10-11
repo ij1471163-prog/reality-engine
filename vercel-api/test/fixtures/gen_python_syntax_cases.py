@@ -59,7 +59,39 @@ CASES = {
   "plain string backslash join":'def f():\n    s = "abc\\\ndef"\n    return s\n',
   "comment with apostrophe":    "def f():\n    # it's ok\n    return 1\n",
   "string containing hash":     'def f():\n    s = "a # b"\n    return s\n',
+  # ── [PY-QUOTE-CARRY] حملُ الاقتباس المفرد: مميِّزاتُه، سالبةً وموجبة ──
+  # الفاحص يحمل الاقتباس المفرد حين تُجيز بايثون استمرارَه وحدها: ‎\‎ في آخر
+  # السطر، أو حقلُ استبدالِ f-string مفتوح. وهذه الحالات تُمسك بالتمييز نفسه:
+  # ‎\\‎ يُغلق النصّ ولا يُمدّه، و‎\\\‎ يُمدّه، و‎{{‎ قوسٌ حرفي لا حقلٌ مفتوح،
+  # وعلامةُ الاقتباس داخل حقلٍ مفتوح ليست إغلاقًا (3.12+)، والبادئةُ ‎f‎ لا
+  # تُقرأ من ذيل معرِّفٍ أطول.
+  "str double backslash end":   'def f():\n    s = "abc\\\\"\n    return s\n',
+  "str triple backslash join":  'def f():\n    s = "abc\\\\\\\ndef"\n    return s\n',
+  "str escaped quote":          'def f():\n    s = "a\\"b"\n    return s\n',
+  "fstring literal braces":     'def f(x):\n    s = f"{{x}}"\n    return s\n',
+  "fstring quote in field":     'def f(d):\n    s = f"{d[\'k\']}"\n    return s\n',
+  "fstring same quote field":   'def f(d):\n    s = f"{d["k"]}"\n    return s\n',
+  "fstring rf prefix spans":    'def f(x):\n    s = rf"{\n        x\n    }\\d"\n    return s\n',
+  "fstring F upper spans":      'def f(x):\n    s = F"{\n        x\n    }"\n    return s\n',
+  "fstring bracket in field":   'def f(a):\n    s = f"{a[0]}"\n    return s\n',
+  # ثلاثٌ منها تُميّز مُطلِقات [PY-QUOTE-CARVY] التي لا تُميّزها غيرُها —
+  # أُضيفت لأن تحوّراتها نجت بدونها (قياسُ تحوّرٍ لا تخمين):
+  #   • قوسٌ داخل حقلٍ بعلامةِ الاقتباس نفسها: بلا شرطِ العمق تُقرأ العلامةُ
+  #     إغلاقًا، فيخرج ‎]‎ إلى الكود فيُرفض كودٌ صحيح.
+  #   • ‎{{‎ وحدها: لو عُدّت حقلًا مفتوحًا لما أغلقت العلامةُ النصَّ.
+  #   • نصٌّ عاديّ فيه ‎{‎: لو عُدّ كلُّ نصٍّ f-string لصار ‎"{"‎ حقلًا مفتوحًا
+  #     فلا يُغلق — وهو أشيعُ شكلٍ في الكود الحقيقي.
+  "fstring quote br in field":  'def f(d):\n    s = f"{d["]"]}"\n    return s\n',
+  "fstring literal brace only": 'def f():\n    s = f"{{"\n    return s\n',
+  "plain brace then concat":    'def f(x):\n    s = "{" + x\n    return s\n',
+  "implicit concat lines":      'def f():\n    s = ("a"\n         "b")\n    return s\n',
   # ── أخطاء صياغة حقيقية ──
+  "err dbl backslash then eol": 'def f():\n    s = "abc\\\\\n    return s\n',
+  "err fstring field unclosed": 'def f(x):\n    s = f"{\n        x\n    return s\n',
+  "err fstring lit brace open": 'def f(x):\n    s = f"{{\n    return s\n',
+  "err bytes prefix unterm":    'def f():\n    s = b"abc\n    return s\n',
+  # ونصٌّ **غيرُ** f فيه ‎{‎ لا يمتدّ: فبادئةُ ‎f‎ شرطٌ حامل، لا تزيين
+  "err plain brace then eol":   'def f():\n    s = "{\n    return s\n',
   "err unclosed bracket":       'def f():\n    g(1\n    return 2\n',
   "err extra bracket":          'def f():\n    g(1))\n',
   "err unexpected indent":      'def f():\n    return 1\n        x = 2\n',

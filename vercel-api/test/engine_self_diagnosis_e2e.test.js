@@ -604,22 +604,66 @@ test('[E2E-10d] CRLF محفوظ: الـpatch لا يعيد كتابة كل سط�
   assert.strictEqual(ESD._internals.dominantEol('x\ny\n'), '\n');
 });
 
-test('[E2E-10e] سقف الذاكرة: فوق الحد ⇒ hunk واحد للملف كله لا انهيار', () => {
+test('[E2E-10e] [DIFF-TRIM] سطرٌ واحد في ملفٍ كبير = hunk واحد، لا تراجعٌ كامل', () => {
+  // الصيغة الأولى لهذا الاختبار كانت تُثبّت العكس: 2100 سطرًا تختلف في سطرٍ
+  // واحد ⇒ المسار المحافظ، لأن السقف كان يُقاس على طول الملف. وذلك قياسٌ في
+  // الموضع الخطأ: الحالةُ الغالبة أن يختلف المرجعُ والشجرةُ في أسطر قليلة،
+  // فكان أصغرُ تراجعٍ مُقترَح هو الملفَ بأكمله — وهو ما يُفترَض أن
+  // HUNK_REGRESSION يمنعه. والسقف يُقاس الآن على المنطقة المختلفة.
   const big = Array.from({ length: 2100 }, (_, i) => 'line ' + i);
   const big2 = big.slice(); big2[5] = 'CHANGED';
   const d = ESD._internals.buildHunks(big, big2);
-  // 2101 × 2101 = 4.41M خلية > السقف ⇒ المسار المحافظ
-  assert.strictEqual(d.whole, true, 'يجب أن يسلك المسار المحافظ');
-  assert.strictEqual(d.hunks.length, 1);
+  assert.strictEqual(d.whole, false,
+    '2100 سطرًا تختلف في سطر واحد لا تستدعي المسار المحافظ');
+  assert.strictEqual(d.hunks.length, 1, 'تغييرٌ واحد = hunk واحد');
+  assert.deepStrictEqual(ESD._internals.describeHunk(d.hunks[0], big, big2).curSample,
+    ['CHANGED'], 'الـhunk يجب أن يُحدّد السطر المتغيّر نفسه');
   assert.strictEqual(ESD._internals.rebuild(d, new Set(), big, big2), big2.join('\n'));
   assert.strictEqual(ESD._internals.rebuild(d, new Set([0]), big, big2), big.join('\n'));
 
-  // وتحت السقف يعمل التحليل الدقيق
+  // والسقف صِمامٌ قائم: منطقةٌ مختلفة واسعة فعلًا ⇒ المسار المحافظ، بلا انهيار
+  const other = Array.from({ length: 2100 }, (_, i) => 'different ' + (i * 7));
+  const dw = ESD._internals.buildHunks(big, other);   // 2101² = 4.41M > 4M
+  assert.strictEqual(dw.whole, true, 'اختلافٌ واسع يجب أن يسلك المسار المحافظ');
+  assert.strictEqual(dw.hunks.length, 1);
+  assert.strictEqual(ESD._internals.rebuild(dw, new Set(), big, other), other.join('\n'));
+  assert.strictEqual(ESD._internals.rebuild(dw, new Set([0]), big, other), big.join('\n'));
+
+  // وتحت السقف يعمل التحليل الدقيق كما كان
   const s1 = Array.from({ length: 300 }, (_, i) => 'L' + i);
   const s2 = s1.slice(); s2[7] = 'X';
   const d2 = ESD._internals.buildHunks(s1, s2);
   assert.strictEqual(d2.whole, false);
   assert.strictEqual(d2.hunks.length, 1, 'تغيير واحد = hunk واحد');
+});
+
+test('[E2E-10f] والسقف لا يُعايَر على حجمٍ قديم: أكبرُ وحدةٍ على القرص تُشخَّص بدقة', () => {
+  // العطبُ الأصلي لم يكن في منطق التشخيص بل في **معايرةٍ** على واقعٍ تغيّر:
+  // سقفُ 4M خليةً عُويِر على «أكبر وحدة 1797 سطرًا»، فحين بلغ fix_verifier.js
+  // 2018 سطرًا انقلب تشخيصُ سطرٍ واحد إلى تراجعٍ كامل. فيُثبَّت الشرطُ على
+  // الشجرة نفسها لا على رقمٍ مكتوب: أيُّ وحدةٍ نمت، يبقى تشخيصُها دقيقًا.
+  const mods = fs.readdirSync(PUBLIC_DIR).filter(f => f.endsWith('.js'));
+  let biggest = null, lines = 0;
+  for (const m of mods) {
+    const n = fs.readFileSync(path.join(PUBLIC_DIR, m), 'utf8').split('\n').length;
+    if (n > lines) { lines = n; biggest = m; }
+  }
+  assert.ok(biggest && lines > 500, 'أكبر وحدة: ' + biggest + ' (' + lines + ' سطرًا)');
+
+  const ref = fs.readFileSync(path.join(PUBLIC_DIR, biggest), 'utf8').split('\n');
+  const cur = ref.slice();
+  const at = Math.floor(cur.length / 2);
+  cur[at] = '/* إصابةٌ مُفترَضة */';
+
+  const d = ESD._internals.buildHunks(ref, cur);
+  assert.strictEqual(d.whole, false,
+    'أكبرُ وحدة (' + biggest + '، ' + lines + ' سطرًا) تجاوزت السقف — التشخيص' +
+    ' انقلب إلى تراجعٍ كامل. راجعْ [DIFF-TRIM] لا ترفعِ السقف.');
+  assert.strictEqual(d.hunks.length, 1, 'سطرٌ واحد = hunk واحد');
+  assert.deepStrictEqual(ESD._internals.describeHunk(d.hunks[0], ref, cur).curLines,
+    [at + 1, at + 1], 'الـhunk يجب أن يُحدّد موضع الإصابة بالضبط');
+  assert.strictEqual(ESD._internals.rebuild(d, new Set([0]), ref, cur), ref.join('\n'),
+    'التراجع عن الـhunk يُعيد الوحدة كما هي على القرص');
 });
 
 test('[E2E-10c] ملفان متطابقان ⇒ صفر hunks، وإعادة البناء محافظة', () => {

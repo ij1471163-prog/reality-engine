@@ -77,16 +77,40 @@
    "code": "def f(x):\n    if x == 1:\n        return 1\n    elif x == 2:\n        return 2\n    else:\n        return 0\n",
    "valid": true
   },
+  "err bytes prefix unterm": {
+   "code": "def f():\n    s = b\"abc\n    return s\n",
+   "line": 2,
+   "msg": "unterminated string literal (detected at line 2)",
+   "valid": false
+  },
   "err colon no body eof": {
    "code": "def f():\n",
    "line": 1,
    "msg": "expected an indented block after function definition on line 1",
    "valid": false
   },
+  "err dbl backslash then eol": {
+   "code": "def f():\n    s = \"abc\\\\\n    return s\n",
+   "line": 2,
+   "msg": "unterminated string literal (detected at line 2)",
+   "valid": false
+  },
   "err extra bracket": {
    "code": "def f():\n    g(1))\n",
    "line": 2,
    "msg": "unmatched ')'",
+   "valid": false
+  },
+  "err fstring field unclosed": {
+   "code": "def f(x):\n    s = f\"{\n        x\n    return s\n",
+   "line": 4,
+   "msg": "f-string: expecting '=', or '!', or ':', or '}'",
+   "valid": false
+  },
+  "err fstring lit brace open": {
+   "code": "def f(x):\n    s = f\"{{\n    return s\n",
+   "line": 2,
+   "msg": "unterminated f-string literal (detected at line 2)",
    "valid": false
   },
   "err inconsistent indent": {
@@ -117,6 +141,12 @@
    "code": "def f():\nreturn 1\n",
    "line": 2,
    "msg": "expected an indented block after function definition on line 1",
+   "valid": false
+  },
+  "err plain brace then eol": {
+   "code": "def f():\n    s = \"{\n    return s\n",
+   "line": 2,
+   "msg": "unterminated string literal (detected at line 2)",
    "valid": false
   },
   "err plain string spans": {
@@ -159,8 +189,40 @@
    "code": "def f(xs):\n    for x in xs:\n        return x\n    else:\n        return None\n",
    "valid": true
   },
+  "fstring F upper spans": {
+   "code": "def f(x):\n    s = F\"{\n        x\n    }\"\n    return s\n",
+   "valid": true
+  },
+  "fstring bracket in field": {
+   "code": "def f(a):\n    s = f\"{a[0]}\"\n    return s\n",
+   "valid": true
+  },
+  "fstring literal brace only": {
+   "code": "def f():\n    s = f\"{{\"\n    return s\n",
+   "valid": true
+  },
+  "fstring literal braces": {
+   "code": "def f(x):\n    s = f\"{{x}}\"\n    return s\n",
+   "valid": true
+  },
   "fstring nested": {
    "code": "def f(x):\n    return f\"{f'{x}'}\"\n",
+   "valid": true
+  },
+  "fstring quote br in field": {
+   "code": "def f(d):\n    s = f\"{d[\"]\"]}\"\n    return s\n",
+   "valid": true
+  },
+  "fstring quote in field": {
+   "code": "def f(d):\n    s = f\"{d['k']}\"\n    return s\n",
+   "valid": true
+  },
+  "fstring rf prefix spans": {
+   "code": "def f(x):\n    s = rf\"{\n        x\n    }\\d\"\n    return s\n",
+   "valid": true
+  },
+  "fstring same quote field": {
+   "code": "def f(d):\n    s = f\"{d[\"k\"]}\"\n    return s\n",
    "valid": true
   },
   "fstring single line": {
@@ -187,6 +249,10 @@
    "code": "x = 1\ndef f():\n    global x\n    x = 2\n    return x\n",
    "valid": true
   },
+  "implicit concat lines": {
+   "code": "def f():\n    s = (\"a\"\n         \"b\")\n    return s\n",
+   "valid": true
+  },
   "import spans lines": {
    "code": "from os import (\n    path,\n    sep,\n)\nprint(path, sep)\n",
    "valid": true
@@ -207,6 +273,10 @@
    "code": "def o():\n    def i():\n        return 1\n    return i()\n",
    "valid": true
   },
+  "plain brace then concat": {
+   "code": "def f(x):\n    s = \"{\" + x\n    return s\n",
+   "valid": true
+  },
   "plain string backslash join": {
    "code": "def f():\n    s = \"abc\\\ndef\"\n    return s\n",
    "valid": true
@@ -217,6 +287,18 @@
   },
   "simple function": {
    "code": "def f():\n    return 1\n",
+   "valid": true
+  },
+  "str double backslash end": {
+   "code": "def f():\n    s = \"abc\\\\\"\n    return s\n",
+   "valid": true
+  },
+  "str escaped quote": {
+   "code": "def f():\n    s = \"a\\\"b\"\n    return s\n",
+   "valid": true
+  },
+  "str triple backslash join": {
+   "code": "def f():\n    s = \"abc\\\\\\\ndef\"\n    return s\n",
    "valid": true
   },
   "string containing hash": {

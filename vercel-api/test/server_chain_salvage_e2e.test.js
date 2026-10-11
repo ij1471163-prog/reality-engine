@@ -33,6 +33,7 @@ const test   = require('node:test');
 const assert = require('node:assert');
 const fs     = require('node:fs');
 const path   = require('node:path');
+const vm     = require('node:vm');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const { RealityOrchestrator: RO, FixVerifier: FV } =
@@ -240,6 +241,81 @@ test('[CH-8] والبوابة داخل VM الخادم فعلًا، وacorn قب
   const eng = createRepairEngine();
   for (const fn of ['analyze', 'repair', 'repairSmart', 'repairSqlEngine']) {
     assert.strictEqual(typeof eng[fn], 'function', 'المحوِّل بلا ' + fn);
+  }
+});
+
+// ═══ 3b. تكافؤ المسارين — الجذرُ الحقيقي لتكرار المشكلة ═══════════════
+//
+// للمحرك مسارانِ مستقلّان يُصلحان نفس الملف:
+//   • الخادم  : RealityOrchestrator.runFallbackChain  (api/analyze.js)
+//   • الواجهة : fixAllEnginePipeline                  (index.html)
+// وكلُّ إصلاحٍ بنيوي يُطبَّق على أحدهما ولا يُطبَّق على الآخر يُنتج بالضبط
+// الشكوى المتكرّرة: «يُصلَح جزءٌ ويُترك المرتبط به». والمقيس قبل توحيد
+// الإنقاذ: الخادم يُصلح حقنَ SQL والواجهة لا — نفس الملف، نفس المحركات.
+//
+// فهذا الاختبار يقيس الأمرين معًا على نفس المُدخَل، ويلزم أن يُحسَم في
+// كليهما ما يُحسَم في أحدهما. وهو الحارس الذي يمنع عودة الانقسام.
+test('[CH-10] المسارانِ يُصلحان نفس الأصناف — لا مسارٌ متقدّم وآخر متأخّر', () => {
+  // (أ) مسار الخادم
+  const srv = run(MIXED, 'game.js');
+  const srvFixed = srv.phases.fallback.verifiedCode || MIXED;
+
+  // (ب) مسار الواجهة، بسياقٍ كسياق index.html
+  const noop = () => {};
+  const store = new Map();
+  const ui = {
+    console: { log: noop, warn: noop, error: noop, info: noop },
+    setTimeout, clearTimeout, TextEncoder, TextDecoder, URL,
+    document: {
+      getElementById: () => ({ style: {}, textContent: '', innerHTML: '' }),
+      addEventListener: noop, createElement: () => ({ style: {} }),
+      querySelector: () => null, querySelectorAll: () => [],
+    },
+    localStorage: {
+      getItem: k => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => { store.set(k, String(v)); },
+      removeItem: k => { store.delete(k); },
+    },
+    navigator: {}, location: { search: '' },
+  };
+  ui.window = ui;
+  vm.createContext(ui);
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  for (const m of html.matchAll(/<script src="\/([^"]+)"/g)) {
+    const p = path.join(PUBLIC_DIR, m[1]);
+    if (!fs.existsSync(p)) continue;
+    try { vm.runInContext(fs.readFileSync(p, 'utf8'), ui, { filename: m[1] }); } catch (_) {}
+  }
+  ui.toast = noop; ui.refreshStats = noop;
+  assert.strictEqual(typeof ui.fixAllEnginePipeline, 'function', 'مسار الواجهة غير محمَّل');
+
+  ui.__src = MIXED;
+  vm.runInContext('F = { "game.js": __src }; R = {};' +
+    ' Object.keys(F).forEach(k => { R[k] = { code: F[k], issues: analyzeCode(F[k], k) }; });', ui);
+  vm.runInContext('fixAllEnginePipeline();', ui);
+  const uiFixed = JSON.parse(vm.runInContext('JSON.stringify(F["game.js"])', ui));
+
+  // tripwire: كلاهما غيّر الملف فعلًا
+  assert.notStrictEqual(srvFixed, MIXED, 'مسار الخادم لم يُصلح شيئًا');
+  assert.notStrictEqual(uiFixed, MIXED, 'مسار الواجهة لم يُصلح شيئًا');
+
+  // الأصناف التي يجب أن يحسمها **كلا** المسارين
+  const CLASSES = {
+    'حقن SQL بمعاملات مربوطة': /username=\? AND password=\?/,
+    'السرّ إلى البيئة':         /process\.env\./,
+    'المقارنة الصارمة':         /username === "admin"/,
+    'https بدل http':           /"https:\/\/api\.example\.com/,
+  };
+  for (const [label, rx] of Object.entries(CLASSES)) {
+    assert.match(srvFixed, rx, 'الخادم لم يحسم: ' + label);
+    assert.match(uiFixed, rx, 'الواجهة لم تحسم: ' + label + ' — المسارانِ انقسما مرّةً أخرى');
+  }
+
+  // وما يُرفَض يُرفَض في كليهما: محوُ eval الشكلي لا يُطبَّق في أيٍّ منهما
+  for (const [label, code] of [['الخادم', srvFixed], ['الواجهة', uiFixed]]) {
+    assert.match(code, /\beval\s*\(\s*cheat\s*\)/, label + ': eval حُذف بلا بديلٍ آمن');
+    assert.doesNotMatch(code, /SECURITY: eval removed/, label + ': تعليقُ المحو كُتب');
+    assert.match(code, /createHash\("md5"\)/, label + ': md5 بُدِّل تلقائيًّا على اعتماد');
   }
 });
 

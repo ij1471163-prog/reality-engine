@@ -143,21 +143,62 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
         hasVerifier: !!_fv,
         candidateChanged: candidate !== before
     });
-    const v = _fv.verifyFix(before, candidate, fn, analyzer, {});
+    let v = _fv.verifyFix(before, candidate, fn, analyzer, {});
+    let committed = candidate;
+    let salvaged = null;
+
+    // [SUBSET-SALVAGE] رُقعةُ محركٍ مرفوضة ليست رُقعةً كلّها معطوبة.
+    //
+    // كان الحكم واحدًا على الرُقعة كاملة، فمحركٌ يُنتج إصلاحًا صحيحًا ومحوًا
+    // شكليًّا في رُقعةٍ واحدة يخسر الصحيحَ مع الفاسد. والمقيس على ملف حقيقي
+    // في مسار الواجهة هذا تحديدًا:
+    //     SmartMoveRepair ⇒ REJECTED_EVAL_FIX_UNPROVEN
+    //     فسقط معه إصلاحُ ‎username=? AND password=?‎، وبقي حقنُ SQL
+    //     غير مُصلَح في الناتج النهائي — بينما مسارُ الخادم يُصلحه.
+    // أي أن الخللَ نفسه بقي في هذا الملف بعد إصلاحه في المُنسّق — وهذا
+    // بالضبط معنى «يُصلَح جزءٌ ويُترك المرتبط به».
+    //
+    // والتجزئة من البوابة نفسها (FixVerifier.salvageVerifiedSubset)، لا نسخةً
+    // ثالثة هنا. ولا تُستدعى إلا على رفضِ **ضرر**: الرفضُ غير الضارّ (لا
+    // تحسّنَ قابلًا للقياس) لا خطوةَ فيه ضارّة فالإعادة تُنتج نفس الناتج،
+    // ورفضُ الهدف (حِزمةٌ مُصغَّرة) لا تمرّ منه خطوةٌ بحال.
+    if (!v.accepted &&
+        typeof _fv.salvageVerifiedSubset === 'function' &&
+        typeof _fv.isHarmfulRejection === 'function' &&
+        _fv.isHarmfulRejection(v.reason) &&
+        !(typeof _fv.isTargetRejection === 'function' && _fv.isTargetRejection(v.reason))) {
+        const batchReason = v.reason;
+        const r = _fv.salvageVerifiedSubset(before, candidate, (b, c) => {
+            const vv = _fv.verifyFix(b, c, fn, analyzer, {});
+            return vv.accepted === true ? vv : null;
+        });
+        if (r) {
+            committed = r.code;
+            v = r.verdict;
+            salvaged = { keptHunks: r.kept, droppedHunks: r.dropped, batchReason };
+            // ما أُسقط يُسجَّل صراحةً: التقرير يقول ما لم يُطبَّق ولماذا
+            report.rejected.push({
+                file: fn, source,
+                reason: 'PARTIAL_SALVAGE — أُسقط ' + r.dropped + ' تغييرًا لم تُثبته البوابة (' +
+                        batchReason + ')، وطُبِّق ' + r.kept,
+            });
+        }
+    }
 
     if (!v.accepted) {
         report.rejected.push({ file: fn, source, reason: v.reason, syntaxStatus: v.syntaxStatus });
         return false;
     }
 
-    F[fn] = candidate;
-    R[fn] = { code: candidate, issues: v.afterIssues };
+    F[fn] = committed;
+    R[fn] = { code: committed, issues: v.afterIssues };
     report.accepted.push({
         file: fn, source,
         removedIssues: v.removedCount,
         claimedCount: claimedCount != null ? claimedCount : null,
         syntaxStatus: v.syntaxStatus,
-        reason: v.reason
+        reason: v.reason,
+        salvaged: salvaged || undefined
     });
     // العدّاد يزيد بما أزالته البوابة فعليًا، لا بما ادّعاه المحرك
     report.totalFixed += (v.removedCount || 0);

@@ -953,60 +953,41 @@ var RealityOrchestrator = (() => {
   // مُتحقَّقٌ منه بالتعريف لا بالاستنتاج.
   //
   // ولا يُستدعى إلا عند السقوط، فكلفتُه صفرٌ في الحالة الشائعة. وله حدّان
-  // معلنان: مصفوفةُ LCS محدودة بـ‎MAX_SALVAGE_CELLS‎، وعددُ الـhunks محدودٌ
-  // بـ‎MAX_SALVAGE_HUNKS‎ — فوقهما لا إنقاذ (نداءُ مُتحقِّقٍ لكل hunk، وقد
+  // معلنان في البوابة: مصفوفةُ LCS محدودة بـ‎SALVAGE_MAX_CELLS‎، وعددُ
+  // الـhunks بـ‎SALVAGE_MAX_HUNKS‎ — فوقهما لا إنقاذ (نداءُ مُتحقِّقٍ لكل hunk، وقد
   // قيس بـ‎538 ms‎ على ملفٍ من 1203 أسطر).
-  const MAX_SALVAGE_CELLS = 4000000;
-  const MAX_SALVAGE_HUNKS = 40;
-
-  // يُقسّم الفرق إلى مقاطع: 'same' سطرٌ مشترك، و'hunk' بديلان (from/to).
-  function _diffSegments(aLines, bLines) {
-    const n = aLines.length, m = bLines.length;
-    if (n * m > MAX_SALVAGE_CELLS) return null;
-
-    const dp = [];
-    for (let i = 0; i <= n; i++) dp.push(new Uint32Array(m + 1));
-    for (let i = n - 1; i >= 0; i--) {
-      for (let j = m - 1; j >= 0; j--) {
-        dp[i][j] = aLines[i] === bLines[j]
-          ? dp[i + 1][j + 1] + 1
-          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  // والتجزئةُ نفسها في البوابة: FixVerifier.salvageVerifiedSubset. كانت
+  // نسخةً هنا، ونسخةٌ ثانية كانت ستُكتب في fix_engine_pipeline — وهو بذاته
+  // سببُ تكرار المشكلة: يُصلَح مسارٌ ويبقى الآخر. فالمنطقُ واحد ومالكُه
+  // البوابة، وكلُّ مسارٍ يُمرّر مُتحقِّقَه.
+  // البوابة تُلتمَس بلا اعتمادٍ صارم: المُنسّق يعمل في المتصفح (global) وفي
+  // Node (require)، وفي سياقٍ قد لا تكون فيه محمَّلة — فيعود الإنقاذ null
+  // ويبقى السلوك كما كان، لا انكسارٌ ولا ادّعاءُ قدرة.
+  function _fixVerifierModule() {
+    try {
+      if (typeof FixVerifier !== 'undefined' && FixVerifier) return FixVerifier;
+    } catch (e) { /* غير معرَّف في هذا السياق */ }
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.FixVerifier) return globalThis.FixVerifier;
+      if (typeof globalThis !== 'undefined' && globalThis.window && globalThis.window.FixVerifier) {
+        return globalThis.window.FixVerifier;
       }
-    }
-
-    const segs = [];
-    let cur = null;
-    const flush = () => { if (cur) { segs.push(cur); cur = null; } };
-    const hunk = () => (cur || (cur = { kind: 'hunk', from: [], to: [] }));
-
-    let i = 0, j = 0;
-    while (i < n && j < m) {
-      if (aLines[i] === bLines[j]) {
-        flush();
-        segs.push({ kind: 'same', line: aLines[i] });
-        i++; j++;
-      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-        hunk().from.push(aLines[i]); i++;
-      } else {
-        hunk().to.push(bLines[j]); j++;
-      }
-    }
-    while (i < n) { hunk().from.push(aLines[i]); i++; }
-    while (j < m) { hunk().to.push(bLines[j]); j++; }
-    flush();
-    return segs;
+    } catch (e) { /* لا global */ }
+    try {
+      if (typeof require === 'function') return require('./fix_verifier.js');
+    } catch (e) { /* لا وحدة */ }
+    return null;
   }
 
-  function _renderSegments(segs, accepted) {
-    const out = [];
-    let h = -1;
-    for (const s of segs) {
-      if (s.kind === 'same') { out.push(s.line); continue; }
-      h++;
-      const take = accepted.has(h) ? s.to : s.from;
-      for (const l of take) out.push(l);
-    }
-    return out.join('\n');
+  function _salvageVerifiedSubset(base, candidate, fileName) {
+    const FV = _fixVerifierModule();
+    if (!FV || typeof FV.salvageVerifiedSubset !== 'function') return null;
+    const r = FV.salvageVerifiedSubset(base, candidate, (b, c) => {
+      const vr = runVerification(b, c, fileName);
+      return (vr.valid === true && vr.improved === true) ? vr : null;
+    });
+    if (!r) return null;
+    return { code: r.code, verifyResult: r.verdict, kept: r.kept, dropped: r.dropped };
   }
 
   // الإصلاحات المُعلَنة بعد الإنقاذ تُنقّى إلى ما طُبِّق فعلًا.
@@ -1027,28 +1008,6 @@ var RealityOrchestrator = (() => {
       if (!Number.isFinite(n) || n < 1 || n > fromLines.length) return false;
       return !toLines.has(fromLines[n - 1]);
     });
-  }
-
-  // يُرجع { code, verifyResult, kept, dropped } أو null إن لم يُثبَت شيء.
-  function _salvageVerifiedSubset(base, candidate, fileName) {
-    const segs = _diffSegments(String(base).split('\n'), String(candidate).split('\n'));
-    if (!segs) return null;
-    const total = segs.filter(s => s.kind === 'hunk').length;
-    if (total < 2 || total > MAX_SALVAGE_HUNKS) return null;   // hunk واحد: لا تجزئة
-
-    const accepted = new Set();
-    let bestCode = null, bestVr = null;
-    for (let h = 0; h < total; h++) {
-      accepted.add(h);
-      const cand = _renderSegments(segs, accepted);
-      if (cand === base) { accepted.delete(h); continue; }
-      const vr = runVerification(base, cand, fileName);
-      if (vr.valid === true && vr.improved === true) { bestCode = cand; bestVr = vr; }
-      else accepted.delete(h);
-    }
-    if (!bestCode) return null;
-    return { code: bestCode, verifyResult: bestVr,
-             kept: accepted.size, dropped: total - accepted.size };
   }
 
   function runFallbackChain(code, issues, fileName) {

@@ -488,7 +488,18 @@ var LearningEngine = (() => {
     const hunk = blocks.find(b => b.removed.some(r => r.idx === ln));
     if (!hunk || !hunk.added.length) return null;
 
-    const t = (issue.type || issue.cAct || '').toLowerCase();
+    // تصنيفُ البلاغ موزَّعٌ على حقولٍ عدّة، فيُقرأ من **مجموعها** لا من أوّل
+    // حقلٍ غير فارغ. و‎(type || cAct)‎ كان يُسقط سطحًا كاملًا من التعلّم:
+    // بلاغُ التراكم ‎type="bug"‎ واسمُه ‎strategy="ACCUMULATION"‎، و‎type‎ غيرُ
+    // فارغ فلا يُقرأ ما بعده ⇒ ‎t="bug"‎ ⇒ لا مفتاحَ في TYPE_FIXES يطابقه ⇒
+    // ‎knownType=false‎ ⇒ ‎null‎. أي أن زوجَ ‎= → +=‎ الصحيح كان لا يصل التعلّم
+    // إطلاقًا، لا لعطبٍ في التعلّم بل لحقلٍ لم يُقرأ. ونفسُ العِلّة تُسكِت أيَّ
+    // بلاغٍ يحمل كلمةً عامّة في ‎type‎ وتصنيفَه الحقيقي في غيره.
+    //
+    // ولا يُوسّع ذلك القبول: المفتاحُ المطابق يُلزِم سطرَ الإصلاح بشكلِ صنفه
+    // (TYPE_FIXES أدناه)، والمجهولُ يُرفض كما كان — fail-closed قائم.
+    const t = [issue.type, issue.cAct, issue.strategy]
+      .map(v => String(v == null ? '' : v)).join(' ').toLowerCase();
 
     // TYPE_FIXES — ربط نوع الثغرة بـ regex الإصلاح
     const TYPE_FIXES = {

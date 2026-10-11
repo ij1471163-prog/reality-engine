@@ -28,18 +28,23 @@ const GEN_PATH     = path.join(FIXTURE_DIR, 'gen_python_syntax_cases.py');
 const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'));
 const CASES = fixture.cases;
 
-// الفجوات المقيسة في الفاحص: حالة الاقتباس **المفرد** لا تُحمَل بين الأسطر.
-// ثلاث منها f-string ممتدة (3.12+)، والرابعة نص عادي مستمر بـbackslash داخل
-// النص — وهي صحيحة في كل الإصدارات وأكثر شيوعاً. حمل الاقتباس المفرد بلا
-// تفريق يُفقد كشف "err unterminated string" و"err plain string spans"، وهما
-// خطأان حقيقيان مكشوفان الآن. فالتفريق يحتاج وعياً بـf-string وبالهروب في
-// آخر السطر. غير معالَجة في هذه الجولة بقرار صريح، ولا يُدّعى غير ذلك.
-const KNOWN_FALSE_POSITIVES = new Set([
-  'fstring spans braces',
-  'fstring spans single quote',
-  'fstring spans with expr',
-  'plain string backslash join',
-]);
+// لا فجوةَ مُعلَنة: الفاحص يطابق CPython على الكوربوس كلّه.
+//
+// وكانت أربعٌ مُعلَنة — حالةُ الاقتباس **المفرد** لا تُحمَل بين الأسطر: ثلاثُ
+// f-string ممتدّة (PEP 701، بايثون 3.12+) ونصٌّ عادي مستمرٌّ بـ‎\‎ داخله
+// (صحيحٌ في كل الإصدارات وأكثرُ شيوعًا). والعائق المُعلَن كان أن حملَ
+// الاقتباس المفرد **بلا تفريق** يُفقِد كشفَ ‎err unterminated string‎ و
+// ‎err plain string spans‎، وهما خطآن حقيقيان.
+//
+// وقد حُلّ بالتفريق لا بالحمل المُطلَق ([PY-QUOTE-CARRY] في fix_verifier.js):
+// يُحمَل الاقتباسُ حين تُجيز بايثون استمرارَه وحدها — ‎\‎ في آخر السطر (من
+// حالة ‎escaped‎ في الماسح، فـ‎"abc\\"‎ مُغلَق لا مستمر)، أو حقلُ استبدالِ
+// f-string مفتوح (بعمقٍ محفوظ). وما خرج عن ذلك بقي خطأً: الخطآن أعلاه
+// مكشوفان، وهما في الكوربوس يمرّان.
+//
+// وهذه المجموعة تبقى **فارغة** لا تُحذَف: اختبارُ الحصر أدناه يُفشِل أيَّ
+// إيجابيةٍ كاذبة جديدة بدل أن تمرّ صامتةً.
+const KNOWN_FALSE_POSITIVES = new Set([]);
 
 function loadCtx() {
   const noop = () => {};
@@ -84,7 +89,13 @@ test('fixture: ما زال مطابقاً لحكم CPython الحالي', () => 
     // python3 غير متاح هنا ⇒ يُتخطّى هذا التأكيد وحده، ويبقى الباقي عاملاً
     return;
   }
-  const fresh = JSON.parse(regenerated).cases;
+  const freshOut = JSON.parse(regenerated);
+  const fresh = freshOut.cases;
+  // الإصداران في نصّ الحكم: بعضُ الحالات تحتاج 3.12+ (PEP 701)، فلو كان
+  // مُفسِّرُ هذه البيئة أقدمَ من مُولِّد الـfixture فالخللُ اختلافُ إصدارٍ لا
+  // تقادمُ fixture — ولا يُترك ذلك ليُستنتَج.
+  const vs = 'مُولِّد الـfixture: CPython ' + fixture._python +
+             ' · هذه البيئة: CPython ' + freshOut._python;
   const drift = [];
   for (const [label, c] of Object.entries(CASES)) {
     if (!(label in fresh)) { drift.push(`${label}: اختفى من المولّد`); continue; }
@@ -96,7 +107,9 @@ test('fixture: ما زال مطابقاً لحكم CPython الحالي', () => 
     if (!(label in CASES)) drift.push(`${label}: جديد في المولّد وغير مثبَّت`);
   }
   assert.deepStrictEqual(drift, [],
-    'الـfixture تقادم — أعد توليده: python3 -I vercel-api/test/fixtures/gen_python_syntax_cases.py > vercel-api/test/fixtures/python_syntax_cases.json');
+    vs + ' — إن تساوى الإصداران فالـfixture تقادم، فأعد توليده:' +
+    ' python3 -I vercel-api/test/fixtures/gen_python_syntax_cases.py >' +
+    ' vercel-api/test/fixtures/python_syntax_cases.json');
 });
 
 // ═══ 1. كل حالة على حدة، بحكم CPython ══════════════════
