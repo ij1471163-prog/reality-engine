@@ -690,33 +690,79 @@ test('[E2E-12] بلا بيئة Node ⇒ available:false بصراحة، لا قد
 // 13. كاشف انحراف بيان الصفحة — على الشجرة الحقيقية، لا محقونًا
 // ═══════════════════════════════════════════════════════════════════════
 
-test('[E2E-13] الكاشف يجد خللًا حقيقيًا اليوم: سكربتان معلنان وغير موجودين', () => {
+// ─── كاشف انحراف البيان ────────────────────────────────────────────────
+//
+// كان [E2E-13] يستند إلى خللٍ حقيقي قائم في الشجرة: وسمان يُعلنان
+// sleep_manager.js وengine_ast.js وهما غير موجودين. وقد أُصلح الخلل:
+//   engine_ast.js حلّ محلّه ast-engine.js (نفس الدوال الأربع، ويُحمَّل
+//     قبله) فإعادته تطمس الأحدث؛ وsleep_manager.js لم يوجد في التاريخ
+//     أصلًا ولا رمزٌ يطلبه. فالصحيح في الحالتين حذفُ الوسم، لا إنشاء ملف.
+// وتفصيلُ ذلك وحرسُه في test/script_manifest_integrity.test.js.
+//
+// فالقدرة تُقاس الآن على **بيانٍ محقون** لا على عطبٍ في المُسلَّم: مرآةٌ
+// بروابط رمزية لكل ملفات public، وindex.html مُعدَّل يُعلن سكربتًا غائبًا.
+// وبهذا تبقى البطارية على المحركات الحقيقية ويصير الخلل مصنوعًا ومعروفًا.
+// ويُحرَس الاتجاهان: الشجرة الحقيقية نظيفة، والبيان المعطوب يُكتشف.
+
+let _mirror = null;
+function manifestMirror(extraTag) {
+  if (_mirror) return _mirror;
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'esd-manifest-'));
+  for (const f of fs.readdirSync(PUBLIC_DIR)) {
+    if (f === 'index.html') continue;
+    try { fs.symlinkSync(path.join(PUBLIC_DIR, f), path.join(dir, f)); } catch (_) {}
+  }
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  const tag = extraTag || '<script src="/__never_shipped__.js"></script>';
+  // يُدسّ بعد أول وسم سكربت، فيصير له رقم سطرٍ حقيقي في الوسط لا في الذيل
+  const at = html.indexOf('\n', html.indexOf('<script src="/'));
+  fs.writeFileSync(path.join(dir, 'index.html'), html.slice(0, at + 1) + tag + '\n' + html.slice(at + 1));
+  _mirror = dir;
+  return dir;
+}
+
+test('[E2E-13] الشجرة الحقيقية نظيفة: كل سكربت معلن موجود على القرص', () => {
   const r = ESD.detectManifestDrift({ publicDir: PUBLIC_DIR });
   assert.strictEqual(r.available, true);
   assert.ok(r.declared >= 60, 'عدد السكربتات المعلنة: ' + r.declared);
 
-  // نحسب الحقيقة من الملف مباشرة، فلا يصير الاختبار مرآةً للكاشف
+  // الحقيقة تُحسب من الملف مباشرة، فلا يصير الاختبار مرآةً للكاشف
   const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
   const declared = [...html.matchAll(/<script\s+src="\/([^"]+\.js)"/g)].map(m => m[1]);
   const trulyMissing = declared.filter(f => !fs.existsSync(path.join(PUBLIC_DIR, f)));
 
   assert.strictEqual(r.declared, declared.length, 'عدّ المعلن يطابق الملف');
-  assert.deepStrictEqual(
-    r.incidents.map(i => i.module).sort(),
-    trulyMissing.slice().sort(),
-    'الغائب المُبلَّغ يجب أن يطابق الغائب الفعلي على القرص');
-  assert.ok(trulyMissing.length >= 1,
-    'إن صار العدد صفرًا فقد أُصلح الخلل — حدّث هذا الاختبار بوعي، لا بحذفه');
+  assert.deepStrictEqual(trulyMissing, [], 'سكربتات معلنة وغائبة: ' + JSON.stringify(trulyMissing));
+  assert.deepStrictEqual(r.incidents, [], 'حوادث بيان على شجرة نظيفة: ' + JSON.stringify(r.incidents));
+});
 
-  for (const inc of r.incidents) {
-    assert.strictEqual(inc.kind, 'MANIFEST_MISSING_SCRIPT');
-    assert.match(inc.evidence.actual, /index\.html:\d+/, 'الدليل يحدد رقم السطر: ' + inc.evidence.actual);
-    assert.match(inc.evidence.actual, /صامت/, 'الدليل يذكر طبيعة الفشل');
-  }
+test('[E2E-13a] والكاشف يجد السكربت الغائب في بيانٍ محقون، بدليله ورقم سطره', () => {
+  const dir = manifestMirror();
+  const r = ESD.detectManifestDrift({ publicDir: dir });
+  assert.strictEqual(r.available, true);
+
+  // العزل: المرآة تحمل سكربتًا واحدًا غائبًا بالضبط، والبقية موجودة
+  const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+  const declared = [...html.matchAll(/<script\s+src="\/([^"]+\.js)"/g)].map(m => m[1]);
+  const trulyMissing = declared.filter(f => !fs.existsSync(path.join(dir, f)));
+  assert.deepStrictEqual(trulyMissing, ['__never_shipped__.js'],
+    'المرآة ليست كما قُصدت: ' + JSON.stringify(trulyMissing));
+
+  assert.deepStrictEqual(r.incidents.map(i => i.module), ['__never_shipped__.js']);
+  const inc = r.incidents[0];
+  assert.strictEqual(inc.kind, 'MANIFEST_MISSING_SCRIPT');
+  assert.match(inc.evidence.actual, /index\.html:\d+/, 'الدليل يحدد رقم السطر: ' + inc.evidence.actual);
+  assert.match(inc.evidence.actual, /صامت/, 'الدليل يذكر طبيعة الفشل');
+  // ورقم السطر هو موضعُ الوسم فعلًا لا رقمًا ثابتًا
+  const want = html.replace(/\r\n?/g, '\n').split('\n')
+    .findIndex(l => /<script\s+src="\/__never_shipped__\.js"/.test(l)) + 1;
+  assert.match(inc.evidence.actual, new RegExp('index\\.html:' + want + '\\b'),
+    'رقم السطر المُبلَّغ ليس موضع الوسم (' + want + '): ' + inc.evidence.actual);
 });
 
 test('[E2E-13b] خلل البيان: اكتشافٌ فقط — يُسجَّل SKIPPED ولا يُقترح له إصلاح', () => {
-  const opts = { publicDir: PUBLIC_DIR };   // البيان مُفحوص افتراضًا
+  const opts = { publicDir: manifestMirror() };   // البيان مُفحوص افتراضًا
   const found = ESD.detect(opts);
   const man = found.incidents.filter(i => i.kind === 'MANIFEST_MISSING_SCRIPT');
   assert.ok(man.length >= 1, 'الكاشف مُفعَّل افتراضًا');
@@ -747,7 +793,7 @@ test('[E2E-13d] حادثة بلا patch لا تُعتمد — ولا يُناد�
   // PENDING_REVIEW وpatchedCode غير موجود. فكان approve(id, undefined, cb)
   // يعبر فحص التطابق — الطرفان undefined — ويُنادي cb(undefined) ويصير
   // APPROVED. ولو كان cb يكتب على القرص لكتب undefined مكان الملف.
-  const opts = { publicDir: PUBLIC_DIR };
+  const opts = { publicDir: manifestMirror() };
   const out = ESD.runCycle(opts);
   const skipped = out.cycles.filter(c => c.result === SH.HealingResult.SKIPPED);
   assert.ok(skipped.length >= 1, 'لا حادثة SKIPPED لاختبارها');
@@ -775,8 +821,12 @@ test('[E2E-13e] الحماية لا تمنع اعتماد patch صحيح — fai
 });
 
 test('[E2E-13c] manifest:false يُقصي الكاشف فقط ولا يمسّ البطارية', () => {
-  const withM    = ESD.detect({ publicDir: PUBLIC_DIR });
-  const withoutM = ESD.detect({ publicDir: PUBLIC_DIR, manifest: false });
+  // على البيان المحقون لا على الشجرة النظيفة: لو قيس على النظيفة لكان
+  // ‎missing=0‎ والفرق صفرًا، فيمرّ التأكيد بلا أن يقيس إقصاءً.
+  const dir = manifestMirror();
+  const withM    = ESD.detect({ publicDir: dir });
+  const withoutM = ESD.detect({ publicDir: dir, manifest: false });
+  assert.ok(withM.manifest.missing >= 1, 'العزل: لا خلل بيان ⇒ لا شيء يُقصى');
   assert.strictEqual(withoutM.incidents.filter(i => i.kind === 'MANIFEST_MISSING_SCRIPT').length, 0);
   assert.strictEqual(withoutM.manifest.checked, false);
   assert.deepStrictEqual(withM.battery, withoutM.battery, 'البطارية نفسها في الحالين');

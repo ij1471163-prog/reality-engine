@@ -1776,10 +1776,34 @@ function repairCode(code, issues, fileName) {
   }
 
   // Ghost Mode
+  //
+  // [GHOST-PRUNE] رفضُ Ghost يُرجع الكود الأصلي حرفًا، فالإصلاحات المتراكمة
+  // في repairs لم تُطبَّق. وكانت repairs وsummary.fixed تبقى كما هي، فيُبلّغ
+  // التقرير عن إصلاحاتٍ على ملفٍ لم يتغيّر، وrejected خالٍ. والمقيس على ملف
+  // حقيقي من المستودع، public/jszip.min.js (يرفضه حارس الحِزَم المُصغَّرة):
+  //     repaired === original  ·  repairs 1  ·  summary.fixed 1  ·  score 33
+  //     ·  rejected 0
+  // أي تقريرٌ يدّعي إصلاحًا لم يحدث، ولا يسجّل سببَ عدم حدوثه. فالتهذيب هنا:
+  // ما لم يُطبَّق يُنقَل إلى rejected بسببه، وsummary يُحتسب بعده فيصدُق.
   if (typeof GhostMode !== 'undefined') {
     try {
       const ghost = GhostMode.fix(code, repairedCode, fileName,
         typeof analyzeCode !== 'undefined' ? analyzeCode : null);
+
+      if (repairedCode !== code && ghost.code === code) {
+        const why = [
+          ghost.reason,
+          ...(ghost.rejectedCandidates || []).map(r => r.reason),
+        ].filter(Boolean).map(String).join(' · ') || 'GHOST_REJECTED';
+        for (const r of repairs) {
+          rejected.push({
+            line: r.line, strategy: r.strategy, source: 'GhostMode',
+            reason: 'GHOST_DISCARDED_BATCH — ' + why,
+          });
+        }
+        repairs.length = 0;      // نفس المرجع المُعاد أدناه
+      }
+
       if (ghost.code !== repairedCode) repairedCode = ghost.code;
     } catch(e) {}
   }

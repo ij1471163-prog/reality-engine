@@ -154,17 +154,23 @@ test('البوابة: مرشّح PHP يُخفي إشارة SQL بلا إثبات
     'رُفض لسبب آخر؛ المطلوب أن يمسكه حارس المعاملات تحديدًا: ' + v.reason);
 });
 
-test('موثَّق: إصلاح PHP SQL صحيح (PDO) يبقى مرفوضًا — لا مُثبِت معاملات لـphp', () => {
-  // حدٌّ معلن لا عيب: sqlCandidateLooksParameterized فيه فروع js/ts وpy وcs
-  // ولا فرع لـphp، فيُرجع false ⇒ أي اختفاء لإشارة SQL في php يُرفض. وهذا
-  // Fail-Closed سليم: المنع أأمن من قبول ما لا نستطيع إثباته. ومعناه أن فتح
-  // الفاحص النحوي **لم** يفتح إصلاحات SQL لـphp — فتح غيرها فقط (XSS مقيس).
-  // إضافة فرع php (prepare/execute/bind_param) خطوة مستقلة تمسّ تحقّق SQL،
-  // فلا تُدرَج هنا. وهذا الاختبار يُسقط أي تغيير صامت في ذلك.
+test('البوابة: إصلاح PHP SQL صحيح (PDO) يُقبل — فرع php مُضاف ومُثبِت', () => {
+  // كان حدًّا معلنًا: sqlCandidateLooksParameterized فيه فروع js/ts وpy وcs
+  // ولا فرع لـphp، فيُرجع false ⇒ أي اختفاء لإشارة SQL في php يُرفض. وذلك
+  // Fail-Closed سليم لكنه كان يوقف المسار كلّه: لا إصلاح SQL لـphp يُقبل أبدًا.
+  // صار للفرع إثباتٌ ثلاثي الشروط (prepare + موضع معامِل + ربطُ قيم)، وتفصيلُ
+  // الدورة كاملة في test/php_sql_repair_e2e.test.js.
   const pdo = '<?php\n$id = $_GET["id"];\n$stmt = $pdo->prepare("SELECT * FROM users WHERE id=?");\n$stmt->execute([$id]);\n';
   const v = verify(PHP_SQL, pdo, 'page.php');
-  assert.strictEqual(v.accepted, false,
-    'تغيّر السلوك: صار يَقبل إصلاح SQL لـphp — راجع هذا التوثيق وأضف اختبارات إثبات');
+  assert.strictEqual(v.accepted, true, 'رُفض إصلاح PHP SQL صحيح: ' + v.reason);
+});
+
+test('البوابة: وفرعُ php لا يقبل prepare بلا ربطِ قيم', () => {
+  // الحارس المقابل للاختبار أعلاه: بلا هذا يكون فتحُ php قابلًا للإرضاء
+  // بمجرّد ظهور كلمة prepare في الناتج.
+  const noBind = '<?php\n$id = $_GET["id"];\n$stmt = $pdo->prepare("SELECT * FROM users WHERE id=?");\n';
+  const v = verify(PHP_SQL, noBind, 'page.php');
+  assert.strictEqual(v.accepted, false, 'قُبل prepare بلا تنفيذ ولا ربط: ' + v.reason);
   assert.match(String(v.reason), /REJECTED_SQL_NOT_PARAMETERIZED/, 'سبب الرفض: ' + v.reason);
 });
 

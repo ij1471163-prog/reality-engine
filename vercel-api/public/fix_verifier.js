@@ -1037,6 +1037,20 @@ var FixVerifier = (() => {
     return added;
   }
 
+  // هل في الكود نصُّ استعلامٍ أصلًا؟ — شرطُ وجود الدعوى لحارس SQL.
+  //
+  // [FIX] security_scanner يُبلّغ «🔴 SQL Injection محتمل» على
+  // ‎exec("ls " + req.query.dir)‎ — تسلسلُ نصٍّ داخل استدعاء، بلا أي استعلام.
+  // وإصلاحُ حقن الأوامر الصحيح ‎execFile("ls", [req.query.dir])‎ يُسقط ذلك
+  // البلاغ، فكان حارس SQL يطالبه بإثبات parameterization لاستعلامٍ لا وجود
+  // له — مطلبٌ لا يُوفى، فيُرفض إصلاحٌ سليم (مقيس، لا مُفترَض).
+  //
+  // فالفحص على الكود كله لا على السطر، وبهذا يبقى الحارس فاعلًا متى وُجد أيُّ
+  // نصِّ استعلام في الملف — تضييقٌ للـNA لا توسيع، فالخطأ يميل إلى الحراسة.
+  const SQL_SINK_RX =
+    /\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b[\s\S]{0,400}?\b(?:FROM|INTO|SET|WHERE|VALUES|TABLE)\b/i;
+  const sqlSinkPresent = code => SQL_SINK_RX.test(String(code));
+
   // SQL candidate guard — لا يكفي اختفاء SQL Injection من الـAnalyzer.
   // يجب أن يثبت الـcandidate وجود parameterization مناسب للغة.
   function sqlCandidateLooksParameterized(beforeCode, afterCode, fileName) {
@@ -1071,6 +1085,50 @@ var FixVerifier = (() => {
         /(?:CommandText|query|command)\s*=/.test(afterCode) &&
         !/['"`][^'"`]*@param[^'"`]*['"`]\s*\+/.test(afterCode)
       );
+    }
+
+    // [PHP-SQL] PHP لم يكن له فرعٌ هنا إطلاقًا، فكان يسقط إلى `return false`:
+    // أيُّ إصلاح SQL في PHP — صحيحًا كان أو لا — يُرفض بـ
+    // REJECTED_SQL_NOT_PARAMETERIZED. وذلك سببُ توقّف المسار (مقيس:
+    // RepairSQL يُنتج مُرشَّحًا بـcount=1 ثم تردّه البوابة).
+    //
+    // والإثبات بثلاثة شروط مجتمعة، على غرار بقية اللغات:
+    //   1. عبارةٌ محضَّرة: ‎->prepare(‎ (PDO وmysqli و$wpdb سواء)
+    //   2. موضعُ معامِلٍ في النص: ‎?‎ أو ‎:name‎ أو ‎%s/%d‎ (صيغة $wpdb)
+    //   3. ربطُ قيمٍ فعلي: ‎execute([…])‎ أو ‎bind_param‎ أو ‎bindValue/bindParam‎
+    //      أو وسيطٌ ثانٍ لـ‎$wpdb->prepare‎
+    // فمجرّد ظهور ‎prepare‎ لا يكفي، ولا موضعُ معامِلٍ بلا ربط.
+    //
+    // الحدّ المُعلَن: البوابة تُثبت **الربط**، لا سلامة تدفّق البرنامج. لا
+    // محلّل وصول لـPHP هنا (نظير pyReachabilityVerdict مقصورٌ على بايثون)،
+    // فناتجٌ صحيحُ النحو يضع prepare في موضع تعبير يبقى خارج إدراكها — ولذلك
+    // عولج ذلك الشكل عند مصدره في repair_sql.js ‎[PHP-PREFIX]‎ لا هنا.
+    if (ext === 'php') {
+      if (!/->\s*prepare\s*\(/.test(afterCode)) return false;
+
+      // موضعُ المعامِل يُطلب داخل **نصوص الاستعلام** لا في الملف كله:
+      // ‎<?php‎ نفسه يحمل ‎?‎، فأي فحصٍ على الملف كله صحيحٌ دائمًا في PHP —
+      // فحصٌ خامل لا حارس. وكشفه سحبُ التحوّرات (P3 نجا): المُرشَّح
+      //     $stmt = $pdo->prepare("SELECT * FROM t WHERE n = 'fixed'");
+      //     $stmt->execute([$name]);
+      // كان يُقبل، وهو يربط قيمة باستعلامٍ بلا معامِل والنصُّ مُثبَّت.
+      //
+      // والبحث في كل نصٍّ يحمل فعلَ استعلام، لا في وسيط prepare وحده: الشكل
+      // ‎$sql = "… ?"; $pdo->prepare($sql)‎ صحيحٌ شائع، وحصرُ الفحص بالوسيط
+      // كان يرفضه.
+      // ولا نصَّ استعلام ⇒ ‎some‎ على قائمةٍ خالية = false، فلا معامِل ولا قبول.
+      const sqlLiterals = [...String(afterCode).matchAll(/(["'])((?:\\.|(?!\1)[^\\])*)\1/g)]
+        .map(m => m[2])
+        .filter(q => /\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b/i.test(q));
+      const placeholder = sqlLiterals.some(q =>
+        /\?/.test(q) || /:\w+/.test(q) || /%[sdf]\b/.test(q));
+
+      const bound =
+        /->\s*execute\s*\(\s*(?:\[|array\s*\()/.test(afterCode) ||
+        /->\s*bind_param\s*\(/.test(afterCode) ||
+        /->\s*bind(?:Value|Param)\s*\(/.test(afterCode) ||
+        /\$wpdb\s*->\s*prepare\s*\([^)]*,/.test(afterCode);
+      return placeholder && bound;
     }
 
     return false;
@@ -1140,7 +1198,7 @@ var FixVerifier = (() => {
   // وإضافة صنف جديد تعني إضافة سطرٍ إلى السجل لا حارسًا جديدًا.
 
   const SECRET_ISSUE_RX =
-    /hardcoded[_ -]?(?:secret|pass|password|key)|hardcoded[_ -]?api[_ -]?key|cwe-798|cwe-259|\bsecret\b|مُضمَّن في الكود|مُضمَّنة في الكود|مكشوفة في الكود/i;
+    /hardcoded[_ -]?(?:secret|pass|password|key)|hardcoded[_ -]?api[_ -]?key|cwe-798(?!\d)|cwe-259(?!\d)|\bsecret\b|مُضمَّن في الكود|مُضمَّنة في الكود|مكشوفة في الكود/i;
 
   // مصادر القيم السرّية المقبولة كإثبات
   const ENV_SOURCE_RX =
@@ -1199,6 +1257,105 @@ var FixVerifier = (() => {
       return SECRET_ISSUE_RX.test(text);
     });
   }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // [SINK-PROOF] إثبات عام لأصناف «مَصرِف غير آمن»
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // الأصناف XSS وCMD_INJECTION وWEAK_CRYPTO وEVAL_USAGE تشترك في شكل واحد:
+  // بلاغُها يأتي من **مَصرِفٍ** غير آمن في سطر، وإصلاحُها الصحيح يُدخل
+  // **علاجًا** معروفًا في موضعه. والمقيس قبل هذا الحارس أن كل محوٍ شكلي فيها
+  // كان يُقبل:
+  //   el.innerHTML = u.bio            ⇒ حذف السطر               → قُبل
+  //   el.innerHTML = u.bio            ⇒ ‎el["inner"+"HTML"]‎      → قُبل
+  //   exec("ls " + c)                 ⇒ حذف الاستدعاء           → قُبل
+  //   createHash("md5")               ⇒ حذف الاستدعاء           → قُبل
+  //   eval(s)                         ⇒ ‎window["ev"+"al"](s)‎    → قُبل
+  //
+  // فالإثبات واحد لها جميعًا: كل سطرِ مَصرِفٍ اختفى يلزمه سطرٌ جديد فيه علاج،
+  // وعددُ العلاجات لا يقلّ عن عدد المصارف التي اختفت — فإزالة ثلاثة مصارف
+  // بعلاجٍ واحد ليست إصلاحًا. وحذفُ السطر لا يُنتج علاجًا فيُرفض.
+  //
+  // وهو مُولِّدٌ واحد تُغذّيه بيانات: إضافة صنف = سطرُ بيانات، لا حارس جديد.
+  //
+  // ─── والحكم ثلاثيٌّ لا ثنائي، وهذا مقيس لا مُفترَض ───────────────────
+  // ثنائيّةُ «أُثبت / لم يُثبت» كانت تخلط حالتين مختلفتين جوهريًّا، فترفض
+  // إصلاحات صحيحة. فالصنف قد يفقد بلاغًا **ولا مَصرِف له في الكود أصلًا**:
+  //   knowledge_base.js يُدرج ‎/eval\s*\(\s*\w+/‎ ضمن أنماط XSS. فالسطر
+  //   ‎r = eval(x);‎ يُنتج بلاغين: eval (صنف evalx) وXSS (صنف xss). وإصلاحه
+  //   الصحيح ‎r = JSON.parse(x);‎ يُسقط البلاغين معًا — فيُطالَب صنف xss بعلاج
+  //   XSS في موضع مَصرِفٍ لم يوجد، وهو مطلبٌ لا يمكن الوفاء به بحالٍ، فيُرفض
+  //   إصلاحٌ سليم. وكذلك ‎conn.exec("SELECT …")‎: security_scanner يراه
+  //   Command Injection بـ‎\bexec\s*\(‎ (و‎\b‎ تمرّ بعد النقطة)، وإصلاح SQL
+  //   الصحيح يُسقط ذلك البلاغ، فيُطالَب صنف cmd بعلاج أوامرَ لا محلّ له.
+  //
+  // فالتمييز: هل كان للصنف مَصرِفٌ في before؟
+  //   • لا مَصرِف إطلاقًا  ⇒ الصنف لم يدّعِ شيئًا، ولا إثبات يُطلَب (PROOF.NA).
+  //     وحمايةُ المَصرِف تأتي من الصنف **المالك** له: حذفُ ‎r = eval(x);‎ شكليًّا
+  //     يرفضه evalx لأن مَصرِفه هو، لا xss.
+  //   • مَصرِفٌ موجود وبقي كما هو والبلاغ اختفى ⇒ محوٌ شكلي، يُرفض.
+  //   • مَصرِفٌ اختفى ⇒ يلزمه علاجٌ بعدده، وإلا يُرفض.
+  //
+  // والحدّ المُعلَن: مدى الحماية = تغطية sinkRx. مَصرِفٌ بشكلٍ لا يعرفه أي صنف
+  // يُعَدّ «لا مَصرِف» فيمرّ محوُه الشكلي عبر هذا الحارس (ويبقى عليه
+  // requireImprovement وحده). وهذا أسلم من الثنائية التي كانت ترفض الصحيح:
+  // ثقبُ تغطيةٍ مُعلَن، لا رفضٌ عامّ لإصلاحات سليمة.
+  const PROOF = { NA: 'NA', PROVEN: 'PROVEN', UNPROVEN: 'UNPROVEN' };
+
+  function sinkFixProven(beforeCode, afterCode, sinkRx, remedyRx) {
+    const B = String(beforeCode).split('\n');
+    const A = String(afterCode).split('\n');
+    const aSet = new Set(A.map(l => l.trim()));
+    const bSet = new Set(B.map(l => l.trim()));
+
+    const sinksBefore = B.filter(l => sinkRx.test(l));
+    if (!sinksBefore.length) return PROOF.NA;   // لا مَصرِف لهذا الصنف ⇒ لا دعوى
+
+    const gone = sinksBefore.filter(l => !aSet.has(l.trim()));
+    if (!gone.length) return PROOF.UNPROVEN;    // المَصرِف باقٍ والبلاغ اختفى ⇒ محوٌ شكلي
+
+    const remedies = A.filter(l => !bSet.has(l.trim()) && remedyRx.test(l)).length;
+    return remedies >= gone.length ? PROOF.PROVEN : PROOF.UNPROVEN;
+  }
+
+  // المصارف والعلاجات — قيست على مُدخلات حقيقية لكل صنف
+  const SINK_CLASSES = {
+    xss: {
+      issue: /\bxss\b|cwe-79(?!\d)|innerhtml|document\.write/i,
+      sink: /innerHTML|outerHTML|document\.write\s*\(|\.html\s*\(|insertAdjacentHTML|echo\s+\$_(GET|POST|REQUEST)|<\?=/i,
+      remedy: /\btextContent\b|\binnerText\b|htmlspecialchars\s*\(|htmlentities\s*\(|escapeHtml\s*\(|DOMPurify\s*\.\s*sanitize|\bsanitize\s*\(|createTextNode\s*\(|setAttribute\s*\(|encodeURIComponent\s*\(/i,
+      reason: "REJECTED_XSS_FIX_UNPROVEN — نقص بلاغ XSS لكن الـcandidate لا يُدخل تهريبًا ولا مَصرِفًا آمنًا في موضع المصرف الذي اختفى",
+    },
+    cmd: {
+      // ‎\bcmd[_ ]?injection\b‎ يلتقط وسمَ محرّكات التتبّع نفسها
+      // (‎taint | CMD_INJECTION: d من req input → exec‎) — وهو أقوى إشارة في
+      // الصنف، وكانت خارج العدّ: فنقصُها وحده كان يمرّ بلا إثبات.
+      issue: /command injection|\bcmd[_ ]?injection\b|cwe-78(?!\d)|shell_exec|os\.popen|shell\s*=\s*true|runtime\.exec|os command/i,
+      // ‎exec(‎ بلا مُستقبِل فقط: ‎conn.exec("SELECT …")‎ و‎db.exec(‎ نداءات قاعدة
+      // بيانات لا شِل. بلا هذا الاستثناء يُعَدّ سطرُ استعلامٍ مَصرِفَ أوامر،
+      // فيُرفض إصلاح SQL سليم — أسقط ذلك اختبارًا قائمًا قبل الاستثناء.
+      sink: /(?<![.\w$])exec(?:Sync)?\s*\(|(?:child_process|cp)\s*\.\s*exec(?:Sync)?\s*\(|\bshell_exec\s*\(|\bpassthru\s*\(|(?<![.\w$])system\s*\(|os\s*\.\s*popen\s*\(|os\s*\.\s*system\s*\(|shell\s*=\s*True|Runtime\s*\.\s*getRuntime\s*\(\s*\)\s*\.\s*exec|\bcommands\s*\.\s*getoutput\s*\(/i,
+      // العلاجات المقبولة — مقيسة على ما يُنتجه repair_engine فعلًا:
+      //   js : ‎const safeArgs = "ls " + d.replace(/[^a-zA-Z0-9 ]/g, '')‎ ثم exec
+      //   py : ‎subprocess.run(shlex.split("ls " + x), check=True, …)‎
+      // والحارس يُثبت أن علاجًا **أُدخِل**، لا أن قائمة السماح كافية — كفايتُها
+      // عقدُ fixCmdInjection في repair_engine لا عقدُ البوابة. وهذا حدٌّ معلن.
+      remedy: /\bexecFile(?:Sync)?\s*\(|\bspawn(?:Sync)?\s*\(|shell\s*:\s*false|shlex\s*\.\s*(?:quote|split)\s*\(|subprocess\.(?:run|Popen|check_output|check_call)\s*\(\s*\[|escapeshellarg\s*\(|escapeshellcmd\s*\(|new\s+ProcessBuilder\s*\(|\.replace\s*\(\s*\/\[\^[^\]/]*\]\s*\/[a-z]*\s*,/i,
+      reason: "REJECTED_CMD_FIX_UNPROVEN — نقص بلاغ Command Injection لكن الـcandidate لا يُدخل تنفيذًا بوسائط مفصولة ولا تهريبًا ولا قائمة سماح",
+    },
+    crypto: {
+      issue: /\bmd5\b|\bsha1\b|sha-1|cwe-327(?!\d)|تشفير ضعيف|weak.?(?:crypto|hash)/i,
+      sink: /createHash\s*\(\s*['"](?:md5|sha1)['"]|\bmd5\s*\(|hashlib\s*\.\s*(?:md5|sha1)\s*\(|MessageDigest\s*\.\s*getInstance\s*\(\s*"(?:MD5|SHA-?1)"|\bsha1\s*\(/i,
+      remedy: /sha(?:256|384|512)|sha-(?:256|384|512)|\bbcrypt\b|\bscrypt\b|\bargon2\b|pbkdf2/i,
+      reason: "REJECTED_CRYPTO_FIX_UNPROVEN — نقص بلاغ التشفير الضعيف لكن الـcandidate لا يُدخل خوارزمية أقوى ولا دالة اشتقاق مفتاح",
+    },
+    evalx: {
+      issue: /\beval\b|code injection|cwe-94(?!\d)/i,
+      sink: /\beval\s*\(|\bnew\s+Function\s*\(/i,
+      remedy: /JSON\s*\.\s*parse\s*\(|json\s*\.\s*loads\s*\(|ast\s*\.\s*literal_eval\s*\(/i,
+      reason: "REJECTED_EVAL_FIX_UNPROVEN — نقص بلاغ eval لكن الـcandidate لا يُدخل تحليلًا آمنًا بديلًا",
+    },
+  };
 
   // الإثبات: لكل سطر إسنادِ سرٍّ اختفى، يلزم أن يُستبدَل بقراءةٍ من مصدر
   // بيئة/أسرار، وأن يكون النصّ المُستبدَل قد كان القيمة الكاملة.
@@ -1350,7 +1507,8 @@ var FixVerifier = (() => {
       {
         id: "sql",
         count: code => (hasSqlIssue(code) ? 1 : 0),
-        prove: () => sqlCandidateLooksParameterized(beforeCode, afterCode, fileName),
+        prove: () => (!sqlSinkPresent(beforeCode) ? PROOF.NA
+          : sqlCandidateLooksParameterized(beforeCode, afterCode, fileName)),
         reason: "REJECTED_SQL_NOT_PARAMETERIZED — اختفت إشارة SQL من المحلل لكن الـcandidate لا يثبت parameterization صحيحًا",
       },
       {
@@ -1359,12 +1517,30 @@ var FixVerifier = (() => {
         prove: () => secretFixProven(beforeCode, afterCode, syn.language),
         reason: "REJECTED_SECRET_FIX_UNPROVEN — نقص بلاغ السرّ لكن الـcandidate لا يثبت أن القيمة كانت سرًّا كاملًا وأنها صارت تُقرأ من مصدر بيئة",
       },
+      // [SINK-PROOF] الأصناف الأربعة من مُولِّد واحد — بيانات لا حُرّاس
+      ...Object.keys(SINK_CLASSES).map(id => {
+        const k = SINK_CLASSES[id];
+        return {
+          id,
+          count: code => countOf(code, k.issue),
+          prove: () => sinkFixProven(beforeCode, afterCode, k.sink, k.remedy),
+          reason: k.reason,
+        };
+      }),
     ];
+
+    // حكمُ الإثبات موحَّد: الحُرّاس القديمة (sql، secret) تُعيد منطقيًّا،
+    // ومُولِّد المصارف يُعيد ثلاثيًّا. والرفض على UNPROVEN وحدها — لا على NA.
+    const proofOf = cls => {
+      const v = cls.prove();
+      if (v === PROOF.NA || v === PROOF.PROVEN || v === PROOF.UNPROVEN) return v;
+      return v ? PROOF.PROVEN : PROOF.UNPROVEN;
+    };
 
     for (const cls of SIGNAL_PROOFS) {
       const before = cls.count(beforeCode);
       const after = cls.count(afterCode);
-      if (before > after && !cls.prove()) {
+      if (before > after && proofOf(cls) === PROOF.UNPROVEN) {
         return {
           accepted: false,
           reason: cls.reason,

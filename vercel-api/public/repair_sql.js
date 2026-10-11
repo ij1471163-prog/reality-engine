@@ -689,9 +689,22 @@
 
       // PDO فقط: concatenation بسيطة بمتغير واحد.
       // mysqli لا يدخل هذا المسار.
+      //
+      // [PHP-PREFIX] الاستبدال يُنتج **عبارتين**، فلا يصحّ وضعه حيث يُنتظر
+      // تعبير. والمقيس على الشكل الأشيع، ‎return $pdo->query(…)‎:
+      //     return $stmt = $pdo->prepare("… ?");
+      //     $stmt->execute([$name]);
+      // فالدالة تعود بـstatement لم يُنفَّذ، وسطرُ execute لا يُبلَغ أصلًا.
+      // ناتجٌ صحيحُ النحو وخاطئُ الدلالة — وهو ما لا تستطيع بوابةُ PHP كشفه
+      // إذ لا محلّل وصول لها. فالعلاج عند المصدر: يُلتقط ما يسبق الاستدعاء
+      // في السطر (‎return‎ أو إسناد)، ويُعاد وضعه على ‎$stmt‎ بعد التنفيذ.
+      //
+      // والمطابقة صارت على السطر كاملًا (‎m‎)، فما لا يُطابق سطرًا نظيفًا —
+      // استدعاءٌ داخل تعبير مركّب مثلًا — لا يُمَسّ، ويبقى AI_REQUIRED.
+      const phpStmtTaken = /\$stmt\b/.test(fixed);
       fixed = fixed.replace(
-        /(\$\w+)\s*->\s*query\s*\(\s*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"\s*\.\s*(\$[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*"([^"]*)"\s*\)\s*;?/gi,
-        (match, dbVar, queryPart, variable, suffix) => {
+        /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?(\$\w+)[ \t]*->[ \t]*query[ \t]*\([ \t]*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"[ \t]*\.[ \t]*(\$[A-Za-z_][A-Za-z0-9_]*)[ \t]*\.[ \t]*"([^"]*)"[ \t]*\)[ \t]*;?[ \t]*$/gim,
+        (match, indent, prefix, dbVar, queryPart, variable, suffix) => {
 
           if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(queryPart)) {
             return match;
@@ -707,14 +720,23 @@
             return match;
           }
 
+          // ‎$stmt‎ مُستعمل في الملف ⇒ لا نَدُسّ اسمًا قد يطمس قيمة قائمة.
+          if (phpStmtTaken) {
+            return match;
+          }
+
           const cleanSQL =
             queryPart.replace(/['"]\s*$/i, '') +
             '?' +
             suffix.replace(/^\s*['"]/, '');
 
-          const result =
-            `$stmt = ${dbVar}->prepare(${JSON.stringify(cleanSQL)});\n` +
-            `$stmt->execute([${variable}]);`;
+          const lines = [
+            `${indent}$stmt = ${dbVar}->prepare(${JSON.stringify(cleanSQL)});`,
+            `${indent}$stmt->execute([${variable}]);`,
+          ];
+          // ‎return‎ أو ‎$x =‎ يُعاد وضعه على نتيجة الاستدعاء، لا على prepare
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt;`);
+          const result = lines.join('\n');
 
           fixes.push({
             original: match,
