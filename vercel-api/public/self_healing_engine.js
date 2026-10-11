@@ -461,9 +461,14 @@ const Tests = {
   },
 
   allPassed(results) {
-    if (!results.syntax.pass)     return false;
-    if (!results.regression.pass) return false;
-    if (!results.security.pass)   return false;
+    // [ESD-SEAM-2] تحصين: مُشغِّل اختبارات خارجي قد يُسقط مفتاحًا. كان الوصول
+    // المباشر يرمي TypeError داخل heal() بلا حماية؛ الآن المفتاح الناقص يعني
+    // "لم يُثبَت" ⇒ false ⇒ ROLLED_BACK. fail-closed لا تخفيف.
+    // وTests.runAll يوفّر المفاتيح الثلاثة دائمًا، فلا يتغيّر سلوك المسار القائم.
+    if (!results || typeof results !== "object")          return false;
+    if (!results.syntax     || !results.syntax.pass)      return false;
+    if (!results.regression || !results.regression.pass)  return false;
+    if (!results.security   || !results.security.pass)    return false;
     for (const eng of Object.values(results.engines || {})) {
       if (eng.pass === false) return false;
     }
@@ -574,6 +579,28 @@ const Detector = {
 // Patcher — محافظ، لا transforms عامة
 // ═══════════════════════════════════════════════════════
 
+// مزوّدو patch مُسجَّلون من خارج هذا الملف.
+//
+// [ESD-SEAM-1] السبب: Patcher يعرف RepairSQL وXSSFixer فقط، وهما يُصلحان كود
+// المستخدم. ولا يعرف — ولا يصحّ أن يعرف — كيف يُصلح وحدةً من وحدات المحرك
+// نفسه. فمن يملك ذلك المعرفة (engine_self_diagnosis.js) يُسجّل نفسه هنا.
+// والعقد لم يتغيّر: يُعيد null ⇒ SKIPPED، أو { patchedCode, confidence,
+// reason, changedCount }. ويبقى كل ما بعده كما هو: نفس الاختبارات، ونفس
+// PENDING_REVIEW، ونفس approve() الذي يرفض patch لا يطابق ما اختُبر.
+const _patchProviders = [];
+
+function registerPatchProvider(fn) {
+  if (typeof fn !== "function") return _patchProviders.length;
+  if (_patchProviders.indexOf(fn) < 0) _patchProviders.push(fn);
+  return _patchProviders.length;
+}
+
+function unregisterPatchProvider(fn) {
+  const i = _patchProviders.indexOf(fn);
+  if (i >= 0) _patchProviders.splice(i, 1);
+  return _patchProviders.length;
+}
+
 const Patcher = {
 
   /**
@@ -591,6 +618,15 @@ const Patcher = {
    * ❌ لا == → === تلقائياً
    */
   generate(code, problem) {
+    // [ESD-SEAM-1] المزوّدون المُسجَّلون أولًا. ويُشترط عليهم ما يُشترط على
+    // الفروع أدناه بالحرف: patchedCode نصّ، ومختلف عن الأصل. وأي استثناء منهم
+    // يُعامل كـnull — فشلُ مزوّد لا يُسقط الدورة ولا يُنتج patch غير مفحوص.
+    for (const provide of _patchProviders) {
+      let r = null;
+      try { r = provide(code, problem); } catch (_) { r = null; }
+      if (r && typeof r.patchedCode === "string" && r.patchedCode !== code) return r;
+    }
+
     if (problem.type === "SQL_INJECTION" && typeof RepairSQL !== "undefined") {
       try {
         const result      = RepairSQL.fix(code, problem.fileName || "unknown.js");
@@ -713,8 +749,23 @@ const SelfHealing = {
     // 5. اختبارات على النسخة الاختبارية
     // نمرر المشكلة المستهدفة حتى لا يُعدّ اختفاؤها regression
     const targetIssues = problem.targetIssues || [problem];
-    const testResults  = Tests.runAll(code, patchedCode, fileName, targetIssues);
-    const passed       = Tests.allPassed(testResults);
+
+    // [ESD-SEAM-2] مُشغِّل اختبارات بديل. السبب: بطارية Tests هنا تقيس بلاغات
+    // المحلل على ملف المستخدم، وهي لا تقول شيئًا عن صحة وحدةٍ من المحرك. فمن
+    // يُصلح وحدة محرك يمرّر بطاريته. والعقد: يُعيد نفس شكل Tests.runAll
+    // ({syntax, engines, taint, regression, security}) كي يحكم Tests.allPassed
+    // عليه بلا تغيير — ونقص أي مفتاح يعني fail-closed لا قبولًا.
+    const runner = typeof problem.testRunner === "function" ? problem.testRunner : null;
+    let testResults;
+    try {
+      testResults = runner
+        ? runner(code, patchedCode, fileName, targetIssues)
+        : Tests.runAll(code, patchedCode, fileName, targetIssues);
+    } catch (e) {
+      // استثناء في المُشغِّل ⇒ لا نتيجة ⇒ لا قبول
+      testResults = { runnerError: String(e && e.message || e) };
+    }
+    const passed = Tests.allPassed(testResults);
 
     if (!passed) {
       // Rollback — لا نطبق التغيير
@@ -771,6 +822,22 @@ const SelfHealing = {
     }
     if (entry.status !== Status.PENDING_REVIEW) {
       return { id, status: "REJECTED", error: `الحالة ${entry.status} — لا يمكن اعتماد غير PENDING_REVIEW` };
+    }
+
+    // [ESD-SEAM-3] لا اعتماد لحادثة بلا patch مُختبَر.
+    //
+    // ثغرة مقيسة: حادثة حالتها PENDING_REVIEW ونتيجتها SKIPPED (لا Fixer
+    // لنوعها، أو خلل لا يُقترح له إصلاح آلي) ليس لها patchedCode. فنداء
+    // ‎approve(id, undefined, cb)‎ كان يعبر فحص التطابق أدناه — لأن الطرفين
+    // undefined — ثم يُنادى ‎applyCallback(undefined)‎ وتصير الحالة APPROVED.
+    // ولو كان الـcallback يكتب على القرص لكتب undefined مكان الملف.
+    //
+    // ولا منادي في المستودع كان يسلك هذا المسار: heal على مسار SKIPPED لا
+    // يُعيد دالة approve أصلًا، فالطريق الوحيد نداءٌ مباشر بمعرّف من السجل —
+    // وهو بالضبط ما توثّقه هذه الواجهة ويستعمله مُشخِّص المحرك.
+    if (entry.healingResult !== HealingResult.PASS || typeof entry.patchedCode !== "string") {
+      return { id, status: "REJECTED",
+               error: `لا patch مُختبَر لهذه الحادثة (${entry.healingResult}) — لا شيء يُعتمد` };
     }
 
     // ✅ تحقق أن patchedCode يطابق ما تم اختباره في الـ Log
@@ -909,6 +976,10 @@ const SelfHealing = {
 
   // ── Public API ───────────────────────────────────────
 
+  // [ESD-SEAM-1] تسجيل مزوّد patch خارجي (انظر الشرح عند _patchProviders)
+  registerPatchProvider,
+  unregisterPatchProvider,
+
   getLog()         { return Log.getAll(); },
   getPending()     { return Log.getPending(); },
   getById(id)      { return Log.getById(id); },
@@ -945,7 +1016,8 @@ global.SHStatus    = Status;
 global.SHResult    = HealingResult;
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { SelfHealing, Status, HealingResult, Tests, Detector, Engines };
+  module.exports = { SelfHealing, Status, HealingResult, Tests, Detector, Engines,
+                     registerPatchProvider, unregisterPatchProvider };
 }
 
 if (typeof window !== "undefined") {
