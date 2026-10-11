@@ -101,8 +101,17 @@ for (const [name, code] of Object.entries(DET_BROKEN)) {
     const r = await pipeline(code, 'fx.js');
     assert.notStrictEqual(r.decision.decision, 'SAFE_AUTO_FIX');
     assert.ok(!r.decision.patch || syntaxOk(r.decision.patch, 'fx.js'));
+    // كان التأكيد على السبب النحوي وحده، وذلك يصحّ حين يكون في السلسلة
+    // محركُ إصلاحٍ **واحد**. وقد صار فيها ثانٍ (server-smart-repair)، فله
+    // أسبابُ رفضٍ مشروعة أخرى — على هذه العيّنات
+    // REJECTED_SECRET_FIX_UNPROVEN: يحاول «إصلاح» سرٍّ داخل نصٍّ حرفي، فلا
+    // يُثبته. فالمطلوب أن يكون كلُّ سقوطٍ **رفضَ ضررٍ أو عدمِ إثبات** من
+    // البوابة، لا سببًا بعينه. والتصنيف من البوابة نفسها لا نسخةً هنا.
     for (const s of r.phases.fallback.stages) {
-      if (s.verifyResult && s.verifyResult.valid === false) assert.match(s.verifyResult.reason, /REJECTED_SYNTAX_BROKEN/);
+      if (s.verifyResult && s.verifyResult.valid === false) {
+        assert.ok(FV.isHarmfulRejection(s.verifyResult.reason),
+          `${s.engineId}: سقوطٌ بسببٍ ليس رفضَ ضرر — ${s.verifyResult.reason}`);
+      }
     }
   });
 }
@@ -144,7 +153,20 @@ for (const [file, code] of Object.entries(DET_VALID)) {
 }
 
 // ═══ 6. Claude Repair Engine ════════════════════════════
-const PY_ORIG = 'import sqlite3\n\ndef get_user(user_id):\n    query = "SELECT * FROM users WHERE id=" + user_id\n    cursor.execute(query)\n    return cursor.fetchall()';
+//
+// العيّنة f-string بقصد: الشكلُ المُسلسَل ‎"… id=" + user_id‎ يُصلحه المسار
+// الحتمي الآن (SmartRepair في السلسلة)، فلا يُستدعى Claude إطلاقًا ويصير
+// الاختبار يقيس المسار الحتمي باسم Claude. وf-string لا يملك له أيُّ محرك
+// حتمي إصلاحًا (مقيس: decision=AI_SUGGESTION وverifiedCode=null)، فيصل
+// مسار Claude حقًّا وتبقى تأكيدات السياسة قائمةً على ما تدّعيه.
+const PY_ORIG = 'import sqlite3\n\ndef get_user(user_id):\n    query = f"SELECT * FROM users WHERE id={user_id}"\n    cursor.execute(query)\n    return cursor.fetchall()';
+
+test('عزل: المسار الحتمي لا يُصلح عيّنة Claude — وإلا فالاختبارات التالية تقيس غيره', async () => {
+  const r = await pipeline(PY_ORIG, 'test.py');
+  assert.strictEqual(r.decision.decision, 'AI_SUGGESTION', r.decision.reason);
+  assert.strictEqual(r.phases.fallback.verifiedCode, null,
+    'المسار الحتمي أصلح العيّنة ⇒ مسار Claude لا يُختبَر');
+});
 
 test('Claude: valid candidate stays SAFE_AUTO_FIX', async () => {
   const fixed = 'import sqlite3\n\ndef get_user(user_id):\n    query = "SELECT * FROM users WHERE id=?"\n    cursor.execute(query, (user_id,))\n    return cursor.fetchall()';

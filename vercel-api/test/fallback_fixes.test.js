@@ -390,13 +390,25 @@ test('تكامل analyzer.js: إصلاح SQL Python يُقبل والثغرة ت
   assert.strictEqual(r.repairs.length, 1);
   assert.strictEqual(r.repairs[0].targetGone, true);
   assert.ok(!ctx.analyzeCode(r.fixed, 'svc.py').some(i => /SQL Injection/.test(i.title)), 'الثغرة ما زالت مكشوفة بعد الإصلاح');
-  // ضابط: صيغة الإسناد مع psycopg (%s) وcursor.execute — قاعدة "params mismatch" في المحلل
-  // تعدّ %s صفراً من ? فتبلّغ ثغرة حرجة جديدة ⇒ الإصلاح يُرجَع (سلوك محافظ متعمَّد)
+  // صيغة psycopg (‎%s‎) مع ‎cursor.execute(q, (uid,))‎: كانت قاعدةُ
+  // «params mismatch» في المحلل تعدّ ‎%s‎ صفرًا من ‎?‎، فتُبلّغ ثغرةً حرجة
+  // جديدة على الإصلاح الصحيح ⇒ يُرجَع. وكان ذلك موثَّقًا هنا كسلوكٍ محافظ
+  // متعمَّد، وهو في الحقيقة إيجابيةٌ كاذبة: ‎%s‎ موضعُ معامِلٍ في DB-API
+  // (paramstyle) لا تنسيقُ نصّ. فصارت القاعدة تعدّ ‎%s‎ و‎%(name)s‎ و‎:name‎
+  // مواضعَ معامِلات، فلا انحدارَ ولا إرجاع، والإصلاح الصحيح يُطبَّق.
+  //
+  // (مسارُ الإرجاع نفسه ما زال مُغطًّى أعلاه بمحلل مُدار: rolledBack=1.)
   const pg = 'import psycopg2\ndef get(cursor, uid):\n    query = "SELECT * FROM users WHERE id = " + uid\n    cursor.execute(query)\n';
-  const rp = ctx.fallbackFix(pg, 'svc.py', ctx.analyzeCode(pg, 'svc.py'));
-  assert.strictEqual(rp.fixed, pg);
-  assert.strictEqual(rp.verification.rolledBack, 1);
-  assert.ok(reasons(rp).some(x => x === 'verification_failed:regression'));
+  const pgIssues = ctx.analyzeCode(pg, 'svc.py');
+  assert.ok(pgIssues.some(i => /SQL Injection/.test(i.title)), 'المحلل لم يكشف ثغرة psycopg');
+  const rp = ctx.fallbackFix(pg, 'svc.py', pgIssues);
+  assert.notStrictEqual(rp.fixed, pg, 'الإصلاح الصحيح ما زال يُرجَع — عادت إيجابية %s الكاذبة');
+  assert.strictEqual(rp.verification.rolledBack, 0, JSON.stringify(reasons(rp)));
+  assert.match(rp.fixed, /cursor\.execute\(query, \(uid,\)\)/, rp.fixed);
+  assert.match(rp.fixed, /query = "SELECT \* FROM users WHERE id = %s"/, rp.fixed);
+  assert.ok(!ctx.analyzeCode(rp.fixed, 'svc.py').some(i => /SQL Injection|params mismatch/i.test(i.title)),
+    'بلاغٌ باقٍ بعد إصلاح psycopg: ' +
+    JSON.stringify(ctx.analyzeCode(rp.fixed, 'svc.py').map(i => i.title)));
 });
 
 // ═══ 14. applyFallbackToAll ═══════════════════════════════

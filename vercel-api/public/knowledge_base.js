@@ -21,7 +21,13 @@ var KnowledgeBase = (() => {
       { lang: 'js', pattern: /`UPDATE.*\$\{.*\}`/i, conf: 0.95 },
       { lang: 'js', pattern: /`DELETE.*\$\{.*\}`/i, conf: 0.95 },
       // Python
-      { lang: 'py', pattern: /cursor\.execute\s*\(\s*["'].*%\s*\w+/i, conf: 0.95 },
+      // [PY-PCT] ‎%‎ **بعد** إغلاق النصّ وحده خطر: ‎execute("… %s" % uid)‎
+      // تنسيقٌ يُدمج قبل التنفيذ. أما ‎%s‎ **داخل** النصّ مع وسيطِ معاملات،
+      // ‎execute("… id=%s", (uid,))‎، فهو موضعُ معامِلٍ في DB-API — أي الشكل
+      // الصحيح نفسه. وكان النمط ‎["'].*%\s*\w+‎ يطابق ‎%s‎ داخل النصّ، فيُبلّغ
+      // عن الإصلاح السليم كثغرة: البلاغ يبقى 1→1 فتردّ البوابة إصلاحًا
+      // صحيحًا بـNO_IMPROVEMENT (مقيس على مِجسّ gate.sql-parameterized-accepted).
+      { lang: 'py', pattern: /cursor\.execute\s*\(\s*(["'])(?:(?!\1)[\s\S])*\1\s*%\s*\w+/i, conf: 0.95 },
       { lang: 'py', pattern: /cursor\.execute\s*\(\s*["'].*\+\s*\w+/i, conf: 0.95 },
       { lang: 'py', pattern: /cursor\.execute\s*\(\s*f["']/i, conf: 0.95 },
       { lang: 'py', pattern: /execute\s*\(\s*["'].*format\s*\(/i, conf: 0.90 },
@@ -42,6 +48,11 @@ var KnowledgeBase = (() => {
       { lang: 'js',   pattern: /prepareStatement|prepare\s*\(/i, conf: 0.95 },
       { lang: 'py',   pattern: /cursor\.execute\s*\(\s*\w+\s*,\s*\(/i, conf: 0.95 },
       { lang: 'py',   pattern: /cursor\.execute\s*\(\s*\w+\s*,\s*\[/i, conf: 0.95 },
+      // الشكل الأشيع للصحيح: النصّ داخل الاستدعاء ثم وسيطُ المعاملات.
+      // كانت الأنماط الآمنة تشترط **متغيّرًا** قبل الفاصلة (‎\w+‎)، فلا تشمل
+      // ‎execute("… id=%s", (uid,))‎ — وهو ناتجُ مُصلِحاتنا نفسها.
+      { lang: 'py',   pattern: /(?:cursor|cur|crsr|conn|connection|session|db)\s*\.\s*execute\s*\(\s*(["'])(?:(?!\1)[\s\S])*\1\s*,\s*[([]/i, conf: 0.95 },
+      { lang: 'js',   pattern: /\.\s*(?:query|execute)\s*\(\s*(["'`])(?:(?!\1)[\s\S])*\1\s*,\s*\[/i, conf: 0.95 },
       { lang: 'php',  pattern: /prepare\s*\(\s*["'][^"']*\?/i, conf: 0.95 },
       { lang: 'java', pattern: /PreparedStatement|prepareStatement/i, conf: 0.95 },
     ],

@@ -206,7 +206,13 @@ const REAL = {
   'mix.js': 'const API_KEY = "sk_live_abcdefghijklmnop1234";\nconst password = "hunter2hunter2";\napp.get(\'/u\', (req,res)=>{\n  const id = req.query.id;\n  db.query("SELECT * FROM users WHERE id=" + id);\n  res.send(req.query.name);\n  eval(req.body.code);\n  fetch("http://api.example.com/data");\n  console.log("token", password);\n});\n',
   'c.php':  '<?php\n$id = $_GET[\'id\'];\nmysqli_query($conn, "SELECT * FROM t WHERE id=" . $id);\necho $_GET[\'name\'];\n$p = md5($id);\n',
   'e.c':    'int main(){ char b[10]; gets(b); strcpy(b, x); printf(x); return 0; }\n',
-  'sqli.py': 'def get_user(user_id):\n    query = "SELECT * FROM users WHERE id=" + user_id\n    cursor.execute(query)\n    return cursor.fetchall()\n',
+  // كانت 'sqli.py' هنا بالشكل المُسلسَل ‎"… id=" + user_id‎، وصار المسار
+  // الحتمي يُصلحه كاملًا (SmartRepair في سلسلة الخادم) فلا يبقى بلاغٌ
+  // غير محسوم — فتسقط مقدّمةُ هذا الاختبار لا خلاصته. ونُقلت إلى الاختبار
+  // المقابل («يُصلَح كاملًا فتبقى aiNeeded خالية») حيث موضعُها الصحيح.
+  // وبديلُها f-string: لا محركَ حتميًّا يملك له إصلاحًا، فيبقى بلاغُ أمنٍ
+  // غير محسوم ويُختبَر عقدُ «لا إسقاط» على ما يدّعيه.
+  'sqli_fstring.py': 'def get_user(user_id):\n    query = f"SELECT * FROM users WHERE id={user_id}"\n    cursor.execute(query)\n    return cursor.fetchall()\n',
 };
 const CWE = /^CWE[-_]\d+/i;
 const looksSecurity = i => /^(security|secret|taint|XSS|SQL_INJECTION|CMD_INJECTION|INSECURE_HTTP|WEAK_CRYPTO)$/i.test(String(i.type)) ||
@@ -225,11 +231,55 @@ for (const [file, code] of Object.entries(REAL)) {
   });
 }
 
-test('server pipeline: fully repaired security finding leaves aiNeeded empty', () => {
+test('server pipeline sqli.py (مُسلسَل): يُصلَح كاملًا فتبقى aiNeeded خالية', () => {
+  // نفس العيّنة التي كانت في REAL. انتقالُها من «يبقى غير محسوم» إلى «يُحسَم
+  // كاملًا» تحسّنٌ مقيس، ويُثبَّت هنا كي لا يتراجع بصمت.
+  const code = 'def get_user(user_id):\n    query = "SELECT * FROM users WHERE id=" + user_id\n    cursor.execute(query)\n    return cursor.fetchall()\n';
+  const out = SERVER_RO.runPipeline(code, 'sqli.py', { useFallbackChain: true });
+  assert.strictEqual(out.decision.decision, 'SAFE_AUTO_FIX', out.decision.reason);
+  assert.match(out.decision.patch, /cursor\.execute\(query, \(user_id,\)\)/, out.decision.patch);
+  assert.deepStrictEqual(out.phases.fallback.remainingIssues.filter(looksSecurity), [],
+    'بلاغُ أمنٍ باقٍ بعد إصلاحٍ كامل');
+  assert.deepStrictEqual([...out.phases.fallback.aiNeeded], []);
+});
+
+test('server pipeline: حقنُ الأوامر يُصلَح كاملًا ولا يبقى في aiNeeded', () => {
+  // كان التأكيد «aiNeeded خالية تمامًا». وقد أُضيفت كاشفاتُ DETECTOR-PARITY
+  // إلى الخادم، فصار يُبلّغ أيضًا عن غياب المصادقة والتسجيل على هذا الـroute
+  // (CWE-284 و CWE-306 و CWE-778) — بلاغاتٌ صحيحة لا إصلاحَ حتميًّا لها،
+  // فتذهب إلى aiNeeded بحقّ. فالعقد المقصود هو: **الصنفُ المُصلَح** لا يبقى
+  // في aiNeeded، لا أن القائمة خالية من كل شيء.
   const code = 'const { exec } = require(\'child_process\');\napp.get(\'/x\',(req,res)=>{ const cmd = req.query.c; exec(cmd); });\n';
   const out = SERVER_RO.runPipeline(code, 'cmd.js', { useFallbackChain: true });
   assert.strictEqual(out.decision.decision, 'SAFE_AUTO_FIX');
-  assert.deepStrictEqual([...out.phases.fallback.aiNeeded], []);
+  const CMD = /command injection|cmd[_ ]?injection/i;
+  assert.deepStrictEqual(
+    out.phases.fallback.aiNeeded.filter(e => CMD.test(String(e.title || '') + ' ' + String(e.strategy || ''))), [],
+    'صنفُ الأوامر أُصلح ومع ذلك بقي في aiNeeded');
+  assert.deepStrictEqual(
+    out.phases.fallback.remainingIssues.filter(i => CMD.test(String(i.title || ''))), [],
+    'بلاغُ أوامرَ باقٍ بعد إصلاحٍ كامل');
+  // وما بقي في aiNeeded فبلاغاتٌ أخرى غير محسومة، وكلٌّ منها مُدرَج فعلًا
+  for (const s of out.phases.fallback.remainingIssues.filter(looksSecurity)) {
+    assert.ok(has(out.phases.fallback.aiNeeded, s), `dropped "${s.title}" line ${s.line}`);
+  }
+  // وfileFullyResolved يقول الحقَّ: الملفُّ **ليس** محسومًا كاملًا لأن بلاغاتِ
+  // المصادقة باقية. وكان true حين كان حقنُ الأوامر البلاغَ الوحيد المكتشَف.
+  assert.strictEqual(out.decision.meta.fileFullyResolved, false,
+    'الملف فيه بلاغاتٌ باقية، فادّعاءُ الحسم الكامل غيرُ صادق');
+});
+
+test('server pipeline: وملفٌ بلا بلاغٍ باقٍ ⇒ fileFullyResolved صادقٌ true', () => {
+  // الحارس المقابل: بلا هذا يصير التأكيد أعلاه قابلًا للإرضاء بـfalse دائمًا.
+  // دالةٌ مستقلّة بلا route، فلا بلاغاتِ مصادقة — وحقنُ الأوامر وحده يُصلَح.
+  const code = 'const { exec, execFile } = require(\'child_process\');\n' +
+               'function run(dir) {\n  exec("ls " + dir);\n}\nmodule.exports = { run };\n';
+  const out = SERVER_RO.runPipeline(code, 'cmd2.js', { useFallbackChain: true });
+  assert.strictEqual(out.decision.decision, 'SAFE_AUTO_FIX', out.decision.reason);
+  assert.deepStrictEqual([...out.phases.fallback.aiNeeded], [],
+    'aiNeeded ليست خالية: ' + JSON.stringify(out.phases.fallback.aiNeeded.map(x => x.title)));
+  assert.deepStrictEqual(out.phases.fallback.remainingIssues.filter(looksSecurity), [],
+    'بلاغُ أمنٍ باقٍ: ' + JSON.stringify(out.phases.fallback.remainingIssues.map(x => x.title)));
   assert.strictEqual(out.decision.meta.fileFullyResolved, true);
 });
 

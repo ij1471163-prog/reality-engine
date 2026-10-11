@@ -11,12 +11,23 @@ const {
 // المسار الوحيد للتطبيق التلقائي: ClaudeRepairEngine → FixVerifier (valid && improved)
 // → _checkPolicy(Source.REPAIR_ENGINE) → SAFE_AUTO_FIX، مع origin = CLAUDE_REPAIR_ENGINE.
 
+// العيّنة f-string بقصد: الشكلُ المُسلسَل ‎"… id=" + user_id‎ يُصلحه المسار
+// الحتمي الآن (SmartRepair صار في سلسلة الخادم)، فلا يُستدعى Claude أصلًا
+// ويصير source = FALLBACK لا REPAIR_ENGINE. وf-string بلا إصلاحٍ حتمي، فيصل
+// مسار Claude فعلًا وتبقى تأكيدات السياسة أدناه قائمةً على ما تدّعيه.
 const code = `import sqlite3
 
 def get_user(user_id):
-    query = "SELECT * FROM users WHERE id=" + user_id
+    query = f"SELECT * FROM users WHERE id={user_id}"
     cursor.execute(query)
     return cursor.fetchall()`;
+
+// عزل: بلا هذا قد يصير الأخضر عن المسار الحتمي لا عن Claude.
+test("عزل: المسار الحتمي لا يُصلح هذه العيّنة", async () => {
+  const r = await RealityOrchestrator.runPipelineAsync(code, "test.py", { useFallbackChain: true });
+  assert.equal(r.decision.decision, "AI_SUGGESTION");
+  assert.equal(r.phases.fallback.verifiedCode, null);
+});
 
 const fixedCode = `import sqlite3
 

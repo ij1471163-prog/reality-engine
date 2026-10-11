@@ -130,8 +130,6 @@ const MUST_REJECT = {
     'function getUser(uid, fl) {\n  const q = "SELECT * FROM users WHERE id = ? AND a = ?";\n  const other = buildOther();\n  return db.query(other, [uid, fl]);\n}\n',
   'تعبير مركّب: base + نص':
     'function getUser(uid, fl) {\n  const q = base + " WHERE id = ? AND a = ?";\n  return db.query(q, [uid, fl]);\n}\n',
-  'template literal مع interpolation':
-    'function getUser(uid, fl) {\n  const q = `SELECT * FROM users WHERE id = ${uid} AND a = ?`;\n  return db.query(q, [fl]);\n}\n',
   'إعادة إسناد المتغيّر ⇒ غموض':
     'function getUser(uid, fl) {\n  let q = "SELECT * FROM users WHERE id = ? AND a = ?";\n  q = q + " LIMIT 1";\n  return db.query(q, [uid, fl]);\n}\n',
   'نص بلا placeholders مع معاملات':
@@ -163,6 +161,40 @@ for (const [label, after] of Object.entries(MUST_REJECT)) {
       `${label}: يجب أن يكون الرفض من حارس SQL تحديدًا، لا من مرحلة أخرى`);
   });
 }
+
+// ═══ 2b. القالب النصّي بإقحام: يُرفض بمرحلة أسبق وأقوى ═══
+//
+// أُخرِج من مجموعة حارس SQL أعلاه لأن الماسح صار **يكشفه**. كان
+// security_scanner يشترط كلمة ‎query|execute|sql‎ نصًّا في السطر، والسطر
+//     const q = `SELECT * FROM users WHERE id = ${uid} AND a = ?`;
+// لا يحمل أيًّا منها، فكان الإقحام المباشر في SELECT **يمرّ بلا بلاغ
+// إطلاقًا** (مقيس على HEAD: صفر بلاغ). وبعد ربط الشرط بفعلِ SQL صار
+// يُبلَّغ عنه حرجًا. فالمُرشَّح الآن يُدخل ثغرةً جديدة، فيُرفض عند
+// ISSUES_WORSENED قبل أن يصل حارس المعاملات — رفضٌ أقوى لا أضعف.
+//
+// والحارسان معًا: الكشف قائم، والرفض قائم. وأيُّ تراجع في أحدهما يُسقط هذا.
+test('REJECT: template literal مع interpolation — يُكشَف ويُرفض', () => {
+  const after = 'function getUser(uid, fl) {\n' +
+    '  const q = `SELECT * FROM users WHERE id = ${uid} AND a = ?`;\n' +
+    '  return db.query(q, [fl]);\n}\n';
+
+  // (أ) الماسح يكشف الإقحام — وهذا ما كان مفقودًا
+  assert.ok(sqlFindings(after) >= 1,
+    'الإقحام المباشر في SELECT يجب أن يُبلَّغ عنه — عاد الماسح يُغفله');
+
+  // (ب) والبوابة ترفضه، والسبب هو إدخالُ الثغرة لا مجرّد عدم الإثبات
+  const v = gate(after);
+  assert.ok(!v.accepted, 'قُبل مُرشَّح يُقحم uid مباشرةً: ' + v.reason);
+  assert.match(String(v.reason), /^REJECTED_ISSUES_WORSENED/, String(v.reason));
+
+  // (ج) والشكل الآمن المقابل لا يُبلَّغ عنه ولا يُرفض لهذا السبب
+  const safe = 'function getUser(uid, fl) {\n' +
+    '  const q = `SELECT * FROM users WHERE id = ? AND a = ?`;\n' +
+    '  return db.query(q, [uid, fl]);\n}\n';
+  assert.strictEqual(sqlFindings(safe), 0, 'القالب النصّي بمعاملات سليم ولا يُبلَّغ عنه');
+  const vs = gate(safe);
+  assert.strictEqual(vs.accepted, true, 'رُفض قالبٌ نصّي مُعامَل سليم: ' + vs.reason);
+});
 
 // ═══ 3. الربط مربوط بالاستعلام نفسه، لا بأي نص في الملف ══
 // متغيّران في نفس الملف: الإثبات يجب أن يتبع المتغيّر المُستدعى فعلاً.

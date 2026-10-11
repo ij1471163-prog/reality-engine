@@ -17,7 +17,28 @@ function analyzePHP(code, fileName) {
 
   lines.forEach((line, i) => {
         const t2 = line.trim();
-        if ((/["\']\s*\.\s*\$\w+/.test(t2) || /\.\s*\$_(GET|POST|REQUEST)/.test(t2)) && /SELECT|INSERT|UPDATE|DELETE/i.test(t2)) {
+        // [PHP-INTERP] الإقحام داخل نصٍّ مزدوج ثغرةٌ كالتسلسل تمامًا:
+        //     mysqli_query($c, "SELECT * FROM t WHERE id = $id")
+        //     $pdo->query("SELECT * FROM t WHERE n = '$name'")
+        // فPHP يُبدّل المتغيّر داخل ‎"…"‎ قبل تنفيذ الاستعلام. وكان الشرط
+        // يتطلّب ‎.‎ تسلسلًا صريحًا، فكان هذا الشكل **بلا بلاغ إطلاقًا**
+        // (مقيس: صفر بلاغ)، فلا يُكتشَف ولا يُصلَح ولا يُرفَع إلى مسار AI.
+        //
+        // ويُقصر على النصّ المزدوج: ‎'…$id…'‎ في PHP نصٌّ حرفي لا إقحام فيه.
+        // ويُستثنى ‎{$x}‎ وغيرُه إن كان موضعَ معامِلٍ قائم — يكفي أن يُطابَق
+        // متغيّرٌ داخل نصٍّ مزدوج يحمل فعلَ استعلام.
+        const phpInterp = (() => {
+            const m = /"((?:\\.|[^"\\])*)"/g;
+            let q;
+            while ((q = m.exec(t2)) !== null) {
+                const body = q[1];
+                if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(body)) continue;
+                if (/\$\{?[A-Za-z_]\w*/.test(body)) return true;
+            }
+            return false;
+        })();
+        if ((/["\']\s*\.\s*\$\w+/.test(t2) || /\.\s*\$_(GET|POST|REQUEST)/.test(t2) || phpInterp)
+            && /SELECT|INSERT|UPDATE|DELETE/i.test(t2)) {
             issues.push({
                 type:'php', sev:'c', line:i+1, ev:t2,
                 title:'🔴 SQL Injection — PHP String Concatenation',

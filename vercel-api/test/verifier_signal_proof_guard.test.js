@@ -290,8 +290,13 @@ test('[SP-4b] السجل يحمل الصنفين الصريحين وأصناف �
 
   // القاعدة واحدة للجميع: نقص العدد لا اختفاء الإشارة.
   // والحكم ثلاثي: الرفض على UNPROVEN وحدها — صنفٌ بلا مَصرِف (NA) لا دعوى له.
-  assert.match(src, /before > after && proofOf\(cls\) === PROOF\.UNPROVEN/,
-    'شرط الحارس تغيّر — يجب أن يكون نقص العدد مع إثبات UNPROVEN');
+  // مُطلِقان لا واحد: نقصُ العدد، أو بقاءُ البلاغ مع إعادة كتابة تعبيره
+  // (EXPR-REWRITE). والرفض في الحالين على UNPROVEN وحدها.
+  assert.match(src, /\(before > after \|\| claimedButKept\) && proofOf\(cls\) === PROOF\.UNPROVEN/,
+    'شرط الحارس تغيّر — يجب أن يكون المُطلِقان مع إثبات UNPROVEN');
+  assert.match(src, /const claimedButKept = before > 0 && after >= before &&/,
+    'مُطلِق EXPR-REWRITE غير موجود — عاد الحارس إلى نقص العدد وحده');
+  assert.match(src, /\[EXPR-REWRITE\]/, 'قاعدة إعادة كتابة التعبير غير موثّقة في الإنتاج');
   assert.match(src, /const PROOF = \{\s*NA:[^}]*PROVEN:[^}]*UNPROVEN:/,
     'ثلاثيّة الإثبات غير معلنة في الإنتاج');
 });
@@ -663,19 +668,55 @@ test('[SINK-NA] صنفٌ نقص بلاغه وليس له مَصرِف في ال�
 });
 
 test('[SINK-NA-b] حارس SQL لا يُطالب بمعاملات حين لا استعلام في الكود', () => {
-  // security_scanner يُبلّغ «SQL Injection محتمل» على تسلسل نصٍّ في استدعاء،
-  // ‎exec("ls " + req.query.dir)‎، بلا أي استعلام. وإصلاح الأوامر الصحيح
-  // يُسقط ذلك البلاغ، فكان يُطالَب بإثبات parameterization لا محلّ له.
-  const b = 'const { exec, execFile } = require("child_process");\n' +
-            'function run(req) {\n  exec("ls " + req.query.dir);\n}\n';
-  const a = 'const { exec, execFile } = require("child_process");\n' +
-            'function run(req) {\n  execFile("ls", [req.query.dir]);\n}\n';
+  // security_scanner يُبلّغ «SQL Injection محتمل» متى رأى نداءَ ‎.execute(‎ أو
+  // ‎.query(‎ مع دمجِ نصّ — ولو لم يكن في السطر أيُّ استعلام. وهذا تحفّظٌ
+  // مقصود (الاستعلام قد يكون في متغيّر)، لكنه يعني أن إصلاحًا لا علاقة له
+  // بـSQL يُنقص «بلاغ SQL»، فكان يُطالَب بإثبات parameterization لاستعلامٍ لا
+  // وجود له — مطلبٌ لا يُوفى، فيُرفض إصلاحٌ سليم.
+  //
+  // (العيّنة كانت ‎exec("ls " + req.query.dir)‎، وقد زال ذلك البلاغ الزائف من
+  //  الماسح نفسه — الشرط صار فعلَ SQL أو نداءَ استعلام لا كلمةَ ‎query‎
+  //  المجرَّدة. فالعيّنة هنا حالةٌ ما زالت قائمة ومقيسة.)
+  const b = 'function r(st, v) {\n  st.execute("cmd-" + v);\n}\n';
+  const a = 'function r(st, v) {\n  st.execute(buildCmd(v));\n}\n';
+
   assert.strictEqual(/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(b), false,
     'tripwire: وجودُ استعلام في العيّنة يُبطل معنى NA');
-  assert.ok(findings(b, 'c.js').some(i => /sql/i.test(i.type + ' ' + i.title)),
-    'tripwire: لا بلاغ SQL زائف في العيّنة ⇒ الاختبار لا يقيس الحالة');
+  const sqlOf = code => findings(code, 'c.js').filter(i => /sql/i.test(i.type + ' ' + i.title)).length;
+  assert.ok(sqlOf(b) >= 1, 'tripwire: لا بلاغ SQL على العيّنة ⇒ الاختبار لا يقيس الحالة');
+  assert.ok(sqlOf(b) > sqlOf(a), 'tripwire: بلاغ SQL لم ينقص ⇒ الحارس خامل');
+
   const v = gate(b, a, 'c.js');
-  assert.strictEqual(v.accepted, true, `إصلاح أوامر سليم رُفض بدعوى SQL: ${v.reason}`);
+  assert.strictEqual(v.accepted, true, `إصلاحٌ لا علاقة له بـSQL رُفض بدعوى SQL: ${v.reason}`);
+});
+
+test('[SINK-NA-b2] والماسح لم يعد يُبلّغ عن SQL على كلمة query المجرَّدة', () => {
+  // جذرُ الحالة أعلاه: كان الشرط ‎/query|execute|sql/i‎ على السطر كلّه، فأيُّ
+  // سطر فيه ‎req.query‎ أو متغيّرٍ اسمه ‎query‎ مع دمجِ نصّ يصير بلاغَ SQL.
+  // ولهذا كان ‎exec("ls " + req.query.dir)‎ يحمل بلاغَي أوامرَ وSQL.
+  const cmd = 'const { exec } = require("child_process");\n' +
+              'function r(req) {\n  exec("ls " + req.query.dir);\n}\n';
+  const list = findings(cmd, 'c.js').map(i => i.type + ' ' + i.title);
+  assert.ok(list.some(t => /command injection/i.test(t)),
+    'حقنُ الأوامر الحقيقي يجب أن يبقى مبلَّغًا عنه: ' + JSON.stringify(list));
+  assert.ok(!list.some(t => /sql/i.test(t)),
+    'بلاغ SQL زائف على ‎req.query‎ عاد: ' + JSON.stringify(list));
+
+  // ومتغيّرٌ اسمه query بلا أي استعلام: لا بلاغ إطلاقًا
+  const plain = 'function r(x) {\n  const query = "prefix-" + x;\n  return query;\n}\n';
+  assert.deepStrictEqual(
+    findings(plain, 'c.js').filter(i => /sql/i.test(i.type + ' ' + i.title)).map(i => i.title), [],
+    'بلاغ SQL على متغيّر اسمه query بلا استعلام');
+
+  // والاستعلام الحقيقي بكل أشكاله يبقى مكشوفًا — التضييق ليس تعطيلًا
+  for (const real of [
+    'function r(db, id) {\n  db.query("SELECT * FROM t WHERE a=" + id);\n}\n',
+    'function r(db, id) {\n  db.query(`SELECT * FROM t WHERE a=${id}`);\n}\n',
+    'function r(db, v) {\n  db.query("UPDATE t SET a=" + v);\n}\n',
+  ]) {
+    assert.ok(findings(real, 'c.js').some(i => /sql/i.test(i.type + ' ' + i.title)),
+      'استعلامٌ حقيقي صار غير مكشوف: ' + real.trim());
+  }
 });
 
 test('[SINK-NA-c] مَصرِفٌ باقٍ كما هو وبلاغُ الصنف ينقص ⇒ يُرفض. NA لا يُعمَّم', () => {

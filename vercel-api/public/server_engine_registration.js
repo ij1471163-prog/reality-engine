@@ -127,6 +127,30 @@ function registerServerEngines() {
     );
   }
 
+  // أولويةٌ أدنى من server-repair: يُجرَّب بعده على ما بقي من بلاغات.
+  if (!RealityOrchestrator.hasEngine("server-smart-repair") &&
+      typeof engine.repairSmart === "function") {
+    RealityOrchestrator.registerEngine(
+      "server-smart-repair",
+      RealityOrchestrator.EngineType.REPAIR,
+      engine.repairSmart,
+      ["*"],
+      { priority: 90 }
+    );
+  }
+
+  // أدنى أولويةً: يُجرَّب أخيرًا على ما بقي (يملك مسار PHP/PDO وحده).
+  if (!RealityOrchestrator.hasEngine("server-sql-repair") &&
+      typeof engine.repairSqlEngine === "function") {
+    RealityOrchestrator.registerEngine(
+      "server-sql-repair",
+      RealityOrchestrator.EngineType.REPAIR,
+      engine.repairSqlEngine,
+      ["*"],
+      { priority: 80 }
+    );
+  }
+
   if (!RealityOrchestrator.hasEngine("fix-verifier")) {
     RealityOrchestrator.registerEngine(
       "fix-verifier",

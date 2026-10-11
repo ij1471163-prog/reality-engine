@@ -934,6 +934,123 @@ var RealityOrchestrator = (() => {
   //   remainingIssues: [],
   //   claudeFallback: bool,
   // }
+  // ═══════════════════════════════════════════════════════════════════
+  // [CHAIN-SALVAGE] رُقعةُ محركٍ مرفوضة ليست بالضرورة رُقعةً كلّها معطوبة
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // كانت رُقعةُ كل محرك تُفحَص حُكمًا واحدًا: تجتاز فتُعتمد كاملةً، أو تسقط
+  // فتُطرَح كاملةً. فمحركٌ يُنتج إصلاحين — أحدهما صحيحٌ مُثبَت والآخر محوٌ
+  // شكلي — يخسر الصحيحَ مع الفاسد. والمقيس على GameServer.js:
+  //   SmartRepair يُنتج في رُقعةٍ واحدة:
+  //     (أ) ‎username=? AND password=?‎ + ‎db.execute(query,[username,password])‎
+  //         — إصلاحُ حقنِ SQL صحيحٌ وتُثبته البوابة.
+  //     (ب) ‎eval(cheatCode)‎ ⇒ ‎/* SECURITY: eval removed */‎
+  //         — محوٌ شكلي، ترفضه البوابة بحقّ (REJECTED_EVAL_FIX_UNPROVEN).
+  //   فتسقط الرُقعة كلها، ويُفقَد إصلاحُ SQL، ويبقى حقنُ SQL بلا إصلاح.
+  //
+  // فالإنقاذ: تُجزَّأ الرُقعة إلى hunks، وتُبنى تدريجيًّا بأكبر مجموعةٍ
+  // يُثبتها نفسُ المُتحقِّق. وكلُّ خطوة تُقاس ضد نفس الأساس، فالناتج النهائي
+  // مُتحقَّقٌ منه بالتعريف لا بالاستنتاج.
+  //
+  // ولا يُستدعى إلا عند السقوط، فكلفتُه صفرٌ في الحالة الشائعة. وله حدّان
+  // معلنان: مصفوفةُ LCS محدودة بـ‎MAX_SALVAGE_CELLS‎، وعددُ الـhunks محدودٌ
+  // بـ‎MAX_SALVAGE_HUNKS‎ — فوقهما لا إنقاذ (نداءُ مُتحقِّقٍ لكل hunk، وقد
+  // قيس بـ‎538 ms‎ على ملفٍ من 1203 أسطر).
+  const MAX_SALVAGE_CELLS = 4000000;
+  const MAX_SALVAGE_HUNKS = 40;
+
+  // يُقسّم الفرق إلى مقاطع: 'same' سطرٌ مشترك، و'hunk' بديلان (from/to).
+  function _diffSegments(aLines, bLines) {
+    const n = aLines.length, m = bLines.length;
+    if (n * m > MAX_SALVAGE_CELLS) return null;
+
+    const dp = [];
+    for (let i = 0; i <= n; i++) dp.push(new Uint32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = aLines[i] === bLines[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+
+    const segs = [];
+    let cur = null;
+    const flush = () => { if (cur) { segs.push(cur); cur = null; } };
+    const hunk = () => (cur || (cur = { kind: 'hunk', from: [], to: [] }));
+
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (aLines[i] === bLines[j]) {
+        flush();
+        segs.push({ kind: 'same', line: aLines[i] });
+        i++; j++;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        hunk().from.push(aLines[i]); i++;
+      } else {
+        hunk().to.push(bLines[j]); j++;
+      }
+    }
+    while (i < n) { hunk().from.push(aLines[i]); i++; }
+    while (j < m) { hunk().to.push(bLines[j]); j++; }
+    flush();
+    return segs;
+  }
+
+  function _renderSegments(segs, accepted) {
+    const out = [];
+    let h = -1;
+    for (const s of segs) {
+      if (s.kind === 'same') { out.push(s.line); continue; }
+      h++;
+      const take = accepted.has(h) ? s.to : s.from;
+      for (const l of take) out.push(l);
+    }
+    return out.join('\n');
+  }
+
+  // الإصلاحات المُعلَنة بعد الإنقاذ تُنقّى إلى ما طُبِّق فعلًا.
+  //
+  // بلا هذا يدّعي التقرير إصلاحًا أسقطه الإنقاذ. والمقيس على GameServer.js:
+  //     safeRepairs = 11  والأسطرُ المتغيّرة = 10
+  //     والزائد: «eval → safe alternative» (بلا line) وقد أُسقط فعلًا.
+  // وهي نفسُ عِلّة [GHOST-PRUNE] في repair_engine: ما لم يُطبَّق لا يُعلَن.
+  //
+  // والمقياس: نصُّ السطر الأصلي لم يبقَ في الناتج ⇒ طُبِّق. وما لا موضعَ له
+  // (‎line‎ غائب) لا يُدَّعى — تحفّظٌ مقصود: نقصُ الإعلان صادق، وزيادتُه ليست.
+  // ولا يُستدعى إلا عند الإنقاذ، فالمسار السليم يبقى كما كان حرفًا.
+  function _appliedRepairsOnly(repairs, from, to) {
+    const toLines = new Set(String(to).split('\n'));
+    const fromLines = String(from).split('\n');
+    return (repairs || []).filter(r => {
+      const n = Number(r && r.line);
+      if (!Number.isFinite(n) || n < 1 || n > fromLines.length) return false;
+      return !toLines.has(fromLines[n - 1]);
+    });
+  }
+
+  // يُرجع { code, verifyResult, kept, dropped } أو null إن لم يُثبَت شيء.
+  function _salvageVerifiedSubset(base, candidate, fileName) {
+    const segs = _diffSegments(String(base).split('\n'), String(candidate).split('\n'));
+    if (!segs) return null;
+    const total = segs.filter(s => s.kind === 'hunk').length;
+    if (total < 2 || total > MAX_SALVAGE_HUNKS) return null;   // hunk واحد: لا تجزئة
+
+    const accepted = new Set();
+    let bestCode = null, bestVr = null;
+    for (let h = 0; h < total; h++) {
+      accepted.add(h);
+      const cand = _renderSegments(segs, accepted);
+      if (cand === base) { accepted.delete(h); continue; }
+      const vr = runVerification(base, cand, fileName);
+      if (vr.valid === true && vr.improved === true) { bestCode = cand; bestVr = vr; }
+      else accepted.delete(h);
+    }
+    if (!bestCode) return null;
+    return { code: bestCode, verifyResult: bestVr,
+             kept: accepted.size, dropped: total - accepted.size };
+  }
+
   function runFallbackChain(code, issues, fileName) {
     if (typeof code !== 'string' || !Array.isArray(issues) || !fileName) {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
@@ -977,13 +1094,34 @@ var RealityOrchestrator = (() => {
       }
 
       // Verify this engine's patch against the CURRENT verified base.
-      const vr = runVerification(base, attempt.repairedCode, fileName);
+      let vr = runVerification(base, attempt.repairedCode, fileName);
+      let acceptedCode = attempt.repairedCode;
+
+      // [CHAIN-SALVAGE] سقطت الرُقعة كاملةً ⇒ أكبر مجموعةٍ جزئية تُثبَت.
+      if (!(vr.valid === true && vr.improved === true)) {
+        const batchReason = String((vr && vr.reason) || 'batch rejected');
+        const salvage = _salvageVerifiedSubset(base, attempt.repairedCode, fileName);
+        if (salvage) {
+          acceptedCode = salvage.code;
+          vr = salvage.verifyResult;
+          stage.salvaged = _deepFreeze({
+            keptHunks: salvage.kept,
+            droppedHunks: salvage.dropped,
+            batchReason,              // سببُ رفض الرُقعة كاملةً، قبل التجزئة
+          });
+        }
+      }
+
       stage.verifyResult = vr;
 
       if (vr.valid === true && vr.improved === true) {
         stage.succeeded = true;
-        allSafeRepairs  = [...allSafeRepairs, ...attempt.safeRepairs];
-        base            = attempt.repairedCode;   // advance the verified base
+        // بعد الإنقاذ: ما طُبِّق فعلًا وحده يُعلَن (انظر _appliedRepairsOnly)
+        const claimed = stage.salvaged
+          ? _appliedRepairsOnly(attempt.safeRepairs, base, acceptedCode)
+          : attempt.safeRepairs;
+        allSafeRepairs  = [...allSafeRepairs, ...claimed];
+        base            = acceptedCode;           // advance the verified base
         verifiedCode    = base;
         verifyResult    = vr;
 

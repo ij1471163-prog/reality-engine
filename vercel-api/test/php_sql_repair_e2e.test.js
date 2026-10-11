@@ -182,14 +182,17 @@ test('[PHP-2b] ولا تقبل ما لا يُثبت الربط: prepare بلا �
   assert.match(b.reason, /^REJECTED_SQL_NOT_PARAMETERIZED/,
     'رُفض لسبب آخر؛ المطلوب أن يمسكه مُثبِت php تحديدًا: ' + b.reason);
 
-  // (ب-مرجع) وتسلسلٌ باقٍ داخل prepare لا يصل مُثبِت php أصلًا: البلاغ لم
-  //     ينقص، فيمسكه requireImprovement. يُثبَّت كي لا يُنسب الرفض لغير بابه.
+  // (ب-مرجع) وتسلسلٌ باقٍ داخل prepare: البلاغ لم ينقص، ومع ذلك أُعيدت
+  //     كتابةُ تعبيرِ السطر — فيمسكه مُثبِت php عبر مُطلِق EXPR-REWRITE.
+  //     (كان يمسكه requireImprovement قبل ذلك المُطلِق؛ الرفض الآن أدقّ
+  //     لأنه يُسمّي الدعوى غير المُثبتة بدل «لا تحسّن».)
   const stillConcat = head + 'function get($pdo, $name) {\n' +
     '  $stmt = $pdo->prepare("SELECT * FROM t WHERE n = \'" . $name . "\'");\n' +
     '  $stmt->execute([]);\n  return $stmt;\n}\n';
   const b2 = gate(VULN, stillConcat);
   assert.strictEqual(b2.accepted, false, 'قُبل تسلسلٌ باقٍ: ' + b2.reason);
-  assert.match(b2.reason, /^REJECTED_NO_IMPROVEMENT/, b2.reason);
+  assert.match(b2.reason, /^REJECTED_SQL_NOT_PARAMETERIZED/, b2.reason);
+  assert.match(b2.reason, /أُعيدت كتابة تعبيرِ السطر/, b2.reason);
 
   // (ج) محوُ الاستعلام: البلاغ يختفي ولا إصلاح
   const erased = head + 'function get($pdo, $name) {\n  return null;\n}\n';
@@ -252,22 +255,49 @@ test('[PHP-3] fix_engine_pipeline يكتب الإصلاح في الملف ويُ
 
 // ═══ 4. حدودُ القدرة — مقيسة ومُعلَنة، لا موعودة ═══════════════════════
 
-test('[PHP-4] documented: ما لا يُغطّيه هذا المسار يبقى بلا إصلاح تلقائي', () => {
-  // ولا واحدة من هذه ثغرةٌ في البوابة: المحرك لا يُنتج لها مُرشَّحًا أصلًا،
-  // فلا يُكتب شيء. تُثبَّت كي لا يُقرأ «PHP مدعوم» على أنه شامل.
+test('[PHP-4] الأشكال التي كانت بلا تغطية صارت مُغطّاة — PDO وmysqli وإقحام', () => {
+  // كانت هذه الثلاثة موثَّقةً كحدودٍ معلنة: لا مُرشَّح لها إطلاقًا. وقد
+  // عُولجت في مصدرها، فيُثبَّت الآن أنها تُصلَح — وإلا عاد النقص بصمت.
+  //   • بلا لاحقة نصّية : اللاحقة صارت اختيارية في نمط PDO
+  //   • mysqli_query    : فرعٌ جديد بـprepare/bind_param/execute/get_result
+  //   • الإقحام في النصّ: مواضعُ معامِلات من ‎$v‎ و‎{$v}‎ و‎'$v'‎
   const head = '<?php\n$pdo = new PDO("mysql:host=localhost;dbname=app", $u, $p);\n';
+  const mys  = '<?php\n$conn = new mysqli("localhost", $u, $p, "app");\n';
   const cases = {
-    'بلا لاحقة نصّية بعد المتغيّر':
+    'بلا لاحقة نصّية بعد المتغيّر': [
       head + 'function get($pdo, $id) {\n  return $pdo->query("SELECT * FROM t WHERE id = " . $id);\n}\n',
-    'mysqli_query لا PDO':
-      '<?php\n$conn = new mysqli("localhost", $u, $p, "app");\n' +
-      'function get($conn, $id) {\n  return mysqli_query($conn, "SELECT * FROM t WHERE id = " . $id);\n}\n',
-    'إقحام متغيّر داخل النص':
+      /\$stmt = \$pdo->prepare\("SELECT \* FROM t WHERE id = \?"\);/],
+    'mysqli_query': [
+      mys + 'function get($conn, $id) {\n  return mysqli_query($conn, "SELECT * FROM t WHERE id = " . $id);\n}\n',
+      /\$stmt->bind_param\("s", \$id\);/],
+    'إقحام متغيّر داخل النصّ': [
       head + 'function get($pdo, $id) {\n  return $pdo->query("SELECT * FROM t WHERE id = $id");\n}\n',
+      /\$stmt->execute\(\[\$id\]\);/],
   };
-  for (const [name, code] of Object.entries(cases)) {
+  for (const [name, [code, expected]] of Object.entries(cases)) {
     const r = repairSql(code);
-    assert.strictEqual(r.count, 0, name + ': أُنتج مُرشَّح غير متوقَّع:\n' + r.code);
+    assert.strictEqual(r.count, 1, name + ': لم يُنتَج إصلاح — ' + r.reason);
+    assert.match(r.code, expected, name + ':\n' + r.code);
+    assert.doesNotMatch(r.code, /"[^"\n]*"\s*\.\s*\$/, name + ': التسلسل باقٍ');
+  }
+});
+
+test('[PHP-4c] وما لا يُضمَن ترجمتُه يبقى بلا مساس — fail-closed', () => {
+  // الحدُّ المُعلَن الآن ليس «الأشكال» بل «ما لا نضمنه»: خاصيةُ كائن أو
+  // عنصرُ مصفوفة داخل الإقحام يُنتج استعلامًا مكسورًا لو تُرجم بسذاجة
+  // (‎id = ?->p‎)، فيُرَدّ السطر كما هو. وهذا مقيس: أسقطته اختباراتُ
+  // السلبيات قبل إضافة النظر الأمامي.
+  const head = '<?php\n$pdo = new PDO("mysql:host=localhost;dbname=app", $u, $p);\n';
+  const untouched = {
+    'خاصية كائن $o->p': head + 'function g($pdo, $o) {\n  return $pdo->query("SELECT * FROM t WHERE id = $o->p");\n}\n',
+    'عنصر مصفوفة $a[k]': head + 'function g($pdo, $a) {\n  return $pdo->query("SELECT * FROM t WHERE id = $a[k]");\n}\n',
+    'نصٌّ مفرد لا إقحام فيه': head + "function g($pdo, $i) {\n  return $pdo->query('SELECT * FROM t WHERE id = $i');\n}\n",
+    'بلا سائق مُثبَت': '<?php\nfunction g($pdo, $i) {\n  return $pdo->query("SELECT * FROM t WHERE id = $i");\n}\n',
+    '$stmt مستعمَل في الملف': head + '$stmt = 1;\nfunction g($pdo, $i) {\n  return $pdo->query("SELECT * FROM t WHERE id = $i");\n}\n',
+  };
+  for (const [name, code] of Object.entries(untouched)) {
+    const r = repairSql(code);
+    assert.strictEqual(r.count, 0, name + ': أُنتج مُرشَّح غير مضمون:\n' + r.code);
     assert.strictEqual(r.code, code, name + ': الكود تغيّر');
   }
 });

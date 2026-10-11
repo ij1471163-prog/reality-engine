@@ -809,8 +809,16 @@ var FixVerifier = (() => {
     for (const m of code.matchAll(re)) {
       seen++;
       if (seen > 1) return null;
-      const lit = m[1].trim().replace(/;$/, "").match(/^(['"])((?:\\.|(?!\1)[^\\])*)\1$/);
+      // [FIX] الاقتباس الخلفي كان خارج المجموعة، فالاستعلام في قالبٍ نصّي لا
+      // يُعرَف أصلًا — وهو الشكل الأشيع لنصوص SQL في JS. والنتيجة أن إصلاحًا
+      // صحيحًا تمامًا يُرفض بـREJECTED_SQL_NOT_PARAMETERIZED (مقيس):
+      //     const q = `SELECT * FROM users WHERE id = ? AND a = ?`;
+      //     return db.query(q, [uid, fl]);
+      // ويُشترط خلوّ القالب من الإقحام: ‎`… id = ${uid} …`‎ ليس قيمةً ثابتة،
+      // والإقحامُ هو الثغرة نفسها، فلا يُثبَّت عليه ربطٌ بحال.
+      const lit = m[1].trim().replace(/;$/, "").match(/^([`'"])((?:\\.|(?!\1)[^\\])*)\1$/);
       if (!lit) return null;
+      if (lit[1] === "`" && /\$\{/.test(lit[2])) return null;
       found = lit[2];
     }
     return seen === 1 ? found : null;
@@ -1259,6 +1267,59 @@ var FixVerifier = (() => {
   }
 
   // ═══════════════════════════════════════════════════════════════════
+  // تصنيف أسباب الرفض — ليس كلُّ رفضٍ حكمًا على صحة التعديل
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // ثلاثة أصناف مختلفة جوهريًّا، وخلطُها يُسقط إصلاحات سليمة:
+  //
+  //   ضارٌّ / غير مُثبت — التعديل نفسه معطوب أو لا دليل على صحته:
+  //       كسرٌ نحوي، بلاغاتٌ أُضيفت، ادّعاءُ إصلاحٍ بلا إثبات، ناتجٌ فارغ.
+  //   لا تحسّنَ قابلًا للقياس — التعديل قد يكون سليمًا تمامًا، لكن حُبيبيّةَ
+  //       المحلل لا تُظهر فرقًا. مقيس: سطرٌ فيه عنوانا ‎http://‎، أحدهما كودٌ
+  //       داخل نصّ. الإصلاح يُصحّح العنوان الحقيقي وحده بقصد، والبلاغ يُحسَب
+  //       للسطر فيبقى 1→1 ⇒ NO_IMPROVEMENT. وليس ذلك دليل عطب.
+  //   تعذُّرٌ بيئي — لا فاحصَ نحوي للغة، أو البوابة/المحلل غير متوفّر.
+  //       حكمٌ على البيئة لا على التعديل.
+  //
+  // ومَن يحتاج إسقاطَ خطوةٍ بعينها (مثل [STEP-SALVAGE]) يُسقطها على الصنف
+  // الأول وحده، فلا يكون أشدَّ من الحكم النهائي على الكتلة.
+  //
+  // والتصنيف مملوكٌ للبوابة لأنها صاحبة الأسباب. كانت نسخةٌ منه في
+  // fix_engine_pipeline.js وحدها، فأيُّ سببٍ جديد يُضاف هنا (أسباب الإثبات
+  // الخمسة والحِزَم المُصغَّرة) يبقى مجهولًا هناك — وهذا بالضبط ما يُعيد
+  // المشكلة في كل جولة.
+  const HARMFUL_REJECTION_PREFIXES = [
+    'REJECTED_EMPTY_OUTPUT',            // الناتج فارغ
+    'REJECTED_QUICKCHECK',              // فحوص بنيوية سريعة سقطت
+    'REJECTED_SYNTAX_BROKEN',           // الفاحص متاح وحكم بالكسر
+    'REJECTED_ISSUES_WORSENED',         // أضاف بلاغات
+    'REJECTED_PY_UNREACHABLE_CODE',     // أدخل كودًا غير قابل للوصول
+    'REJECTED_MINIFIED_VENDOR',         // هدفٌ لا يُصلَح تلقائيًا
+    // أسباب سجل الإشارة/الإثبات — نقصُ بلاغٍ بلا دليل على إصلاحه
+    'REJECTED_SQL_NOT_PARAMETERIZED',
+    'REJECTED_SECRET_FIX_UNPROVEN',
+    'REJECTED_XSS_FIX_UNPROVEN',
+    'REJECTED_CMD_FIX_UNPROVEN',
+    'REJECTED_CRYPTO_FIX_UNPROVEN',
+    'REJECTED_EVAL_FIX_UNPROVEN',
+  ];
+  // المطابقة ببادئة النص: البوابة تُلحق بالسبب تفصيلًا (اللغة، العدد، الأسماء).
+  function isHarmfulRejection(reason) {
+    const r = String(reason == null ? '' : reason);
+    return HARMFUL_REJECTION_PREFIXES.some(p => r.indexOf(p) === 0);
+  }
+
+  // رفضٌ على **الهدف** لا على التعديل: حكمُه لا يتوقف على الـcandidate إطلاقًا،
+  // فكلُّ تعديلٍ على هذا الملف مرفوضٌ بالضرورة. ومَن يجزّئ تعديلًا ليُنقذ منه
+  // ما يُثبَت (مثل [STEP-SALVAGE]) لا جدوى من محاولته هنا: لا خطوةَ تمرّ،
+  // والثمنُ نداءُ بوابةٍ لكل خطوة على حِزمةٍ قد تكون مئات الكيلوبايتات.
+  const TARGET_REJECTION_PREFIXES = ['REJECTED_MINIFIED_VENDOR'];
+  function isTargetRejection(reason) {
+    const r = String(reason == null ? '' : reason);
+    return TARGET_REJECTION_PREFIXES.some(p => r.indexOf(p) === 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // [SINK-PROOF] إثبات عام لأصناف «مَصرِف غير آمن»
   // ═══════════════════════════════════════════════════════════════════
   //
@@ -1359,13 +1420,32 @@ var FixVerifier = (() => {
 
   // الإثبات: لكل سطر إسنادِ سرٍّ اختفى، يلزم أن يُستبدَل بقراءةٍ من مصدر
   // بيئة/أسرار، وأن يكون النصّ المُستبدَل قد كان القيمة الكاملة.
-  function secretFixProven(beforeCode, afterCode, lang) {
+  // ‎secretLines‎: أرقام الأسطر التي حملت بلاغَ سرٍّ فعلًا في before.
+  //
+  // [FIX] بلا هذا القيد كان ‎gone‎ يُبنى على تخمين regex وحده، فيَعُدّ سطرًا لا
+  // سرَّ فيه إسنادَ سرٍّ، ويُسقط كل إصلاح في الملف. المقيس على ملف حقيقي
+  // (GameServer.js المرفوع):
+  //     var sessionToken = "";   ⇒   let sessionToken = "";
+  // مفتاحُه يطابق ‎token‎ في SECRET_KEY_RX، وقيمتُه ‎""‎ ليست سرًّا ولا تحمل
+  // بلاغًا إطلاقًا، والتغييرُ ‎var→let‎ لا علاقة له بالأسرار. ومع ذلك: السطر
+  // «اختفى» (تغيّر نصّه)، وبديلُه لا يقرأ من مصدر بيئة ⇒ الإثبات يفشل ⇒
+  // ترفض البوابة الكتلة كلها. وكان ذلك يُلغي 9 إصلاحات صحيحة مجتمعة —
+  // قياسًا: إسقاطُ هذا السطر وحده من الكتلة يجعلها ACCEPTED وتُزيل 10 مشاكل.
+  //
+  // فالقيد يُعيد الحارس إلى دعواه بالحرف: «نقص بلاغُ سرٍّ ⇒ أثبِت أن ذلك
+  // السرَّ أُصلح». وسطرٌ لم يحمل بلاغًا ليس جزءًا من الدعوى.
+  // وعند غياب القائمة (مُستدعٍ قديم) يُرجَع إلى السلوك السابق تحفّظًا.
+  function secretFixProven(beforeCode, afterCode, lang, secretLines) {
     const B = String(beforeCode).split('\n');
     const A = String(afterCode).split('\n');
     const aSet = new Set(A.map(l => l.trim()));
     const bSet = new Set(B.map(l => l.trim()));
 
-    const gone = B.filter(l => secretAssignOf(l) && !aSet.has(l.trim()));
+    const onClaim = (secretLines && secretLines.size)
+      ? (i => secretLines.has(i + 1))
+      : (() => true);
+
+    const gone = B.filter((l, i) => onClaim(i) && secretAssignOf(l) && !aSet.has(l.trim()));
     if (!gone.length) return false;          // لا سطر سرٍّ اختفى ⇒ لا شيء مُثبت
 
     // البديل يُعرَف **بالمفتاح نفسه** لا بطول بادئة مشتركة.
@@ -1499,14 +1579,57 @@ var FixVerifier = (() => {
     // requireImprovement ويُقبل. أي أن إسكات كاشفٍ واحد كان يشتري القبول.
     //
     // فأي نقصٍ في عدد بلاغات صنفٍ مُسجَّل يلزمه إثبات. ونقصٌ بلا إثبات = رفض.
-    const countOf = (code, rx) => normalizeIssues(analyzeFunc(code, fileName) || [])
-      .filter(i => rx.test([i && i.type, i && i.title, i && i.cAct, i && i.strategy, i && i.cwe]
-        .map(v => String(v || '')).join(' '))).length;
+    const issueText = i => [i && i.type, i && i.title, i && i.cAct, i && i.strategy, i && i.cwe]
+      .map(v => String(v || '')).join(' ');
+    const matchingIssues = (code, rx) =>
+      normalizeIssues(analyzeFunc(code, fileName) || []).filter(i => rx.test(issueText(i)));
+    const countOf = (code, rx) => matchingIssues(code, rx).length;
+
+    // أسطرُ before التي حملت بلاغَ سرٍّ فعلًا — دعوى حارس السرّ محصورةٌ بها.
+    const linesOf = rx => new Set(
+      matchingIssues(beforeCode, rx)
+        .map(i => Number(i && i.line)).filter(n => Number.isFinite(n) && n > 0));
+    const secretLinesBefore = linesOf(SECRET_ISSUE_RX);
+
+    // ─── [EXPR-REWRITE] أُعيدت كتابةُ التعبير والبلاغُ باقٍ ⇒ ادّعاءٌ لا إصلاح
+    //
+    // سجلُّ الإشارة/الإثبات يُطلَق على **نقص** العدد. وثَمّ شكلٌ لا ينقص فيه
+    // العدد ومع ذلك يُقبل التعديل: أن يُعيد الـcandidate كتابةَ التعبير الذي
+    // يحمل البلاغ بلا إصلاحه، ويُقبل على حساب بلاغٍ **آخر** زال عرضًا.
+    // والمقيس:
+    //     before: db.query("SELECT * FROM users WHERE id = " + req.query.id)
+    //     after : const id = String(req.query.id);
+    //             db.query("SELECT * FROM users WHERE id = " + id.replace(/x/g, ""))
+    //   بلاغا SQL (CWE-89 والتتبّع) باقيان حرفًا، لكن بلاغ IDOR زال لأن
+    //   ‎req.query.id‎ لم يُستخدم مباشرةً ⇒ أزال 1 بلا تدهور ⇒ ACCEPTED.
+    //   فحقنُ SQL باقٍ، والقبول مُشترًى ببلاغٍ من صنفٍ آخر.
+    //
+    // والتمييز الحاسم: هل تغيّر **التعبير** أم الإعلانُ وحده؟
+    //     var query = "…" + u + "…";   ⇒   let query = "…" + u + "…";
+    //   إصلاحٌ سليم لا علاقة له بـSQL، والبلاغ يبقى بحقّ. فلو كان الشرط
+    //   «تغيّر السطر» لرُفض هذا الإصلاح — وهو ما يُطبَّق فعلًا على ملفاتٍ
+    //   حقيقية. فيُقارَن السطر بعد نزع ‎var|let|const‎ وتوحيد المسافات.
+    const _exprOf = l => String(l)
+      .replace(/\b(?:var|let|const)\s+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const _afterExprs = new Set(String(afterCode).split('\n').map(_exprOf));
+    const _beforeLines = String(beforeCode).split('\n');
+    // هل أُعيدت كتابةُ تعبيرِ سطرٍ يحمل بلاغَ هذا الصنف؟
+    const exprRewritten = lineSet => {
+      for (const n of lineSet) {
+        const l = _beforeLines[n - 1];
+        if (l === undefined) continue;
+        if (!_afterExprs.has(_exprOf(l))) return true;
+      }
+      return false;
+    };
 
     const SIGNAL_PROOFS = [
       {
         id: "sql",
         count: code => (hasSqlIssue(code) ? 1 : 0),
+        lines: () => linesOf(/sql[ _-]?injection|cwe-89(?!\d)/i),
         prove: () => (!sqlSinkPresent(beforeCode) ? PROOF.NA
           : sqlCandidateLooksParameterized(beforeCode, afterCode, fileName)),
         reason: "REJECTED_SQL_NOT_PARAMETERIZED — اختفت إشارة SQL من المحلل لكن الـcandidate لا يثبت parameterization صحيحًا",
@@ -1514,7 +1637,8 @@ var FixVerifier = (() => {
       {
         id: "secret",
         count: code => countOf(code, SECRET_ISSUE_RX),
-        prove: () => secretFixProven(beforeCode, afterCode, syn.language),
+        lines: () => secretLinesBefore,
+        prove: () => secretFixProven(beforeCode, afterCode, syn.language, secretLinesBefore),
         reason: "REJECTED_SECRET_FIX_UNPROVEN — نقص بلاغ السرّ لكن الـcandidate لا يثبت أن القيمة كانت سرًّا كاملًا وأنها صارت تُقرأ من مصدر بيئة",
       },
       // [SINK-PROOF] الأصناف الأربعة من مُولِّد واحد — بيانات لا حُرّاس
@@ -1523,6 +1647,7 @@ var FixVerifier = (() => {
         return {
           id,
           count: code => countOf(code, k.issue),
+          lines: () => linesOf(k.issue),
           prove: () => sinkFixProven(beforeCode, afterCode, k.sink, k.remedy),
           reason: k.reason,
         };
@@ -1540,10 +1665,19 @@ var FixVerifier = (() => {
     for (const cls of SIGNAL_PROOFS) {
       const before = cls.count(beforeCode);
       const after = cls.count(afterCode);
-      if (before > after && proofOf(cls) === PROOF.UNPROVEN) {
+      // العدد لم ينقص، وأُعيدت كتابةُ تعبيرِ سطرٍ يحمل البلاغ ⇒ ادّعاءٌ
+      // يلزمه إثبات. (التفصيل عند [EXPR-REWRITE] أعلاه.)
+      const claimedButKept = before > 0 && after >= before &&
+        typeof cls.lines === 'function' && exprRewritten(cls.lines());
+      if ((before > after || claimedButKept) && proofOf(cls) === PROOF.UNPROVEN) {
+        // السببُ نفسه، ويُلحَق به أيُّ المُطلِقَين كان — فنصُّ «اختفت الإشارة»
+        // لا يصدُق على حالة بقاءِ البلاغ مع إعادة كتابة تعبيره.
+        const trigger = before > after
+          ? ''
+          : ' [أُعيدت كتابة تعبيرِ السطر والبلاغُ باقٍ — ادّعاءُ إصلاحٍ بلا إثبات]';
         return {
           accepted: false,
-          reason: cls.reason,
+          reason: cls.reason + trigger,
           syntaxStatus,
           language: syn.language,
           afterIssues: null,
@@ -1660,6 +1794,9 @@ var FixVerifier = (() => {
     verify, quickCheck, fullVerify,
     // البوابة الموحّدة التي يستدعيها الـOrchestrator
     verifyFix,
+    // تصنيف أسباب الرفض — مالكُه البوابة نفسها
+    isHarmfulRejection, HARMFUL_REJECTION_PREFIXES,
+    isTargetRejection, TARGET_REJECTION_PREFIXES,
     // أدوات مشتركة (حتى لا يعيد أحد كتابتها)
     detectLanguage, syntaxCheck, normalizeIssues, normalizeSeverity,
     isHighSeverity, issueKey, issueCounts, diffCounts

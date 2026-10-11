@@ -703,15 +703,20 @@
       // استدعاءٌ داخل تعبير مركّب مثلًا — لا يُمَسّ، ويبقى AI_REQUIRED.
       const phpStmtTaken = /\$stmt\b/.test(fixed);
       fixed = fixed.replace(
-        /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?(\$\w+)[ \t]*->[ \t]*query[ \t]*\([ \t]*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"[ \t]*\.[ \t]*(\$[A-Za-z_][A-Za-z0-9_]*)[ \t]*\.[ \t]*"([^"]*)"[ \t]*\)[ \t]*;?[ \t]*$/gim,
+        // [PHP-NOSUFFIX] اللاحقة النصّية اختيارية: الشكل الأشيع
+        //     $pdo->query("SELECT … WHERE id = " . $id)
+        // بلا نصٍّ بعد المتغيّر، وكان الشرط يُلزمه ‎. "…"‎ فلا يُطابَق أصلًا.
+        /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?(\$\w+)[ \t]*->[ \t]*query[ \t]*\([ \t]*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"[ \t]*\.[ \t]*(\$[A-Za-z_][A-Za-z0-9_]*)(?:[ \t]*\.[ \t]*"([^"]*)")?[ \t]*\)[ \t]*;?[ \t]*$/gim,
         (match, indent, prefix, dbVar, queryPart, variable, suffix) => {
 
           if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(queryPart)) {
             return match;
           }
 
+          const tail = typeof suffix === "string" ? suffix : "";
+
           // لا نصلح إذا كان فيه placeholder موجود مسبقاً.
-          if (/[?$]\d*|%s\b|:\w+/.test(queryPart + suffix)) {
+          if (/[?$]\d*|%s\b|:\w+/.test(queryPart + tail)) {
             return match;
           }
 
@@ -728,7 +733,7 @@
           const cleanSQL =
             queryPart.replace(/['"]\s*$/i, '') +
             '?' +
-            suffix.replace(/^\s*['"]/, '');
+            tail.replace(/^\s*['"]/, '');
 
           const lines = [
             `${indent}$stmt = ${dbVar}->prepare(${JSON.stringify(cleanSQL)});`,
@@ -749,6 +754,138 @@
           return result;
         }
       );
+    }
+
+    // [PHP-INTERP-FIX] الإقحام داخل نصٍّ مزدوج ⇒ مواضعُ معامِلات.
+    //
+    //   "SELECT * FROM t WHERE id = $id"        ⇒ "… id = ?"        + [$id]
+    //   "SELECT * FROM t WHERE n = '$name'"     ⇒ "… n = ?"         + [$name]
+    //   "SELECT * FROM t WHERE id = {$id}"      ⇒ "… id = ?"        + [$id]
+    //
+    // والاقتباسان المحيطان بالإقحام جزءٌ من صياغة النصّ المُستبدَل لا من
+    // الاستعلام — نفس عِلّة [SQL-QUOTED] في smart_repair.
+    //
+    // وfail-closed على كل ما لا نضمن ترجمته: ‎$obj->prop‎، ‎$arr['k']‎،
+    // ‎${expr}‎، واقتباسٌ غير متوازن حول الإقحام ⇒ null فلا يُمَسّ السطر
+    // ويبقى البلاغ قائمًا إلى مسار AI.
+    function _phpInterpParams(body) {
+      const params = [];
+      let out = '';
+      let i = 0;
+      while (i < body.length) {
+        const ch = body.charAt(i);
+        if (ch === '\\') { out += body.substr(i, 2); i += 2; continue; }
+        // النظرُ الأمامي ‎(?!…->|[|::)‎ شرطٌ لا زينة: بلا هذا يُطابَق ‎$o‎ من
+        // ‎$o->p‎ ويبقى ‎->p‎ في نصّ الاستعلام، فيُنتَج ‎id = ?->p‎ — استعلامٌ
+        // مكسور ومعامِلٌ خاطئ. وكذلك ‎$a[k]‎ ⇒ ‎id = ?[k]‎. أسقط ذلك اختبارَي
+        // السلبيات هنا قبل إضافته.
+        const m = /^('?)(?:\{\$([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*))(?!\s*(?:->|\[|::))('?)/.exec(body.slice(i));
+        if (m && (m[2] || m[3])) {
+          if ((m[1] === "'") !== (m[4] === "'")) return null;   // اقتباس غير متوازن
+          params.push('$' + (m[2] || m[3]));
+          out += '?';
+          i += m[0].length;
+          continue;
+        }
+        if (ch === '$') return null;        // شكلُ إقحامٍ غير مضمون
+        out += ch; i++;
+      }
+      if (!params.length) return null;
+      if (/[?]/.test(body)) return null;    // موضعُ معامِلٍ قائم أصلًا
+      if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(out)) return null;
+      return { query: out, params };
+    }
+
+    // ── PHP / mysqli ────────────────────────────────
+    //
+    // [PHP-MYSQLI] mysqli كان مستثنًى من مسار PHP كلّه، فحقنُ SQL في
+    //     mysqli_query($conn, "SELECT … WHERE id = " . $id)
+    // يُكتشَف ولا يُصلَح بحال — وهو شكلٌ شائع جدًّا في PHP.
+    //
+    // والعلاج عبارةٌ محضَّرة بالربط الذي يُثبته المُتحقِّق:
+    //     $stmt = $conn->prepare("SELECT … WHERE id = ?");
+    //     $stmt->bind_param("s", $id);
+    //     $stmt->execute();
+    //     return $stmt->get_result();
+    // ‎"s"‎ لأن MySQL يُكيّف النصّ إلى العدد في المقارنة، وهو ما يفعله
+    // buildPHPFix القائم أصلًا في هذا الملف — لا اجتهادَ جديدًا.
+    //
+    // ونفس تحفّظات مسار PDO حرفًا: سطرٌ نظيف كامل، متغيّرٌ واحد في موضع
+    // قيمةِ مساواة، ولا placeholder قائم، و‎$stmt‎ غير مستعمل في الملف.
+    if (lang === 'php' && driver === DRIVERS.mysqli) {
+      const mysqliStmtTaken = /\$stmt\b/.test(fixed);
+      fixed = fixed.replace(
+        /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?mysqli_query[ \t]*\([ \t]*(\$\w+)[ \t]*,[ \t]*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"[ \t]*\.[ \t]*(\$[A-Za-z_][A-Za-z0-9_]*)(?:[ \t]*\.[ \t]*"([^"]*)")?[ \t]*\)[ \t]*;?[ \t]*$/gim,
+        (match, indent, prefix, connVar, queryPart, variable, suffix) => {
+          const tail = typeof suffix === "string" ? suffix : "";
+
+          if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(queryPart)) return match;
+          if (/[?$]\d*|%s\b|:\w+/.test(queryPart + tail)) return match;
+          if (!/\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*'?\s*$/i.test(queryPart)) return match;
+          if (mysqliStmtTaken) return match;
+
+          const cleanSQL =
+            queryPart.replace(/['"]\s*$/i, '') + '?' + tail.replace(/^\s*['"]/, '');
+
+          const lines = [
+            `${indent}$stmt = ${connVar}->prepare(${JSON.stringify(cleanSQL)});`,
+            `${indent}$stmt->bind_param("s", ${variable});`,
+            `${indent}$stmt->execute();`,
+          ];
+          // النتيجة تُعاد على get_result لا على prepare — نفس عِلّة [PHP-PREFIX]
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt->get_result();`);
+          const result = lines.join('\n');
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'php_mysqli_simple_parameterization',
+            driver: driver.name
+          });
+
+          count++;
+          return result;
+        }
+      );
+    }
+
+    // ── PHP: الإقحام داخل النصّ (PDO وmysqli) ────────
+    if (lang === 'php' && (driver === DRIVERS.pdo || driver === DRIVERS.mysqli)) {
+      const interpStmtTaken = /\$stmt\b/.test(fixed);
+      const isPdo = driver === DRIVERS.pdo;
+      const callRx = isPdo
+        ? /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?(\$\w+)[ \t]*->[ \t]*query[ \t]*\([ \t]*"((?:\\.|[^"\\])*)"[ \t]*\)[ \t]*;?[ \t]*$/gim
+        : /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?mysqli_query[ \t]*\([ \t]*(\$\w+)[ \t]*,[ \t]*"((?:\\.|[^"\\])*)"[ \t]*\)[ \t]*;?[ \t]*$/gim;
+
+      fixed = fixed.replace(callRx, (match, indent, prefix, dbVar, body) => {
+        if (interpStmtTaken) return match;
+        const parsed = _phpInterpParams(body);
+        if (!parsed) return match;
+
+        const lines = [
+          `${indent}$stmt = ${dbVar}->prepare(${JSON.stringify(parsed.query)});`,
+        ];
+        if (isPdo) {
+          lines.push(`${indent}$stmt->execute([${parsed.params.join(', ')}]);`);
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt;`);
+        } else {
+          lines.push(`${indent}$stmt->bind_param("${'s'.repeat(parsed.params.length)}", ${parsed.params.join(', ')});`);
+          lines.push(`${indent}$stmt->execute();`);
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt->get_result();`);
+        }
+        const result = lines.join('\n');
+
+        fixes.push({
+          original: match,
+          fixed: result,
+          strategy: isPdo ? 'php_pdo_interpolation_parameterization'
+                          : 'php_mysqli_interpolation_parameterization',
+          driver: driver.name
+        });
+
+        count++;
+        return result;
+      });
     }
 
     return {

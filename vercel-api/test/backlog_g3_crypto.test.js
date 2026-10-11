@@ -39,7 +39,10 @@ function loadUiContext() {
 }
 const ctx = loadUiContext();
 
-const WEAK = /md5|sha1|crypt|hash|تشفير|ضعيف|MessageDigest/i;
+// ‎hash‎ و‎crypt‎ المجرّدتان تُطابقان **أسماء الدوال** لا البلاغات: بلاغُ
+// «🔵 Call Graph: hashPassword() معرّفة لكن لا تُستدعى» ليس بلاغَ تشفيرٍ
+// ضعيف، وكان يُطالَب بالظهور في aiNeeded. فالانتقاء على وسمِ الخوارزمية.
+const WEAK = /\bmd5\b|\bsha-?1\b|MessageDigest|تشفير ضعيف|تشفير ضعيفة|weak.?(?:hash|crypto)/i;
 const weakLeft = out => (out.phases.fallback.remainingIssues || []).filter(i => WEAK.test(i.title));
 const weakInAi = out => (out.phases.fallback.aiNeeded || []).filter(e => WEAK.test(e.title));
 const serverRun = (code, file) => RO.runPipeline(code, file, { useFallbackChain: true });

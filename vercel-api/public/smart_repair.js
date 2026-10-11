@@ -121,25 +121,49 @@ var SmartRepairEngine = (() => {
   // يحوّل تعبير تجميع SQL إلى نص استعلام كامل + قائمة المعاملات بالترتيب.
   // لا يفقد أي مقطع من الاستعلام، ويرجع null (fail-closed) لأي جزء
   // لا نضمن ترجمته — تعبير مركّب، أو template literal، أو بلا معاملات.
+  // [SQL-QUOTED] المعامِل يُقحَم غالبًا بين علامتَي اقتباس SQL:
+  //     "… WHERE username='" + username + "' AND password='" + password + "'"
+  // وتجميعُ المقاطع حرفًا يُنتج ‎WHERE username='?' AND password='?'‎ — و‎'?'‎
+  // نصٌّ حرفي فيه علامة استفهام، لا موضعُ معامِل. فالناتج **لا يُصلح شيئًا**،
+  // وحارسُ repair_engine يرفضه بحقّ:
+  //     SQL_PLACEHOLDER_QUOTED — a placeholder inside quotes is a literal
+  // فيبقى حقنُ SQL بلا إصلاح ويذهب إلى مسار AI. وهو الشكل الأشيع في الكود
+  // الحقيقي (مقيس على GameServer.js المرفوع).
+  //
+  // والعلاج: علامتا الاقتباس المحيطتان بموضع الإقحام جزءٌ من صياغة النصّ
+  // المُستبدَل، لا من الاستعلام. فتُحذفان مع الإقحام ويحلّ ‎?‎ محلّ الكل.
+  // وغيرُ المتوازن (اقتباسٌ فُتح ولم يُغلق حول الإقحام) لا يُثبَت فيُرَدّ null.
   function parseSqlConcat(rhs) {
     const parts = splitTopLevelPlus(rhs);
     if (!parts) return null;
     let query = '';
     const params = [];
+    let openQuote = null;        // اقتباسُ SQL حُذف قبل معامِل، ويُنتظر إغلاقه
     for (const raw of parts) {
       const piece = raw.trim();
       if (!piece) return null;
       const lit = piece.match(/^(['"])((?:\\.|(?!\1)[^\\])*)\1$/);
       if (lit) {
-        const decoded = decodeStringLiteral(lit[2]);
+        let decoded = decodeStringLiteral(lit[2]);
         if (decoded === null) return null;
+        if (openQuote) {
+          if (decoded.charAt(0) !== openQuote) return null;   // غير متوازن
+          decoded = decoded.slice(1);
+          openQuote = null;
+        }
         query += decoded;
         continue;
       }
       if (!/^[A-Za-z_$][\w$]*$/.test(piece)) return null;
+      const last = query.charAt(query.length - 1);
+      if (last === "'" || last === '"') {
+        openQuote = last;
+        query = query.slice(0, -1);
+      }
       query += '?';
       params.push(piece);
     }
+    if (openQuote) return null;                 // اقتباسٌ لم يُغلَق
     if (!params.length) return null;
     if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(query)) return null;
     return { query, params };

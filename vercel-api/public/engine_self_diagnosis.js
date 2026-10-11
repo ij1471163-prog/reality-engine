@@ -58,11 +58,32 @@ var EngineSelfDiagnosis = (() => {
   // نفسها بدونه، وfix_verifier قبل ghost_mode وfix_engine_pipeline.
   // اختبار drift يثبّت أن هذه القائمة لا تتباعد عن قائمة الخادم.
 
+  // تُطابِق قائمةَ api/analyze.js حرفًا وترتيبًا: البطارية تستجوب المحرك
+  // **كما يُشغَّل** لا نسخةً منه. وE2E-11 يُسقط أيَّ تباعد. وأُضيفت كاشفاتُ
+  // DETECTOR-PARITY هنا لأنها أُضيفت هناك.
   const MODULES = Object.freeze([
     "acorn.min.js",
     "engine_java.js", "c_cpp_analyzer.js", "analyzer.js", "security_scanner.js",
     "secret_detector.js", "taint_core.js", "taint_js.js",
     "taint_py.js", "taint_php.js", "context_analyzer.js",
+    "deep_analyzer.js",
+    "typo_detector.js",
+    "accumulation_detector.js",
+    "pattern_detector.js",
+    "csharp_analyzer.js",
+    "dart_analyzer.js",
+    "smart_context.js",
+    "deep_flow.js",
+    "knowledge_base.js",
+    "cve_patterns.js",
+    "extended_patterns.js",
+    "crypto_scanner.js",
+    "typescript_analyzer.js",
+    "kotlin_analyzer.js",
+    "php_analyzer.js",
+    "advanced_analyzer.js",
+    "threat_detector.js",
+    "dependency_analyzer.js",
     "repair_engine.js", "fallback_fixes.js", "emergency_fixes.js",
     "smart_repair.js", "fixers_orchestrator.js", "repair_sql.js", "self_healing_engine.js",
     "repair_html.js", "repair_advanced.js", "fix_verifier.js",
@@ -114,15 +135,36 @@ var EngineSelfDiagnosis = (() => {
       id: "gate.no-improvement-rejected",
       module: "fix_verifier.js",
       title: "البوابة ترفض تغييرًا لا يُنقص أي مشكلة",
+      // العيّنة بلا أي بلاغ بقصد: كانت ‎q.query.id ⇒ String(q.query.id)‎ على
+      // سطرِ استعلام، وصار يمسكها حارسٌ أدقّ (EXPR-REWRITE: أُعيدت كتابة
+      // تعبيرِ سطرٍ يحمل البلاغ والبلاغُ باقٍ) فيتغيّر السبب. والمِجسّ هنا
+      // لـrequireImprovement وحده، فعيّنتُه تغيُّرٌ شكليٌّ على كودٍ نظيف.
       expr: `(function () {
-        var b = 'app.get("/u", (q, s) => { db.query("SELECT * FROM u WHERE id=" + q.query.id); });';
-        var a = b.replace("q.query.id", "String(q.query.id)");
+        var b = "let a = 1;\\nuse(a);\\n";
+        var a = "let a = 1;\\nuse( a );\\n";
         var r = FixVerifier.verifyFix(b, a, "a.js", analyzeCode);
         var pre = "REJECTED_NO_IMPROVEMENT";
         return {
           ok: r.accepted === false && String(r.reason).indexOf(pre) === 0,
           expected: "accepted=false reason يبدأ بـ" + pre,
           actual: "accepted=" + r.accepted + " reason=" + String(r.reason).slice(0, 60)
+        };
+      })()`,
+    },
+    {
+      id: "gate.expr-rewrite-without-fix-rejected",
+      module: "fix_verifier.js",
+      title: "البوابة ترفض إعادة كتابة تعبيرٍ يحمل بلاغًا دون إصلاحه",
+      // الشكل الذي كان يُقبل: البلاغ باقٍ، والقبول مُشترًى ببلاغٍ آخر زال
+      // عرضًا (IDOR). تفصيلُه عند [EXPR-REWRITE] في fix_verifier.js.
+      expr: `(function () {
+        var b = 'app.get("/u", (q, s) => { db.query("SELECT * FROM u WHERE id=" + q.query.id); });';
+        var a = b.replace("q.query.id", "String(q.query.id)");
+        var r = FixVerifier.verifyFix(b, a, "a.js", analyzeCode);
+        return {
+          ok: r.accepted === false,
+          expected: "accepted=false — تعبيرٌ أُعيدت كتابته والبلاغ باقٍ",
+          actual: "accepted=" + r.accepted + " reason=" + String(r.reason).slice(0, 70)
         };
       })()`,
     },

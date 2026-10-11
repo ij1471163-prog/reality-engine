@@ -1475,7 +1475,64 @@ function getLegacySQLFixer(fileName) {
 // السطر الذي يحقنه فرع الـroute في AuthRepair حرفيًا
 const AUTH_ROUTE_LINE = '  if (!req.user) return res.status(401).json({ error: "Unauthorized" });';
 
-function repairCode(code, issues, fileName) {
+// ═══════════════════════════════════════════════════════════════════════
+// [STEP-SALVAGE] الإصلاح ليس كلَّ شيءٍ أو لا شيء
+// ═══════════════════════════════════════════════════════════════════════
+//
+// كانت الإصلاحات تتراكم في مُرشَّحٍ واحد، ثم تحكم عليه بوابة Ghost حُكمًا
+// واحدًا. فعنصرٌ واحد لا تستطيع البوابة إثباته يُلغي **كل** إصلاحات الملف.
+// والمقيس على ملف حقيقي (GameServer.js، 15 بلاغًا):
+//     تِسعُ إصلاحات، كلٌّ منها مقبولٌ منفردًا بالبوابة  ·  وككتلة: 0 مقبول
+//     ⇒ decision = AI_SUGGESTION  ·  لا يصل العميلَ أي تغيير
+// وهذا سببُ «يصلح جزءًا فقط» — وفي الواقع: لا يصلح شيئًا.
+//
+// والعلاج: عند رفض الكتلة، يُعاد الإصلاح بتحقّقٍ لكل خطوة على حِدة، فتُحفَظ
+// الخطوات التي تُثبَت وتُسقَط وحدها التي لا تُثبَت. وكلُّ خطوة تُقاس ضد
+// **الكود الأصلي** لا ضد سابقتها، فالتراكم رتيبٌ: ما يُقبل يبقى الكل مقبولًا.
+//
+// ولماذا عند الرفض فقط لا دائمًا: نداءُ البوابة يُعيد التحليل مرّتين، وقيسَ
+// كلفتُه ‎22 ms‎ على ملفٍ من 59 سطرًا و‎538 ms‎ على ملفٍ من 1203 أسطر. فتحقّقُ
+// كل خطوة دائمًا يعني ثوانيَ على ملفٍ كبير بلا فائدة في الحالة الشائعة
+// (الكتلة تُقبل). فالمسار السريع يبقى كما كان، والإنقاذ لا يُستدعى إلا عند
+// الرفض الفعلي — مرّةً واحدة ولا تكرار.
+function repairCode(code, issues, fileName, _opts) {
+  const _o = _opts || {};
+  // وضعُ الإنقاذ: كل خطوة تمرّ بالبوابة قبل أن تتقدّم.
+  const verifyEachStep = _o.verifyEachStep === true;
+
+  // البوابة متوفّرة؟ بلا بوابةٍ لا يُستدعى الإنقاذ إطلاقًا — فإسقاطُ كل خطوة
+  // لتعذّر إثباتها يكون أسوأ من السلوك القائم، وGhost تبقى الحكمَ الأخير.
+  const _gateReady = () => {
+    try {
+      return typeof FixVerifier !== 'undefined' && FixVerifier &&
+             typeof FixVerifier.verifyFix === 'function' &&
+             typeof analyzeCode === 'function';
+    } catch (e) { return false; }
+  };
+  // الخطوة تُسقَط على الضرر/عدم الإثبات وحده — لا على «لا تحسّن قابل للقياس»
+  // ولا على تعذّرٍ بيئي. فالإنقاذ لا يجوز أن يكون أشدَّ من الحكم النهائي على
+  // الكتلة، وإلا أسقط إصلاحات كانت تُطبَّق. والتصنيف من البوابة نفسها.
+  // ومقيسٌ ما يحدث بلا هذا التمييز: ثمانية اختبارات قائمة تسقط، منها إصلاحُ
+  // ‎http://‎ على سطرٍ فيه عنوانان (أحدهما كودٌ داخل نصّ) — إصلاحٌ مقصود
+  // وصحيح يرفضه requireImprovement لأن البلاغ يُحسَب للسطر.
+  const _gateVerdict = candidate => {
+    try { return FixVerifier.verifyFix(code, candidate, fileName, analyzeCode); }
+    catch (e) { return null; }
+  };
+  // يُرجع حكمًا واحدًا بنداءٍ واحد: هل الرفض ضارّ؟ وهل هو على الهدف نفسه؟
+  // (نداءان منفصلان كانا يُشغّلان البوابة مرّتين على نفس المُرشَّح — و
+  //  كلفتُها قيست بـ‎538 ms‎ على ملفٍ من 1203 أسطر، فالتوفير ملموس.)
+  const _classify = candidate => {
+    const v = _gateVerdict(candidate);
+    if (!v || v.accepted === true) return { harmful: false, target: false };
+    const has = n => typeof FixVerifier[n] === 'function';
+    return {
+      harmful: has('isHarmfulRejection') ? FixVerifier.isHarmfulRejection(v.reason) : false,
+      target:  has('isTargetRejection')  ? FixVerifier.isTargetRejection(v.reason)  : false,
+    };
+  };
+  const _stepHarmful = candidate => _classify(candidate).harmful;
+
   let ext = 'unknown';
   try {
     ext = detectExt(code, fileName);
@@ -1737,6 +1794,17 @@ function repairCode(code, issues, fileName) {
       }
     }
 
+    // [STEP-SALVAGE] في وضع الإنقاذ: لا تتقدّم خطوةٌ لا تُثبتها البوابة.
+    // تُقاس ضد الكود الأصلي، فيبقى المُرشَّح المتراكم مقبولًا في كل حال.
+    if (verifyEachStep && _stepHarmful(result.fixed)) {
+      rejected.push({
+        line: issue.line, strategy: stratKey, source: 'step-salvage',
+        reason: 'GATE_REJECTED_STEP — البوابة ترفض هذه الخطوة رفضَ ضررٍ أو ' +
+                'عدمِ إثبات، فأُسقطت هي فقط وبقيت بقية إصلاحات الملف',
+      });
+      return;
+    }
+
     repairs.push({
       line: issue.line, title: issue.title, strategy: stratKey,
       before: issue.ev, after: result.patch,
@@ -1746,6 +1814,27 @@ function repairCode(code, issues, fileName) {
     trackFix(repairedCode, result.fixed, problemGroup(stratKey));
     repairedCode = result.fixed;
   });
+
+  // [STEP-SALVAGE] قرارُ الإنقاذ، مرّةً واحدة وقبل أن يحكم Ghost.
+  //
+  // إن كانت البوابة ترفض الكتلة رفضَ **ضرر**، فالعيبُ في بعض خطواتها لا في
+  // كلّها. فيُعاد الإصلاح بتحقّقٍ لكل خطوة، فتُسقَط الخطوة الضارّة وحدها
+  // ويبقى الباقي. وGhost تبقى الحكم الأخير على الناتج المُنقَذ.
+  //
+  // وهو هنا لا في فرع Ghost: Ghost غير محمَّلة في كل بيئة — وVM الخادم
+  // (server_repair_adapter) كانت بلا بوابةٍ إطلاقًا، فيُسلَّم المُرشَّح غير
+  // مُتحقَّقٍ منه ثم يرفضه المُنسّق كاملًا. وتعليقُ الإنقاذ على Ghost يُخرِج
+  // ذلك المسار من الحراسة أصلًا.
+  //
+  // والرفضُ غيرُ الضارّ (لا تحسّن قابل للقياس، أو تعذّرٌ بيئي) لا يُستدعى له
+  // إنقاذ: لا خطوةَ فيه ضارّة، فالإعادة تُنتج نفس الناتج وتُهدر نداءات بوابة.
+  if (!verifyEachStep && repairedCode !== code && _gateReady()) {
+    const cls = _classify(repairedCode);
+    if (cls.harmful && !cls.target) {
+      const salvaged = repairCode(code, issues, fileName, { verifyEachStep: true });
+      if (salvaged && typeof salvaged.repaired === 'string') return salvaged;
+    }
+  }
 
   // AuthRepair
   // يُفترض أنه يضيف أسطرًا فقط. حقن فرع الـroute (401 بلا أي فحص حساسية)
