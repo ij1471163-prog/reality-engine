@@ -236,7 +236,16 @@ test('ومصدر المنع هو V2′ وحده: بتعطيله يُطبَّق �
   assert.strictEqual(run.learnedSyntaxOk('victim.js', NC_VICTIM, lr.fixed), true,
     'الفحص النحوي لا يرفضه');
   const v = run.FixVerifier.verifyFix(NC_VICTIM, lr.fixed, 'victim.js', run.analyzeCode);
-  assert.ok(v.accepted, `والبوابة لا ترفضه — ${v.reason}`);
+  // [SIGNAL-PROOF] كان هذا التأكيد ‎assert.ok(v.accepted)‎: توثيقٌ لثغرة
+  // مقيسة — البوابات الموروثة لا ترفض هذا الضرر، فالمنع كله على V2′.
+  // وقد أُغلقت الثغرة: الضحية تحمل سرًّا، والنمط المسموم يُسقط سطره فينقص
+  // بلاغ السرّ بلا إثبات ⇒ REJECTED_SECRET_FIX_UNPROVEN.
+  //
+  // وغرض الاختبار باقٍ بحرفه: التأكيدات أعلاه تُثبت أن V2′ وحده يمنع
+  // **التطبيق**، وأن Ghost وlearnedSyntaxOk ما زالا لا يرفضان الضرر.
+  // والمتغيّر الوحيد أن البوابة صارت مانعًا ثانيًا مستقلًّا.
+  assert.ok(!v.accepted, 'البوابة يجب أن ترفض محو بلاغ السرّ بلا إثبات');
+  assert.match(String(v.reason), /REJECTED_SECRET_FIX_UNPROVEN/, String(v.reason));
 });
 
 test('وعند HEAD لا يوجد ما يُطبَّق أصلاً: النمط لم يُخزَّن', () => {
@@ -433,7 +442,16 @@ test('إغلاق: ومصدر المنع V2′ — بتعطيله يُطبَّق 
   assert.strictEqual(run.learnedSyntaxOk('app.js', REV_VICTIM, lr.fixed), true,
     'الفحص النحوي لا يرفضه');
   const v = run.FixVerifier.verifyFix(REV_VICTIM, lr.fixed, 'app.js', run.analyzeCode);
-  assert.ok(v.accepted, `والبوابة لا ترفضه — ${v.reason}`);
+  // [SIGNAL-PROOF] كان هذا التأكيد ‎assert.ok(v.accepted)‎: توثيقٌ لثغرة
+  // مقيسة — البوابات الموروثة لا ترفض هذا الضرر، فالمنع كله على V2′.
+  // وقد أُغلقت الثغرة: الضحية تحمل سرًّا، والنمط المسموم يُسقط سطره فينقص
+  // بلاغ السرّ بلا إثبات ⇒ REJECTED_SECRET_FIX_UNPROVEN.
+  //
+  // وغرض الاختبار باقٍ بحرفه: التأكيدات أعلاه تُثبت أن V2′ وحده يمنع
+  // **التطبيق**، وأن Ghost وlearnedSyntaxOk ما زالا لا يرفضان الضرر.
+  // والمتغيّر الوحيد أن البوابة صارت مانعًا ثانيًا مستقلًّا.
+  assert.ok(!v.accepted, 'البوابة يجب أن ترفض محو بلاغ السرّ بلا إثبات');
+  assert.match(String(v.reason), /REJECTED_SECRET_FIX_UNPROVEN/, String(v.reason));
 });
 
 // الطرف الإيجابي: V2′ ليس حظرًا شاملاً. إصلاح سليم بنفس شكل العبارة ونفس

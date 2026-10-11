@@ -1091,14 +1091,168 @@ var FixVerifier = (() => {
    * @returns {{accepted, reason, syntaxStatus, language, afterIssues,
    *            removedCount, addedCount, quick, diff}}
    */
+  // ═══════════════════════════════════════════════════════════════════
+  // [MINIFIED-VENDOR] حِزَم طرف ثالث مُصغَّرة — تُستثنى من الإصلاح افتراضيًا
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // القياس على هذا المستودع: 12 من 13 مُرشَّح إصلاح غير تجميلي كانت على
+  // jspdf.min.js وjszip.min.js. وتعديل سطرٍ واحد في حِزمة مُصغَّرة يعني تعديل
+  // آلاف الرموز في سطر واحد بلا قدرة على مراجعته، وكلّه كودُ طرفٍ ثالث لا
+  // يُصلَح هنا بل يُحدَّث من مصدره.
+  //
+  // والفصل مقيس ولا يلامس ملفات المشروع: أطول سطر في الحِزَم المُصغَّرة
+  // 94,671 و97,246 و111,375، وأطول سطر في أي ملف مشروع 587، ومتوسط الأسطر
+  // 913–111,375 مقابل ≤46. فالعتبات (2000 و200) بينهما بهامش واسع.
+  const VENDOR_PATH = /(?:^|[\\/])(?:node_modules|vendor|third_party|bower_components|dist)[\\/]/i;
+
+  function minifiedVendorProblem(code, fileName) {
+    const name = String(fileName || '');
+    if (VENDOR_PATH.test(name)) return 'path indicates third-party code: ' + name;
+    if (/\.min\.(?:js|mjs|cjs|css)$/i.test(name)) return 'minified bundle by name: ' + name;
+
+    const src = String(code || '');
+    if (src.length < 20000) return null;              // صغير ⇒ ليس حِزمة
+    const lines = src.split('\n');
+    let max = 0;
+    for (const l of lines) if (l.length > max) max = l.length;
+    const avg = Math.round(src.length / lines.length);
+    if (max >= 2000) return 'minified by shape: longest line ' + max + ' chars';
+    if (avg >= 200)  return 'minified by shape: average line ' + avg + ' chars';
+    return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // [SIGNAL-PROOF] سجل الإشارة/الإثبات — حارسٌ عام لا استثناء
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // كان في البوابة حارسٌ واحد بهذا الشكل، خاصٌّ بـSQL: إن اختفت إشارة SQL
+  // ولم يُثبت الـcandidate parameterization ⇒ رفض. وهو الشكل الصحيح، وكان
+  // حالةً مفردة. وبقية الأصناف كان اختفاء البلاغ وحده دليلَ قبولها.
+  //
+  // والعطب المقيس: ‎const token = "ESD_" + incident.probeId;‎ صار
+  // ‎process.env.TOKEN + incident.probeId‎ — فاختفى البلاغ (زال النصّ الحرفي
+  // الذي يكتشفه الكاشف) وقبلته البوابة: accepted=true، «أزال 2 مشكلة، بلا
+  // تدهور». والقيمة ليست سرًّا بل بادئة وسمٍ داخلية، وprocess.env.TOKEN غير
+  // معرَّف. أي أن البوابة قبلت تغيير معنى لأن الكاشف كفّ عن الإبلاغ.
+  //
+  // فصار السجل عامًّا: لكل صنف إشارةٌ تُطلقه وإثباتٌ يلزم لقبول اختفائها.
+  // والقاعدة واحدة لكل الأصناف: **اختفاء الإشارة بلا إثبات = رفض**، لا قبول.
+  // وإضافة صنف جديد تعني إضافة سطرٍ إلى السجل لا حارسًا جديدًا.
+
+  const SECRET_ISSUE_RX =
+    /hardcoded[_ -]?(?:secret|pass|password|key)|hardcoded[_ -]?api[_ -]?key|cwe-798|cwe-259|\bsecret\b|مُضمَّن في الكود|مُضمَّنة في الكود|مكشوفة في الكود/i;
+
+  // مصادر القيم السرّية المقبولة كإثبات
+  const ENV_SOURCE_RX =
+    /process\.env\b|os\.environ\b|os\.getenv\s*\(|\bgetenv\s*\(|System\.getenv\s*\(|Environment\.GetEnvironmentVariable\s*\(|ENV\s*\[|\bdotenv\b|SecretsManager|SecretManager|\bvault\b/i;
+
+  // أسماءٌ تدلّ على سرّ، وقيمٌ تدلّ عليه ولو كان الاسم محايدًا
+  const SECRET_KEY_RX =
+    /password|passwd|pwd|secret|api[_\-]?key|apikey|access[_\-]?key|token|credential|auth/i;
+  const SECRET_VALUE_RX =
+    /^(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}$|^AKIA[0-9A-Z]{12,}$|^gh[pousr]_[A-Za-z0-9]{20,}$|^AIza[0-9A-Za-z_\-]{20,}$|^xox[baprs]-[A-Za-z0-9-]{10,}|^eyJ[A-Za-z0-9_\-]{8,}\./;
+
+  // سطرُ إسنادِ سرٍّ: إسنادٌ قيمتُه نصٌّ حرفي، ومفتاحُه أو قيمتُه تدلّ على سرّ.
+  //
+  // الشرط الحامل هو **التقاط المفتاح** قبل ‎[:=]‎. وكانت أول صياغة لهذا الفحص
+  // تجعل كلمةَ السرّ نفسها هي المُطابَق بلا مفتاح، فطابقت ‎password='‎ داخل
+  // نصّ SQL —
+  //   var query = "SELECT * FROM players WHERE username='" + u + "' AND password='" + p + "'";
+  // — فعُدّ سطرُ الاستعلام إسنادَ سرٍّ، ورُفض معه كل إصلاحٍ في الملف. أسقط ذلك
+  // اختبارين قائمين، و[SP-2e] يثبّت الآن ألّا يعود.
+  //
+  // والتثبيت على ‎^\s*‎ اتساقٌ مع مُطابِق البديل (sameKey) المثبَّت كذلك — وليس
+  // هو ما يحمي حالة SQL أعلاه: أوّلُ تطابقٍ يقع على ‎var q = "SELECT …"‎ فيُرَدّ
+  // لأن ‎q‎ ليس اسمًا سرّيًا، فلا يُجرَّب موضع ‎password='‎ أصلًا. وإزالة
+  // التثبيت وحدها لا تُغيّر حكمًا في أي حالة قابلة للبناء (مقيس).
+  function secretAssignOf(line) {
+    const s = String(line);
+    const m = /^\s*(?:(?:const|let|var|public|private|protected|static|final|readonly)\s+)*(\$?[\w$]+(?:\s*[.[][\w$'"\]]+)*)\s*[:=]\s*(['"])((?:(?!\2).)*)\2/.exec(s);
+    if (!m) return null;
+    const key = m[1], quote = m[2], value = m[3];
+    if (!SECRET_KEY_RX.test(key) && !SECRET_VALUE_RX.test(value)) return null;
+    return { key, quote, value, rest: s.slice(m.index + m[0].length) };
+  }
+
+  // هل النصّ الحرفي المُسنَد هو **القيمة الكاملة**؟
+  //
+  // سرٌّ مُضمَّن قيمةٌ ثابتة كاملة. والنصّ الذي يُجمَع مع تعبيرٍ آخر
+  // (‎"ESD_" + x‎، ‎`${a}x`‎، ‎"a".concat(b)‎) بادئةٌ أو وسمٌ أو جزء مسار —
+  // لا سِرّ. فدعوى «هذا سرٌّ مُضمَّن» غير مُثبتة عليه، وما لا يُثبت يُرفض.
+  // وهذه خاصية عامة في الدعوى نفسها، لا استثناءٌ لملفٍ أو سطرٍ بعينه.
+  function secretLiteralIsWholeValue(line, lang) {
+    const a = secretAssignOf(line);
+    if (!a) return false;
+    if (/\$\{/.test(a.value)) return false;            // ‎${…}‎ إقحام
+    // إقحام PHP داخل نصٍّ مزدوج: ‎"sk_live_{$x}abc"‎ قيمةٌ مُركَّبة لا ثابتة.
+    // مقصورٌ على php بقرار: ‎"p$ssw0rd"‎ في JS نصٌّ حرفي لا إقحام، فتعميم
+    // القاعدة يرفض سرًّا سليمًا فيه ‎$‎. (والقوالب الخلفية وf-strings لا يصلان
+    // هنا أصلًا: لا كاشف يُبلّغ عنها — مقيس.)
+    if (lang === 'php' && a.quote === '"' && /\{\$[\w$]|\$[A-Za-z_]\w*/.test(a.value)) return false;
+    return /^\s*(?:[;,)\]}]|$)/.test(a.rest);          // نهاية عبارة لا عامل تركيب
+  }
+
+  function hasSecretIssueIn(issues) {
+    return (issues || []).some(i => {
+      const text = [i && i.type, i && i.title, i && i.cAct, i && i.strategy, i && i.cwe]
+        .map(v => String(v || '')).join(' ');
+      return SECRET_ISSUE_RX.test(text);
+    });
+  }
+
+  // الإثبات: لكل سطر إسنادِ سرٍّ اختفى، يلزم أن يُستبدَل بقراءةٍ من مصدر
+  // بيئة/أسرار، وأن يكون النصّ المُستبدَل قد كان القيمة الكاملة.
+  function secretFixProven(beforeCode, afterCode, lang) {
+    const B = String(beforeCode).split('\n');
+    const A = String(afterCode).split('\n');
+    const aSet = new Set(A.map(l => l.trim()));
+    const bSet = new Set(B.map(l => l.trim()));
+
+    const gone = B.filter(l => secretAssignOf(l) && !aSet.has(l.trim()));
+    if (!gone.length) return false;          // لا سطر سرٍّ اختفى ⇒ لا شيء مُثبت
+
+    // البديل يُعرَف **بالمفتاح نفسه** لا بطول بادئة مشتركة.
+    // (قياسُ البادئة كان يفشل على مفتاح قصير: ‎$k = "sk_live_…"‎ ⇒ ‎$k = getenv("K")‎
+    //  بادئتهما ‎$k = ‎ خمسة أحرف فقط، فكان الإصلاح السليم يُرفض — أسقط ذلك
+    //  أربعة اختبارات قائمة.)
+    const esc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    for (const line of gone) {
+      if (!secretLiteralIsWholeValue(line, lang)) return false;   // الدعوى نفسها غير مُثبتة
+      const a = secretAssignOf(line);
+      const sameKey = new RegExp(
+        '^\\s*(?:(?:const|let|var|public|private|protected|static|final|readonly)\\s+)*' +
+        esc(a.key) + '\\s*[:=]');
+      // سطرٌ جديد يُسنِد إلى نفس المفتاح ويقرأ من مصدر بيئة/أسرار
+      const proven = A.some(l => !bSet.has(l.trim()) && sameKey.test(l) && ENV_SOURCE_RX.test(l));
+      if (!proven) return false;
+    }
+    return true;
+  }
+
   function verifyFix(beforeCode, afterCode, fileName, analyzeFunc, opts) {
     opts = opts || {};
     const allowUnverifiedLanguages = opts.allowUnverifiedLanguages === true;
     const requireImprovement = opts.requireImprovement !== false;
+    const allowMinifiedVendor = opts.allowMinifiedVendor === true;
 
     if (typeof afterCode !== "string" || afterCode.trim().length === 0) {
       return { accepted: false, reason: "REJECTED_EMPTY_OUTPUT", syntaxStatus: "unknown",
                language: detectLanguage(fileName), afterIssues: null };
+    }
+
+    // (0) [MINIFIED-VENDOR] حِزمة طرف ثالث مُصغَّرة: لا إصلاح تلقائي افتراضيًا.
+    // قبل أي فحص آخر، لأن الرفض هنا ليس عن عطبٍ في الـcandidate بل عن كونِ
+    // الهدف كودًا لا يُصلَح في هذا المستودع. وopts.allowMinifiedVendor تجاوزٌ
+    // صريح لمن يقصده.
+    if (!allowMinifiedVendor) {
+      const vendor = minifiedVendorProblem(beforeCode, fileName);
+      if (vendor) {
+        return { accepted: false,
+                 reason: "REJECTED_MINIFIED_VENDOR — " + vendor +
+                         " - كود طرف ثالث مُصغَّر لا يُصلَح تلقائيًا. فعّل opts.allowMinifiedVendor لتجاوز ذلك صراحةً.",
+                 syntaxStatus: "unknown", language: detectLanguage(fileName), afterIssues: null };
+      }
     }
 
     // (1) دفاع إضافي - ليس صاحب القرار الأساسي، لكنه يمنع كوارث واضحة
@@ -1170,24 +1324,57 @@ var FixVerifier = (() => {
       );
     });
 
-    const originalSqlIssue = hasSqlIssue(beforeCode);
-    // الحارس يعمل فقط عندما تختفي إشارة SQL فعلًا. إن بقيت في الناتج فالـcandidate
-    // لم يدّعِ إصلاح SQL، والحكم عليه يعود لمقارنة diffCounts وحدها.
-    const sqlSignalGone = originalSqlIssue && !hasSqlIssue(afterCode);
+    // [SIGNAL-PROOF] سجل الإشارة/الإثبات.
+    //
+    // كل مُدخَل: إشارةٌ تُطلق الصنف، وإثباتٌ يلزم لقبول اختفائها. والقاعدة
+    // واحدة للجميع: الإشارة اختفت ولم يُثبَت الإصلاح ⇒ رفض. وإن بقيت الإشارة
+    // في الناتج فالـcandidate لم يدّعِ إصلاح هذا الصنف، فيعود الحكم إلى
+    // مقارنة diffCounts وحدها — كما كان حارس SQL يعمل بالحرف.
+    // الشرط **نقصُ العدد** لا اختفاء الإشارة.
+    //
+    // اختفاء الإشارة وحده يترك ثقبًا مقيسًا: المحوُ الجزئي. كاشفان يُبلّغان عن
+    // نفس السرّ في نفس السطر، فيُسكِت التغييرُ أحدهما ويبقى الآخر:
+    //   const apiKey = "sk_live_…"   ⇒ 2 بلاغ (Stripe Secret Key + مفتاح مُضمَّن)
+    //   const apiK3y = "sk_live_…"   ⇒ 1 بلاغ  (إعادة تسمية فقط، والسرّ باقٍ)
+    //   const password = "hunter2hunter2"      ⇒ 2 بلاغ
+    //   const password = "hunter2" + "hunter2" ⇒ 1 بلاغ (تقطيع فقط، والسرّ باقٍ)
+    // الإشارة باقية في الحالين، فحارسُ «اختفت» يسكت — والعدد نقص فيمرّ
+    // requireImprovement ويُقبل. أي أن إسكات كاشفٍ واحد كان يشتري القبول.
+    //
+    // فأي نقصٍ في عدد بلاغات صنفٍ مُسجَّل يلزمه إثبات. ونقصٌ بلا إثبات = رفض.
+    const countOf = (code, rx) => normalizeIssues(analyzeFunc(code, fileName) || [])
+      .filter(i => rx.test([i && i.type, i && i.title, i && i.cAct, i && i.strategy, i && i.cwe]
+        .map(v => String(v || '')).join(' '))).length;
 
-    if (
-      sqlSignalGone &&
-      !sqlCandidateLooksParameterized(beforeCode, afterCode, fileName)
-    ) {
-      return {
-        accepted: false,
+    const SIGNAL_PROOFS = [
+      {
+        id: "sql",
+        count: code => (hasSqlIssue(code) ? 1 : 0),
+        prove: () => sqlCandidateLooksParameterized(beforeCode, afterCode, fileName),
         reason: "REJECTED_SQL_NOT_PARAMETERIZED — اختفت إشارة SQL من المحلل لكن الـcandidate لا يثبت parameterization صحيحًا",
-        syntaxStatus,
-        language: syn.language,
-        afterIssues: null,
-        quick,
-        diff: deep.diff
-      };
+      },
+      {
+        id: "secret",
+        count: code => countOf(code, SECRET_ISSUE_RX),
+        prove: () => secretFixProven(beforeCode, afterCode, syn.language),
+        reason: "REJECTED_SECRET_FIX_UNPROVEN — نقص بلاغ السرّ لكن الـcandidate لا يثبت أن القيمة كانت سرًّا كاملًا وأنها صارت تُقرأ من مصدر بيئة",
+      },
+    ];
+
+    for (const cls of SIGNAL_PROOFS) {
+      const before = cls.count(beforeCode);
+      const after = cls.count(afterCode);
+      if (before > after && !cls.prove()) {
+        return {
+          accepted: false,
+          reason: cls.reason,
+          syntaxStatus,
+          language: syn.language,
+          afterIssues: null,
+          quick,
+          diff: deep.diff
+        };
+      }
     }
 
     // بايثون حصرًا: تعديل يُدخل كودًا غير قابل للوصول يُرفض، ولو أنقص بلاغًا.
