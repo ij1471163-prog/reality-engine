@@ -557,9 +557,14 @@ const OTHER_LANG_BASELINE = {
   'JS إصلاح يُدخل كوداً ميتاً': ['a.js',
     'function auth() {\n  const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n  return API_KEY;\n}\n',
     'function auth() {\n  const API_KEY = process.env.API_KEY;\n  return API_KEY;\n  log(API_KEY);\n}\n', true],
-  'PHP بلا فاحص صياغة': ['a.php',
+  // [PHP-GATE] كان الاسم «PHP بلا فاحص صياغة» والتوقّع false، لأن البوابة
+  // كانت ترفض كل إصلاح PHP بـREJECTED_NO_SYNTAX_CHECKER. وبعد نقل الفاحص
+  // البنيوي المحافظ إلى fix_verifier.js صار هذا الإصلاح الصحيح يُقبل
+  // (syntaxStatus=verified، أزال 3 بلاغات). وما لا يُحسم نحويًا — heredoc أو
+  // وسم ?> — يبقى مرفوضًا كما كان.
+  'PHP بفاحص بنيوي محافظ': ['a.php',
     '<?php\n$api_key = "sk_live_51H8xQ2abcdefghijKLMN";\necho $api_key;\n',
-    '<?php\n$api_key = getenv("API_KEY");\necho $api_key;\n', false],
+    '<?php\n$api_key = getenv("API_KEY");\necho $api_key;\n', true],
 };
 
 for (const [label, [file, before, after, expectAccepted]] of Object.entries(OTHER_LANG_BASELINE)) {

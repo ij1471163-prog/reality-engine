@@ -241,7 +241,12 @@ const OTHER_LANGUAGES = {
                                'function f(){\n  const K = process.env.K;\n  return K;\n  log(K);\n}\n', true],
   'TS':               ['a.ts', 'function f(): string {\n  const K: string = "sk_live_51H8xQ2abcdefghijKLMN";\n  return K;\n}\n',
                                'function f(): string {\n  const K: string = process.env.K;\n  return K;\n}\n', false],
-  'PHP':              ['a.php', '<?php\n$k = "sk_live_51H8xQ2abcdefghijKLMN";\necho $k;\n', '<?php\n$k = getenv("K");\necho $k;\n', false],
+  // [PHP-GATE] كان false لأن البوابة لم تملك فاحص صياغة لـPHP، فتُرفض كل
+  // إصلاحاتها بـREJECTED_NO_SYNTAX_CHECKER. وبعد نقل الفاحص البنيوي المحافظ
+  // إلى fix_verifier.js صار هذا الإصلاح — وهو صحيح: نصّ سرّي ⇒ getenv —
+  // يُقبل بـsyntaxStatus=verified بعد إزالة 3 بلاغات. تغيّر مقصود لا تخفيف:
+  // وJava وGo وRuby في هذا الجدول نفسه ما زالت false (لا فاحص لها).
+  'PHP':              ['a.php', '<?php\n$k = "sk_live_51H8xQ2abcdefghijKLMN";\necho $k;\n', '<?php\n$k = getenv("K");\necho $k;\n', true],
   'Java':             ['a.java', 'class A { String k = "sk_live_51H8xQ2abcdefghijKLMN"; }\n', 'class A { String k = System.getenv("K"); }\n', false],
   'Go':               ['a.go', 'package m\nvar k = "sk_live_51H8xQ2abcdefghijKLMN"\n', 'package m\nvar k = os.Getenv("K")\n', false],
   'Ruby':             ['a.rb', 'k = "sk_live_51H8xQ2abcdefghijKLMN"\nputs k\n', 'k = ENV["K"]\nputs k\n', false],

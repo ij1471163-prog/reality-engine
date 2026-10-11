@@ -350,6 +350,96 @@ var FixVerifier = (() => {
     };
   }
 
+  // ─── فاحص بنيوي محافظ لـPHP ──────────────────────────
+  // [PHP-GATE] كان كل إصلاح PHP يموت عند البوابة بـ
+  //   REJECTED_NO_SYNTAX_CHECKER [php]
+  // لا لعيب فيه بل لأن البوابة لا تملك فاحصًا للغة. والمقيس: إصلاح XSS صحيح
+  // تمامًا — ‎echo htmlspecialchars($_GET["name"], ENT_QUOTES, "UTF-8")‎ —
+  // رفضته البوابة بهذا السبب، ومع تجاوز صريح قبلته وأزال بلاغًا بلا تدهور.
+  // أي أن PHP كاشفةٌ فقط في المنظومة كلها: repairCode وSmartRepair وEmergency
+  // كلها تتعطّل عند هذه النقطة لا عند منطقها.
+  //
+  // والفاحص أدناه ليس جديدًا: هو نفسه المستعمل في مسار الخادم
+  // (server_engine_registration.js)، منقولٌ هنا حرفًا بحرف ليراه مسار المتصفح
+  // أيضًا — وfix_verifier.js مشترك بين المسارين (الخادم يُحمّله بـrequire).
+  // واختبار «لا انحراف» يثبّت تطابق النسختين نصًّا كي لا تتباعدا.
+  //
+  // وهو ليس parser: توازن أقواس ونصوص وتعليقات، يُرجع "unknown" عند أي بنية
+  // لا يفهمها بثقة (heredoc، أو ملف فيه ?>) بدل التخمين. والتعيين على البوابة
+  // يحفظ Fail-Closed بالحرف:
+  //   "ok"       ⇒ available:true,  ok:true   ⇒ يكمل باقي فحوص البوابة
+  //   "broken…"  ⇒ available:true,  ok:false  ⇒ REJECTED_SYNTAX_BROKEN
+  //   "unknown"  ⇒ available:false            ⇒ REJECTED_NO_SYNTAX_CHECKER
+  //                                             (نفس مسار اليوم بالضبط)
+  function structuralSyntax(code, lang) {
+    const php = lang === "php";
+    if (php && (/<<<\s*['"]?\w/.test(code) || /\?>/.test(code))) return "unknown";
+    const stack = [];
+    const close = { ")": "(", "]": "[", "}": "{" };
+    let i = 0, prev = "";           // prev = آخر رمز مهم (لتمييز regex عن القسمة)
+    const n = code.length;
+    const tpl = [];                 // مستويات ${ داخل template literal
+    const exprBefore = () => prev === "" || /[(,=:[!&|?{};+\-*%<>~^]$/.test(prev) ||
+      /^(return|typeof|case|in|of|delete|void|throw|new|instanceof|yield|await)$/.test(prev);
+    while (i < n) {
+      const c = code[i], d = code[i + 1];
+      if (c === "/" && d === "/" || (php && c === "#" && d !== "[")) { while (i < n && code[i] !== "\n") i++; continue; }
+      if (c === "/" && d === "*") { const e = code.indexOf("*/", i + 2); if (e < 0) return "broken: unterminated comment"; i = e + 2; continue; }
+      if (c === "'" || c === '"' || (!php && c === "`")) {
+        const q = c; i++;
+        while (i < n) {
+          const ch = code[i];
+          if (ch === "\\") { i += 2; continue; }
+          if (ch === q) break;
+          if (!php && q !== "`" && ch === "\n") return "broken: unterminated string";
+          if (q === "`" && ch === "$" && code[i + 1] === "{") { tpl.push(stack.length); stack.push("${"); i += 2; break; }
+          i++;
+        }
+        if (i >= n) return "broken: unterminated string";
+        if (code[i] === q) { i++; prev = "str"; }
+        continue;
+      }
+      if (!php && c === "/" && exprBefore()) {          // regex literal
+        i++; let cls = false;
+        while (i < n) {
+          const ch = code[i];
+          if (ch === "\n") return "unknown";
+          if (ch === "\\") { i += 2; continue; }
+          if (ch === "[") cls = true; else if (ch === "]") cls = false;
+          else if (ch === "/" && !cls) break;
+          i++;
+        }
+        if (i >= n) return "unknown";
+        i++; while (i < n && /[a-z]/i.test(code[i])) i++;
+        prev = "re"; continue;
+      }
+      if ("([{".includes(c)) { stack.push(c); prev = c; i++; continue; }
+      if (")]}".includes(c)) {
+        const top = stack.pop();
+        if (c === "}" && top === "${") {                 // عودة إلى داخل template literal
+          tpl.pop(); i++;
+          while (i < n) {
+            const ch = code[i];
+            if (ch === "\\") { i += 2; continue; }
+            if (ch === "`") break;
+            if (ch === "$" && code[i + 1] === "{") { tpl.push(stack.length); stack.push("${"); i += 2; break; }
+            i++;
+          }
+          if (i >= n) return "broken: unterminated template";
+          if (code[i] === "`") { i++; prev = "str"; }
+          continue;
+        }
+        if (top !== close[c]) return `broken: unexpected '${c}'`;
+        prev = c; i++; continue;
+      }
+      if (/\s/.test(c)) { i++; continue; }
+      if (/[A-Za-z_$]/.test(c)) { let j = i; while (j < n && /[\w$]/.test(code[j])) j++; prev = code.slice(i, j); i = j; continue; }
+      prev = c; i++;
+    }
+    if (stack.length) return `broken: unclosed '${stack[stack.length - 1]}'`;
+    return "ok";
+  }
+
   function syntaxCheck(code, filename) {
     const language = detectLanguage(filename);
 
@@ -378,6 +468,18 @@ var FixVerifier = (() => {
 
     if (language === "python") {
       return pythonStructuralSyntaxCheck(code);
+    }
+
+    // [PHP-GATE] PHP وحدها في هذه الخطوة. وTypeScript تبقى كما هي (مُترجم أو
+    // لا حكم) — تحويلها إلى الفاحص البنيوي يغيّر قبولها بلا قياس يوجبه.
+    if (language === "php") {
+      const v = structuralSyntax(code, "php");
+      if (v === "ok") return { ok: true, available: true, language, reason: null };
+      if (v === "unknown") {
+        return { ok: false, available: false, language,
+          reason: "php structure not decidable (heredoc or close-tag) - no verdict" };
+      }
+      return { ok: false, available: true, language, reason: v };
     }
 
     if (language === "javascript") {
