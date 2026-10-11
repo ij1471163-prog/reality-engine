@@ -89,6 +89,17 @@ function stdlibDir() {
 const PY = havePython();
 const STD = PY ? stdlibDir() : null;
 const skipReal = (!PY || !STD) ? 'python3 أو مكتبة بايثون القياسية غير متاحة' : false;
+// عيّنة التحويلات لا تحتاج المكتبة القياسية — فقط مفسّرًا يشغّل المولّد.
+// الشرط أضيق من skipReal لا أوسع: الاختبار صار يعمل في بيئات أكثر لا أقل.
+const skipPy = !PY ? 'python3 غير متاح' : false;
+
+// عيّنة ثابتة داخل المستودع. انظر fixtures/py_reach_corpus/README.md لعقدها
+// وللقياس الذي أوجبها. الترتيب أبجدي صريح فلا يعتمد على ترتيب نظام الملفات.
+const CORPUS_DIR = path.join(__dirname, 'fixtures', 'py_reach_corpus');
+function corpusFiles() {
+  return fs.readdirSync(CORPUS_DIR).filter(f => f.endsWith('.py')).sort()
+    .map(f => path.join(CORPUS_DIR, f));
+}
 
 // ═══ 1. خط أساس على كود حقيقي ══════════════════════════
 // ماذا يرى الماسح في بايثون حقيقي لم يلمسه إصلاح؟ لو رأى ميتًا حيث لا ميت،
@@ -389,10 +400,28 @@ test('مسح واقعي: الإيجابيات والسلبيات الكاذبة 
   }
 });
 
-test('مسح واقعي: التحويلات الـ23 كلها فعّلت، فلا صنف بلا قياس', { skip: skipReal, timeout: 600000 }, () => {
-  const files = sweepFiles();
+// هذا الاختبار حارس تغطية: «لا تحويل بلا قياس». وكان يمسح مكتبة بايثون
+// القياسية للجهاز، فعيّنته تتغيّر بتغيّر المفسّر المثبَّت. المقيس على ثلاثة:
+//     3.13 ⇒ 23/23 ينجح · 3.12 ⇒ 22/23 الناقص collide_and_move يفشل · 3.11 ⇒ 23/23
+// وهو ما أسقط أول تشغيل لـCI على ubuntu-latest (يوفّر 3.12). والسبب أن
+// mut_collide_and_move يشترط دالتين فيهما مُنهٍ في الجسم المباشر وعبارةً بسيطة
+// قبل أول مُنهٍ، والاختيار بينهما عشوائي ببذرة ثابتة على قائمة ترتيبها من
+// العيّنة — فمكتبة 3.12 لا تعطي في أول 12 ملفًا موضعًا مستوفيًا.
+// فصار يمسح عيّنة مثبَّتة في المستودع: 23/23 و368 زوجًا، وناتجًا متطابقًا
+// بايتًا على 3.11 و3.12 و3.13. والمسح الواقعي على كود حقيقي يبقى في الاختبار
+// السابق بلا مساس — ونقله إلى هذه العيّنة كان سيُفقد صنفًا (انظر README).
+test('التحويلات الـ23 كلها فعّلت على العيّنة الثابتة، فلا صنف بلا قياس', { skip: skipPy, timeout: 600000 }, () => {
+  const files = corpusFiles();
+  // حارس: عيّنة ناقصة أو محذوفة تُفشل بوضوح بدل أن تمرّ على فراغ
+  assert.ok(files.length >= 8, `عيّنة ناقصة: ${files.length} ملفًا — العقد ثمانية`);
+  for (const f of files) assert.ok(fs.statSync(f).size > 1000, `ملف عيّنة ضامر: ${path.basename(f)}`);
+
   const seen = new Set();
-  for (const inject of [false, true]) for (const r of mutate(files, inject)) seen.add(r.mutation);
+  let pairs = 0;
+  for (const inject of [false, true]) {
+    for (const r of mutate(files, inject)) { pairs++; seen.add(r.mutation); }
+  }
+  assert.ok(pairs >= 200, `أزواج قليلة: ${pairs} — المولّد صامت على العيّنة`);
   const expected = [
     'change_strings', 'collide_and_move', 'collide_scope_names', 'delete_live',
     'delete_live_and_drop_dead', 'delete_live_and_rewrite_dead', 'drop_dead',
@@ -478,8 +507,10 @@ for (const [label, [before, after]] of Object.entries(REGRESSION_BENIGN)) {
 // الأرقام في الفرع 6 لا معنى لها إن تغيّر الكوربوس بين تشغيلين. البذرة 7
 // ثابتة، والمولّد يستعمل crc32 لا hash() المُبعثرة لكل عملية بايثون.
 
-test('حتمية: نفس البذرة تُنتج نفس الأزواج بايتًا ببايت', { skip: skipReal, timeout: 120000 }, () => {
-  const files = sweepFiles().slice(0, 4);
+// على العيّنة الثابتة لا على مكتبة المضيف: الحتمية المقصودة هنا حتمية المولّد
+// (نفس البذرة ⇒ نفس الناتج)، وقياسها على عيّنة متغيّرة يخلط الأمرين.
+test('حتمية: نفس البذرة تُنتج نفس الأزواج بايتًا ببايت', { skip: skipPy, timeout: 120000 }, () => {
+  const files = corpusFiles().slice(0, 4);
   assert.ok(files.length >= 2, 'ملفات قليلة للقياس');
   const run = () => execFileSync('python3', ['-I', MUTATOR, '7', '1', ...files],
     { encoding: 'utf8', maxBuffer: 1 << 29 });
