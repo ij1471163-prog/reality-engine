@@ -611,15 +611,28 @@ test('[E2E-10e] [DIFF-TRIM] سطرٌ واحد في ملفٍ كبير = hunk وا
   // فكان أصغرُ تراجعٍ مُقترَح هو الملفَ بأكمله — وهو ما يُفترَض أن
   // HUNK_REGRESSION يمنعه. والسقف يُقاس الآن على المنطقة المختلفة.
   const big = Array.from({ length: 2100 }, (_, i) => 'line ' + i);
+
+  // الموضع يُفحَص في الأطراف والوسط، وهذا قياسُ تحوّرٍ لا احتياط: الاقتصاص
+  // طرفانِ مستقلّان، وكلُّ موضعٍ يُنجيه طرفٌ واحد. فتغييرٌ قريبُ **البداية**
+  // تُنجيه اللاحقةُ وحدها، وقريبُ **النهاية** تُنجيه البادئةُ وحدها. ولمّا
+  // كان الاختبار على الموضع 5 والوسط فقط، نجا تحوّرُ «البادئةُ لا تُقتَصّ»
+  // (مقيس: السقف لا يُتجاوَز إلا عند موضعٍ قريبِ النهاية، 2096² = 4.39M).
+  for (const at of [5, Math.floor(big.length / 2), big.length - 6, big.length - 1]) {
+    const big2 = big.slice(); big2[at] = 'CHANGED';
+    const d = ESD._internals.buildHunks(big, big2);
+    assert.strictEqual(d.whole, false,
+      'سطرٌ واحد عند ' + at + ' استدعى المسار المحافظ — الاقتصاص ناقصُ طرف');
+    assert.strictEqual(d.hunks.length, 1, 'عند ' + at + ': تغييرٌ واحد = hunk واحد');
+    assert.deepStrictEqual(ESD._internals.describeHunk(d.hunks[0], big, big2).curSample,
+      ['CHANGED'], 'عند ' + at + ': الـhunk يجب أن يُحدّد السطر المتغيّر نفسه');
+    assert.deepStrictEqual(ESD._internals.describeHunk(d.hunks[0], big, big2).curLines,
+      [at + 1, at + 1], 'عند ' + at + ': موضعُ الـhunk غير مضبوط');
+    assert.strictEqual(ESD._internals.rebuild(d, new Set(), big, big2), big2.join('\n'));
+    assert.strictEqual(ESD._internals.rebuild(d, new Set([0]), big, big2), big.join('\n'));
+  }
+
   const big2 = big.slice(); big2[5] = 'CHANGED';
   const d = ESD._internals.buildHunks(big, big2);
-  assert.strictEqual(d.whole, false,
-    '2100 سطرًا تختلف في سطر واحد لا تستدعي المسار المحافظ');
-  assert.strictEqual(d.hunks.length, 1, 'تغييرٌ واحد = hunk واحد');
-  assert.deepStrictEqual(ESD._internals.describeHunk(d.hunks[0], big, big2).curSample,
-    ['CHANGED'], 'الـhunk يجب أن يُحدّد السطر المتغيّر نفسه');
-  assert.strictEqual(ESD._internals.rebuild(d, new Set(), big, big2), big2.join('\n'));
-  assert.strictEqual(ESD._internals.rebuild(d, new Set([0]), big, big2), big.join('\n'));
 
   // والسقف صِمامٌ قائم: منطقةٌ مختلفة واسعة فعلًا ⇒ المسار المحافظ، بلا انهيار
   const other = Array.from({ length: 2100 }, (_, i) => 'different ' + (i * 7));

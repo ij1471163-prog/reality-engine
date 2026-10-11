@@ -690,6 +690,44 @@ test('[SINK-NA-b] حارس SQL لا يُطالب بمعاملات حين لا ا
   assert.strictEqual(v.accepted, true, `إصلاحٌ لا علاقة له بـSQL رُفض بدعوى SQL: ${v.reason}`);
 });
 
+// دعوى حارس السرّ محصورةٌ بأسطرٍ حملت بلاغًا — وهذا يُقاس على حكم البوابة
+// **مباشرةً**، لا على ناتج خط الإصلاح.
+//
+// سحبُ التحوّرات كشف أن القيد لم يبقَ مُثبَّتًا: كان اختبارُه يمرّ عبر مسار
+// الإصلاح كاملًا، و[STEP-SALVAGE] يُسقط الخطوةَ التي يرفضها الحارسُ الفضفاض
+// ثم يقبل الباقي — فيبقى الناتج «مقبولًا» وتنقص جودتُه صامتةً. المقيس على
+// الملف المرفوع: ‎9 إصلاحات تُزيل 13 بلاغًا‎ تصير ‎7 تُزيل 8‎، والحكم accepted
+// في الحالين. فالإنقاذُ يستر عيبَ الحارس، والتثبيت هنا على البوابة نفسها.
+test('[SP-SECRET-LINE] سطرٌ لم يحمل بلاغَ سرٍّ ليس جزءًا من الدعوى', () => {
+  // ‎sessionToken‎ مفتاحُه يطابق ‎/token/i‎ وقيمتُه ‎""‎ — فليست سرًّا ولا تحمل
+  // بلاغًا، والتغييرُ ‎var→let‎ لا علاقة له بالأسرار. ومعه إصلاحُ سرٍّ حقيقي
+  // مُثبَت. فلو دخل السطرُ الأولُ الدعوى لطُولب بإثباتٍ لا سبيل إليه، فسقطت
+  // الكتلةُ كلها ومعها الإصلاح الصحيح.
+  const before = [
+    'const API_SECRET = "sk_live_abc123xyz789def456ghi";',
+    'var sessionToken = "";',
+    'function send(d) {',
+    '  return post(API_SECRET, sessionToken, d);',
+    '}',
+    'module.exports = { send };',
+  ].join('\n');
+  const after = before
+    .replace('const API_SECRET = "sk_live_abc123xyz789def456ghi";', 'const API_SECRET = process.env.API_SECRET;')
+    .replace('var sessionToken', 'let sessionToken');
+
+  // العزل: السطرُ الثاني لا يحمل بلاغَ سرٍّ أصلًا، والأولُ يحمله
+  const lines = JSON.parse(vm.runInContext(
+    'JSON.stringify((analyzeCode(' + JSON.stringify(before) + ',"s.js")||[])' +
+    '.filter(i=>/hardcoded|cwe-798|cwe-259|secret|مُضمَّن/i.test(String(i.type)+" "+String(i.title||"")))' +
+    '.map(i=>Number(i.line)))', ctx));
+  assert.ok(lines.includes(1), 'سطرُ السرّ الحقيقي لا يحمل بلاغًا — العيّنة لا تختبر شيئًا');
+  assert.ok(!lines.includes(2), 'سطرُ ‎sessionToken‎ يحمل بلاغَ سرٍّ — العيّنة لم تَعُد تُميّز القيد');
+
+  const v = gate(before, after, 's.js');
+  assert.strictEqual(v.accepted, true,
+    'الكتلة رُفضت لسطرٍ لم يحمل بلاغًا — دعوى حارس السرّ تعدّت أسطرَها: ' + v.reason);
+});
+
 test('[SINK-NA-b2] والماسح لم يعد يُبلّغ عن SQL على كلمة query المجرَّدة', () => {
   // جذرُ الحالة أعلاه: كان الشرط ‎/query|execute|sql/i‎ على السطر كلّه، فأيُّ
   // سطر فيه ‎req.query‎ أو متغيّرٍ اسمه ‎query‎ مع دمجِ نصّ يصير بلاغَ SQL.

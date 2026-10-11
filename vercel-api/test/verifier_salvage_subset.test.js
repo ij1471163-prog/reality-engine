@@ -90,19 +90,32 @@ test('[SAL-2] الجزئية هي العقد: الـhunk المُثبَت يُس
 
 test('[DIFF-TRIM] رُقعةٌ موضعية على ملفٍ كبير تُنقَذ — لا تُلغى بحجّة الكلفة', () => {
   // قبل الاقتصاص: 2100×2100 = 4.41M خلية > 4M ⇒ null ⇒ تُفقَد الرُقعة كلها.
+  //
+  // والمواضع في الطرفين معًا: الاقتصاص طرفانِ مستقلّان، وكلُّ موضعٍ يُنجيه
+  // طرفٌ واحد — فرُقعةٌ قريبةُ البداية تُنجيها اللاحقةُ وحدها، وقريبةُ
+  // النهاية تُنجيها البادئةُ وحدها. ورُقعةٌ في موضعٍ واحد لا تُميّز تعطيلَ
+  // أحد الطرفين (مقيس بتحوّرٍ نجا على نظيرِ هذا الاختبار في التشخيص).
   for (const n of [2100, 4000]) {
     const base = Array.from({ length: n }, (_, i) => 'const v' + i + ' = ' + i + ';');
-    const cand = base.slice();
-    cand[10] = 'const v10 = 999;';
-    cand[Math.floor(n / 2)] = 'const vMid = 0;';
+    for (const [label, bad, good] of [
+      ['البداية والوسط', 10, Math.floor(n / 2)],
+      ['الوسط والنهاية', Math.floor(n / 2), n - 3],
+    ]) {
+      const cand = base.slice();
+      cand[bad]  = 'const vBad = 999;';
+      cand[good] = 'const vGood = 0;';
 
-    const r = FV.salvageVerifiedSubset(base.join('\n'), cand.join('\n'),
-      (b, c) => (c.includes('v10 = 999') ? null : { ok: true }));
-    assert.ok(r, n + ' سطرًا: الإنقاذ أُلغي — السقفُ يُقاس على الطول مرّةً أخرى');
-    assert.strictEqual(r.kept, 1, n + ' سطرًا: kept=' + r.kept);
-    assert.strictEqual(r.dropped, 1, n + ' سطرًا: dropped=' + r.dropped);
-    assert.match(r.code, /const vMid = 0;/, n + ' سطرًا: الإصلاح المُثبَت لم يُطبَّق');
-    assert.match(r.code, /const v10 = 10;/, n + ' سطرًا: الـhunk المرفوض لم يَعُد إلى الأصل');
+      const r = FV.salvageVerifiedSubset(base.join('\n'), cand.join('\n'),
+        (b, c) => (c.includes('vBad') ? null : { ok: true }));
+      const at = n + ' سطرًا / ' + label + ': ';
+      assert.ok(r, at + 'الإنقاذ أُلغي — السقفُ يُقاس على الطول مرّةً أخرى');
+      assert.strictEqual(r.kept, 1, at + 'kept=' + r.kept);
+      assert.strictEqual(r.dropped, 1, at + 'dropped=' + r.dropped);
+      assert.match(r.code, /const vGood = 0;/, at + 'الإصلاح المُثبَت لم يُطبَّق');
+      assert.doesNotMatch(r.code, /vBad/, at + 'الـhunk المرفوض لم يَعُد إلى الأصل');
+      assert.ok(r.code.includes('const v' + bad + ' = ' + bad + ';'),
+        at + 'سطرُ الـhunk المُسقَط لم يُستعَد بنصّه الأصلي');
+    }
   }
 });
 
@@ -111,6 +124,26 @@ test('[DIFF-TRIM] والصِّمام قائم: رُقعةٌ تُعيد كتاب�
   const b = Array.from({ length: 2100 }, (_, i) => 'b' + (i * 7)).join('\n');
   assert.strictEqual(FV.salvageVerifiedSubset(a, b, acceptAll), null,
     'اختلافٌ واسع يجب أن يُطلق السقف — وإلا فجدولُ LCS بلا حدّ');
+});
+
+test('[DIFF-TRIM] documented: تغييرانِ على طرفَي ملفٍ كبير يبقيان فوق السقف', () => {
+  // حدٌّ مُعلَن لا عطبٌ مستور. الاقتصاص يُفيد حين تتجاور التغييرات: تغييرانِ
+  // على طرفَي ملفٍ من 2100 سطر يتركان المنطقةَ المختلفة هي الملفَ كلَّه
+  // (2098² = 4.40M > 4M)، فيُطلَق السقفُ ويُعاد ‎null‎ — أي **نفسُ** السلوك
+  // قبل [DIFF-TRIM]، لا أسوأ منه: تسقط الرُقعة بأكملها.
+  //
+  // وأصلُ هذا الحدّ جدولُ LCS الرُباعي نفسُه لا موضعُ القياس. وعلاجُه
+  // الجذري خوارزميةُ Myers — كلفتُها ‎O((N+M)·D)‎ بمسافة التحرير لا بالطول،
+  // فرُقعةٌ متفرّقةٌ على ملفٍ كبير تصير رخيصة. وهو تغييرٌ إنتاجيٌّ قائمٌ
+  // بذاته، ولم يُدخَل في هذه الجولة: سلوكُ السقف **آمن** (لا إنقاذ، كما
+  // كان) لا خاطئ، فليس عطبًا يُلزِم إصلاحَه مع ما سبق.
+  const n = 2100;
+  const base = Array.from({ length: n }, (_, i) => 'const v' + i + ' = ' + i + ';');
+  const cand = base.slice();
+  cand[2]     = 'const vHead = 1;';
+  cand[n - 2] = 'const vTail = 1;';
+  assert.strictEqual(FV.salvageVerifiedSubset(base.join('\n'), cand.join('\n'), acceptAll), null,
+    'لو صار هذا الإنقاذ ممكنًا فقد تغيّر الحدّ — حدِّثْ هذا الاختبار وقِسْ الكلفة');
 });
 
 // ═══════════════════════════════════════════════════════════════════════
