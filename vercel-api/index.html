@@ -976,6 +976,11 @@ if (!localStorage.getItem('re_welcomed')) {
 
 <script>
 window.addEventListener('load', function() {
+  // ─── بوابةُ «التطبيق فقط» — مُعطَّلةٌ مؤقّتًا بطلبِ المالك ───────────
+  // لإعادتها: اجعل القيمة true. سطرٌ واحد، والبوابةُ أدناه لم تُحذف.
+  var APP_ONLY_GATE = false;
+  if (!APP_ONLY_GATE) return;
+
   var ua = navigator.userAgent || '';
   var isApp = ua.includes('RealityEngine') || ua.includes('reality-engine');
   var isDev = location.hostname === 'localhost' || location.search.includes('dev=1');
