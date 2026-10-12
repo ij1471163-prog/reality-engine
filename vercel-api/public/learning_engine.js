@@ -2,589 +2,78 @@
 // learning_engine.js v2.1 — Evidence-based Learning
 // يتعلم فقط من إصلاحات تحقق منها Ghost Mode
 // ═══════════════════════════════════════════════════════
+// الطبقةُ الخارجية من التعلّم: تنسيقُ الدورة وحدها —
+//   learn      : من الكود قبل/بعد إلى دليلٍ متراكم على قاعدة
+//   applyLearned: من المخزن إلى تعديلٍ مقترح، بالمسارين الحرفي والمعمَّم
+//   verify/markUsed: التغذيةُ الراجعة من البوابة إلى المخزن
+//   getStats/getBoosts/reset/learnSafe
+//
+// وما ليس منها — ولم يبقَ فيها:
+//   • القرارُ (العتبات، الثقة، الحظر، الأهلية، حرّاسُ التقابل) ⇒
+//     learning_validation.js
+//   • المخزنُ واستخراجُ المعرفة (localStorage، السقف، LCS، البصمة،
+//     التعميم، المطابقة، التركيب) ⇒ learning_knowledge.js
+//
+// والواجهةُ العامّة لم تتغيّر بحرفٍ عبر التقسيم: ثماني دوال، نفسُ التواقيع،
+// ونفسُ مفتاح التخزين — يحرسها اختبارُ اللقطة المرجعية
+// (test/learning_baseline_snapshot.test.js).
 "use strict";
 
 var LearningEngine = (() => {
 
-  const STORAGE_KEY = 're_learned_patterns_v2';
 
-  const THRESHOLDS = {
-    MIN_VERIFIED:   2,     // أدنى تحققات قبل الموافقة
-    MIN_CONFIDENCE: 0.20,  // أدنى confidence
-    MAX_CONFIDENCE: 0.97,  // حد أقصى
-    DECAY_ON_FAIL:  0.15,  // خفض confidence عند الفشل
-  };
-
-  // Evidence curve — verified فقط ترفع confidence
-  function calcConfidence(verified, failures) {
-    if (verified < THRESHOLDS.MIN_VERIFIED) return 0;
-    const total = verified + failures;
-    const successRate = verified / total;
-
-    let base;
-    if (verified >= 50) base = 0.95;
-    else if (verified >= 20) base = 0.90;
-    else if (verified >= 10) base = 0.80;
-    else if (verified >= 5)  base = 0.70;
-    else                      base = 0.60;
-
-    return Math.min(THRESHOLDS.MAX_CONFIDENCE, base * successRate);
-  }
-
-  // ─── Storage ────────────────────────────────────────
-  function load() {
+  // ─── [S1] طبقةُ التحقّق — حلٌّ كسولٌ لا اعتمادٌ وقت التحميل ──────────
+  //
+  // لا نظامَ وحدات هنا: الملفات سكربتاتٌ في نطاقٍ عام. فالاعتمادُ يُحلّ عند
+  // أول استعمال لا عند التحميل، فلا يكسر اختلافُ الترتيب شيئًا. وغيابُها
+  // خطأٌ صريح لا تدهورٌ صامت: تعلّمٌ بلا تحقّقٍ أسوأ من تعلّمٍ متوقف.
+  let _Vcache = null;
+  function _V() {
+    if (_Vcache) return _Vcache;
+    try { if (typeof LearningValidation !== 'undefined' && LearningValidation) return (_Vcache = LearningValidation); } catch (e) {}
     try {
-      const data = localStorage.getItem(STORAGE_KEY);
-      return data ? JSON.parse(data) : { patterns: [], safe: [], meta: { total: 0 } };
-    } catch(e) {
-      return { patterns: [], safe: [], meta: { total: 0 } };
-    }
+      if (typeof globalThis !== 'undefined' && globalThis.LearningValidation) return (_Vcache = globalThis.LearningValidation);
+      if (typeof window !== 'undefined' && window.LearningValidation) return (_Vcache = window.LearningValidation);
+    } catch (e) {}
+    try { if (typeof require === 'function') return (_Vcache = require('./learning_validation.js')); } catch (e) {}
+    throw new Error('LearningValidation غير محمَّل — راجع ترتيب السكربتات');
   }
 
-  // [P3] سعة المخزن. القياس: نمطٌ متعلَّم واقعي ≈ 1,067 بايت (تشغيل حقيقي
-  // على ملف js: أكبر نمط 1,111B وأصغره 977B)، أي أن حصّة localStorage
-  // المعتادة (5MB) تتسع لـ4,915 نمطًا تقريبًا ثم ترفض الكتابة. السقف أدناه
-  // يترك أكثر من نصف الحصّة هامشًا لقائمة safe ولعبء المتصفح.
-  const MAX_PATTERNS = 2000;
+  // سطحُ اعتماد المحرّك على الطبقتين، مُعلَنًا في موضعٍ واحد. وما سقط منه
+  // بعد نقل الكتل حُذف: اسمٌ محليٌّ لا مُستدعٍ له يُشهِر اعتمادًا غير قائم.
+  const isSafe                = (l)       => _V().isSafe(l);
+  const isGeneralPatternUsable= (p, lang) => _V().isGeneralPatternUsable(p, lang);
+  const isPairUsable          = (p, fn)   => _V().isPairUsable(p, fn);
+  const preservesTarget       = (b, a)    => _V().preservesTarget(b, a);
+  const preservesValueOrder   = (b, a)    => _V().preservesValueOrder(b, a);
 
-  // [P3] عدّاد كتابات فُقدت في هذه الجلسة. لا يُحفَظ — المخزن نفسه هو ما
-  // يرفض الكتابة — فيُقرأ من getStats() كإشارة تشغيلية حاضرة فقط.
-  let saveFailures = 0;
-
-  // [P3] ترتيب الإخلاء بقيمة السجل = ما يقدّمه ÷ كلفة استعادته:
-  //   رتبة 0 — قيد جمع الأدلة (لا معتمد ولا محظور): لا قدرة إصلاح ولا حماية،
-  //            وكلفة استعادته مشاهدة واحدة. فهو منطقة الفائض الطبيعية.
-  //   رتبة 1 — محظور (failures ≥ 3): شاهدُ قبرٍ نافع — learn() لا تتعلّم قاعدة
-  //            كل مطابقيها محظورون، فإسقاطه يسمح بإعادة تعلّمها. لكن حمايته
-  //            حمايةُ كفاءة لا سلامة: البوابة وGhost يرفضان التعديل الضارّ
-  //            مرة بعد مرة حتى يُحظر النمط من جديد.
-  //   رتبة 2 — معتمد: قدرة إصلاح قائمة، وكلفة استعادتها تحقّقان جديدان. آخر
-  //            ما يُخلى.
-  // وداخل الرتبة: الأقدم لمسًا أولاً (lastUsed ثم lastSeen ثم created).
-  function evictionRank(p) {
-    if ((p.failures || 0) >= 3) return 1;
-    if (!p.approved) return 0;
-    return 2;
-  }
-
-  // [P3] lastUsed كان يُكتب في markUsed ولا يُقرأ في أي موضع — حقلٌ معزول.
-  // هنا يصير معنى: آخر استعمالٍ أقرَّته البوابة هو ما يحمي النمط من الإخلاء.
-  function lastTouch(p) {
-    return p.lastUsed || p.lastSeen || p.created || 0;
-  }
-
-  function pruneToCap(db, cap) {
-    const limit = (typeof cap === 'number' && cap > 0) ? cap : MAX_PATTERNS;
-    if (!db || !Array.isArray(db.patterns) || db.patterns.length <= limit) return 0;
-    const ordered = db.patterns.slice().sort((a, b) =>
-      (evictionRank(a) - evictionRank(b)) || (lastTouch(a) - lastTouch(b)));
-    const drop = new Set(ordered.slice(0, db.patterns.length - limit));
-    db.patterns = db.patterns.filter(p => !drop.has(p));
-    db.meta = db.meta || {};
-    db.meta.evicted = (db.meta.evicted || 0) + drop.size;
-    return drop.size;
-  }
-
-  // [P3] كان الفقد صامتًا: catch فارغ يبتلع QuotaExceededError فتُعلن الدالة
-  // المنادية النجاح والمخزن لم يتغيّر. المقيس على مخزن يرفض الزيادة:
-  //   verify('p', false) أرجعت 'p'  و  failures بقي 0  ⇒  الحظر يُفقد،
-  // وحلقة التغذية الراجعة كلها مبنيّة على أن هذا الرقم يصل. فالآن:
-  //   (1) ترجع الدالة صوابًا/خطأً، (2) تُقلِّص المخزن مرة وتُعيد المحاولة،
-  //   (3) تُسجّل الفقد في عدّاد يظهر في getStats().
-  function save(db) {
+  // ─── [S2] طبقةُ المعرفة — المخزنُ واستخراجُ المعرفة ─────────────────
+  //
+  // نفسُ نمطِ الحلّ الكسول: المعرفةُ تُحلّ عند أول استعمال، وغيابُها خطأٌ
+  // صريح. فالمحرّك لا يلمس localStorage ولا يعرف شكلَ القوالب؛ يطلبهما.
+  let _Kcache = null;
+  function _K() {
+    if (_Kcache) return _Kcache;
+    try { if (typeof LearningKnowledge !== 'undefined' && LearningKnowledge) return (_Kcache = LearningKnowledge); } catch (e) {}
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-      return true;
-    } catch (e) {
-      // محاولة إنعاش واحدة: أخلِ النصف الأقل قيمة ثم أعد الكتابة.
-      try {
-        const half = Math.max(1, Math.floor((db && Array.isArray(db.patterns)
-          ? db.patterns.length : MAX_PATTERNS) / 2));
-        if (pruneToCap(db, half) > 0) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-          return true;
-        }
-      } catch (e2) { /* ما زال يرفض — يُعلَن أدناه */ }
-      saveFailures++;
-      try {
-        console.warn('[LearningEngine] فشل حفظ المخزن — الكتابة فُقدت (' + saveFailures + ')');
-      } catch (e3) {}
-      return false;
-    }
+      if (typeof globalThis !== 'undefined' && globalThis.LearningKnowledge) return (_Kcache = globalThis.LearningKnowledge);
+      if (typeof window !== 'undefined' && window.LearningKnowledge) return (_Kcache = window.LearningKnowledge);
+    } catch (e) {}
+    try { if (typeof require === 'function') return (_Kcache = require('./learning_knowledge.js')); } catch (e) {}
+    throw new Error('LearningKnowledge غير محمَّل — راجع ترتيب السكربتات');
   }
 
-  // ─── Safe Whitelist ─────────────────────────────────
-  const SAFE_SIGNATURES = [
-    /process\.env\.\w+/,
-    /os\.environ(?:\.get)?\s*\(/,
-    /getenv\s*\(/,
-    /\.textContent\s*=/,
-    /htmlspecialchars/,
-    /execFile\s*\(/,
-    /sha256|bcrypt|argon2/i,
-    /\?\s*\]/,
-    /expiresIn/,
-    /\.catch\s*\(/,
-    /req\.user/,
-    /res\.status\(401\)/,
-  ];
+  const load                  = ()        => _K().load();
+  const save                  = (db)      => _K().save(db);
+  const pruneToCap            = (db, c)   => _K().pruneToCap(db, c);
+  const inferLanguage         = (f)       => _K().inferLanguage(f);
+  const extractContext        = (c, i)    => _K().extractContext(c, i);
+  const makeFingerprint       = (t, l, b, c) => _K().makeFingerprint(t, l, b, c);
+  const generalizeLinePair    = (b, a)    => _K().generalizeLinePair(b, a);
+  const extractPair           = (b, a, i) => _K().extractPair(b, a, i);
+  const matchGeneralPattern   = (l, p)    => _K().matchGeneralPattern(l, p);
+  const renderGeneralTemplate = (t, v)    => _K().renderGeneralTemplate(t, v);
 
-  function isSafe(line) {
-    return SAFE_SIGNATURES.some(p => p.test(line));
-  }
-
-  // ─── LCS Diff (blocks) ─────────────────────────────
-  function lcsBlocks(before, after) {
-    const n = before.length, m = after.length;
-    const dp = Array.from({length: n+1}, () => new Array(m+1).fill(0));
-    for (let i = 1; i <= n; i++)
-      for (let j = 1; j <= m; j++)
-        dp[i][j] = before[i-1] === after[j-1]
-          ? dp[i-1][j-1]+1
-          : Math.max(dp[i-1][j], dp[i][j-1]);
-
-    const ops = [];
-    let i = n, j = m;
-    while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && before[i-1] === after[j-1]) {
-        ops.unshift({ type:'eq', bi:i-1, ai:j-1 }); i--; j--;
-      } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
-        ops.unshift({ type:'add', ai:j-1, line:after[j-1] }); j--;
-      } else {
-        ops.unshift({ type:'del', bi:i-1, line:before[i-1] }); i--;
-      }
-    }
-
-    const blocks = [];
-    let cur = null;
-    for (const op of ops) {
-      if (op.type === 'eq') { cur = null; continue; }
-      if (!cur) { cur = { removed:[], added:[] }; blocks.push(cur); }
-      if (op.type === 'del') cur.removed.push({ idx:op.bi, line:op.line });
-      if (op.type === 'add') cur.added.push({ idx:op.ai, line:op.line });
-    }
-    return blocks;
-  }
-
-  // ─── Language Inference ─────────────────────────────
-  function inferLanguage(fileName) {
-    const ext = (fileName || '').split('.').pop().toLowerCase();
-    const map = { js:'js', ts:'ts', py:'py', php:'php', java:'java', html:'html', css:'css', rb:'ruby', go:'go', cs:'csharp' };
-    return map[ext] || 'unknown';
-  }
-
-  // ─── Context Extraction ──────────────────────────────
-  function extractContext(code, lineIdx) {
-    const lines = code.split('\n');
-    const line = lines[lineIdx] || '';
-
-    // ابحث عن اسم الدالة المحيطة
-    let functionName = null;
-    for (let i = lineIdx; i >= 0; i--) {
-      const m = lines[i].match(/(?:function|def|public|private|async)\s+(\w+)\s*\(/);
-      if (m) { functionName = m[1]; break; }
-    }
-
-    // scope
-    const scope = line.includes('class ') ? 'class'
-      : functionName ? 'function'
-      : 'module';
-
-    return { functionName: functionName || null, scope };
-  }
-
-  // ─── Fingerprint ─────────────────────────────────────
-  function makeFingerprint(type, language, before, context) {
-    // normalize before — حذف مسافات زائدة وتوحيد
-    const norm = (before || '').trim().replace(/\s+/g, ' ').toLowerCase();
-    const scope = context ? context.scope : 'global';
-    const fn    = context ? (context.functionName || 'global') : 'global';
-    const str   = `${type}|${language}|${norm}|${scope}:${fn}`;
-    // simple hash بدون مكتبات خارجية
-    let h = 0;
-    for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0;
-    return Math.abs(h).toString(36);
-  }
-
-  // ─── Anchor Tokens ───────────────────────────────────
-  // معرّفات السطر فقط — بدون القيم النصية ولا الكلمات المفتاحية
-  function anchorTokens(line) {
-    const KEYWORDS = new Set([
-      'const','let','var','function','def','return','new','this','self','class',
-      'public','private','protected','static','final','import','from','require',
-      'if','else','for','while','try','catch','async','await',
-    ]);
-    const noStrings = (line || '').replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, ' ');
-    const words = noStrings.match(/[A-Za-z_$][\w$]*/g) || [];
-    return [...new Set(words.filter(w => !KEYWORDS.has(w)))];
-  }
-
-  // ─── Assignment Target ───────────────────────────────
-  // هدف الإسناد في السطر: x أو obj.prop، ويشمل الإسناد المركّب (+=).
-  // null يعني أن السطر ليس إسناداً (استدعاء أو تعبير).
-  function assignTarget(line) {
-    const m = (line || '').trim().match(
-      /^(?:const|let|var)?\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:\+|-|\*|\/|\|\||\?\?)?=(?!=)/);
-    return m ? m[1] : null;
-  }
-
-  // هل يقابل سطر الإصلاح السطرَ الأصلي فعلاً؟
-  // بلا هذا الفحص يُربط أول سطر يطابق نوع الثغرة بأي سطر أصلي، فيُخزَّن
-  // زوج مثل: console.log(API_KEY);  →  const API_KEY = process.env.API_KEY;
-  // وتطبيقه لاحقاً يحذف الاستدعاء ويضع مكانه تصريحاً.
-  function corresponds(beforeLine, afterLine) {
-    const bt = assignTarget(beforeLine);
-    const at = assignTarget(afterLine);
-    if (bt && at && bt === at) return true;   // إسناد لنفس الهدف ⇒ تقابل مؤكد
-    // [FIX] كان الفحص اتجاهياً: ‎if (!bt && at)‎ يمنع "استدعاء ⇄ تصريح" ولا
-    // يمنع العكس. فزوج مثل:
-    //     const API_KEY = "sk_live_…";  →  sendKey(process.env.API_KEY);
-    // يسقط إلى تقاطع المعرّفات ويمرّ لمجرد تقاسم API_KEY، فيُخزَّن ويُعتمد،
-    // وتطبيقه يحذف التصريح ويضع مكانه استدعاءً فتصير بقية استعمالات الاسم
-    // غير معرّفة. وهو ضرر من صنف ما أصلحه D2، في الاتجاه المعاكس، ومقيس
-    // أنه يجتاز GhostMode و learnedSyntaxOk و FixVerifier كلها.
-    // التناظر هو العقد المقصود: تغيّر شكل العبارة ⇒ ليسا متقابلين، أياً كان
-    // الأصل. وما يبقى لتقاطع المعرّفات هو الحالتان المتماثلتان شكلاً:
-    // إسنادان لهدفين مختلفين، أو سطران غير إسناديين.
-    if (!bt !== !at) return false;            // أحدهما إسناد والآخر لا
-    const anchors = anchorTokens(beforeLine);
-    if (!anchors.length) return false;
-    const tokens = new Set(anchorTokens(afterLine));
-    return anchors.some(a => tokens.has(a));
-  }
-
-  // ─── Corresponding Candidate ─────────────────────────
-  // يربط after بالسطر الأصلي نفسه — وليس بأول سطر يطابق نوع الثغرة
-  function pickCorresponding(typed, hunk, beforeLine, removedRank) {
-    if (!typed.length) return null;
-    // بوابة أخيرة على كل المسارات: لا نقبل مرشحاً بلا دليل تقابل،
-    // ولو كان المرشح الوحيد.
-    const confirm = c => (c && corresponds(beforeLine, c.line)) ? c : null;
-    if (typed.length === 1) return confirm(typed[0]);
-
-    // 1) تطابق المعرّفات — الإشارة الأقوى، وتتطلب فائزاً واضحاً
-    const anchors = anchorTokens(beforeLine);
-    if (anchors.length) {
-      const scored = typed
-        .map(c => {
-          const tokens = new Set(anchorTokens(c.line));
-          return { c, score: anchors.filter(a => tokens.has(a)).length };
-        })
-        .sort((a, b) => b.score - a.score);
-
-      if (scored[0].score > 0 && scored[0].score > (scored[1] ? scored[1].score : 0)) {
-        return confirm(scored[0].c);
-      }
-    }
-
-    // 2) تقابل موضعي — فقط إذا كان الـhunk استبدالاً 1:1 بلا إدراج
-    if (removedRank >= 0 && hunk.removed.length === hunk.added.length) {
-      const byPos = hunk.added[removedRank];
-      if (byPos && typed.indexOf(byPos) !== -1) return confirm(byPos);
-    }
-
-    // 3) غير محسوم → Fail Closed: لا نتعلم زوجاً غير مؤكد
-    return null;
-  }
-
-
-  // ─── Generalized Pattern Learning ───────────────────
-  // يتعلم فكرة الإصلاح بدل نسخ السطر حرفياً.
-  function generalizeLinePair(before, after) {
-    if (!before || !after || before === after) return null;
-
-    const identifierRe = /\b[A-Za-z_$][\w$]*\b/g;
-
-    const KEYWORDS = new Set([
-      'const','let','var','function','def','return','new','this','self',
-      'class','public','private','protected','static','final','import',
-      'from','require','if','else','for','while','try','catch',
-      'async','await','true','false','null','undefined'
-    ]);
-
-    function maskStrings(source) {
-      let out = '';
-      let quote = null;
-      let escaped = false;
-
-      for (const ch of String(source)) {
-        if (quote !== null) {
-          out += ' ';
-
-          if (escaped) escaped = false;
-          else if (ch === '\\') escaped = true;
-          else if (ch === quote) quote = null;
-
-          continue;
-        }
-
-        if (ch === '"' || ch === "'" || ch === '`') {
-          quote = ch;
-          out += ' ';
-        } else {
-          out += ch;
-        }
-      }
-
-      return out;
-    }
-
-    const stringRe = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g;
-
-    // [FIX] لا يُجرَّد إلا ما لم يُغيّره الإصلاح.
-    //
-    // كانت كل نصوص ومعرّفات السطر تُبدَّل بخانات، بما فيها الرمزُ الذي
-    // يُعرِّف الثغرة. فالقالب يفقد ما يميّز الشكل المعيب ويصير يطابق كوداً
-    // سليماً. والمقيس على الأزواج الصحيحة الثلاثة المقصود تعلّمها:
-    //   secret: const __ID_1__ = __STR_1__;  →  const __ID_1__ = process.env.__ID_1__;
-    //     فيحوّل  const APP_NAME = "Reality Engine"  إلى process.env.APP_NAME
-    //   md5:    const __ID_1__ = __ID_2__.__ID_3__(__STR_1__);  →  … ("sha256");
-    //     فيحوّل  const p = path.join("config")  إلى  path.join("sha256")
-    //   xss:    __ID_1__.__ID_2__ = __ID_3__.__ID_4__;  →  __ID_1__.textContent = …
-    //     فيحوّل  cfg.timeout = opts.value  إلى  cfg.textContent = opts.value
-    // والثلاثة تجتاز GhostMode و learnedSyntaxOk و FixVerifier معاً.
-    //
-    // الرمز الذي يغيّره الإصلاح هو إشارة الثغرة ("md5"، innerHTML، النص
-    // السرّي)، فيبقى حرفياً في القالب فلا يطابق إلا الشكل المعيب. وما يبقى
-    // قابلاً للتجريد هو سياق الإصلاح: ما ورد في الطرفين بلا تغيير.
-    const afterStrings = new Set(String(after).match(stringRe) || []);
-    const afterIds = new Set(
-      maskStrings(after).match(/\b[A-Za-z_$][\w$]*\b/g) || []
-    );
-
-    const strings = [];
-    const beforeWithStringSlots = before.replace(stringRe, value => {
-      if (!afterStrings.has(value)) return value; // غيّره الإصلاح ⇒ إشارة
-      const id = `STR_${strings.length + 1}`;
-      strings.push({
-        id,
-        kind: 'string',
-        value
-      });
-      return `__LEARN_${id}__`;
-    });
-
-    const afterWithStringSlots = after.replace(stringRe, value => {
-      const found = strings.find(x => x.value === value);
-      return found ? `__LEARN_${found.id}__` : value;
-    });
-
-    const placeholderRe = /__LEARN_STR_\d+__/g;
-    const beforeForIds = maskStrings(
-      beforeWithStringSlots.replace(placeholderRe, ' ')
-    );
-
-    const beforeIds = [];
-    let m;
-
-    while ((m = identifierRe.exec(beforeForIds)) !== null) {
-      const id = m[0];
-
-      // afterIds: المعرّف الذي لم يَرِد في طرف الإصلاح غيّره الإصلاح، فهو
-      // إشارة الثغرة لا سياقها ⇒ يبقى حرفياً.
-      if (!KEYWORDS.has(id) && !beforeIds.includes(id) && afterIds.has(id)) {
-        beforeIds.push(id);
-      }
-    }
-
-    // بلا رمز واحد قابل للتجريد لا تعميم — والتعلّم بالمطابقة الحرفية يبقى.
-    if (!beforeIds.length) return null;
-
-    const idSlots = beforeIds.map((value, i) => ({
-      id: `ID_${i + 1}`,
-      kind: 'identifier',
-      value
-    }));
-
-    const slots = [...strings, ...idSlots];
-
-    let beforeTemplate = beforeWithStringSlots;
-    let afterTemplate = afterWithStringSlots;
-
-    const sorted = [...beforeIds].sort((a, b) => b.length - a.length);
-
-    for (const value of sorted) {
-      const slot = idSlots.find(x => x.value === value);
-      const escaped = value.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
-      const re = new RegExp(`\\b${escaped}\\b`, 'g');
-
-      beforeTemplate = beforeTemplate.replace(
-        re,
-        `__LEARN_${slot.id}__`
-      );
-
-      afterTemplate = afterTemplate.replace(
-        re,
-        `__LEARN_${slot.id}__`
-      );
-    }
-
-    const fixedBefore = beforeTemplate
-      .replace(/__LEARN_ID_\d+__/g, '')
-      .replace(/\s+/g, '');
-
-    if (fixedBefore.length < 3) return null;
-
-    return {
-      beforeTemplate: beforeTemplate.replace(/\s+/g, ' ').trim(),
-      afterTemplate: afterTemplate.replace(/\s+/g, ' ').trim(),
-      beforeSlots: slots,
-      afterSlots: slots,
-      sharedTokens: beforeIds.filter(id => after.includes(id))
-    };
-  }
-
-  function isGeneralPatternUsable(pattern, language) {
-    if (!pattern || !language || language === 'unknown') return false;
-    if (!pattern.beforeTemplate || !pattern.afterTemplate) return false;
-    if (!Array.isArray(pattern.beforeSlots)) return false;
-
-    const count =
-      (pattern.beforeTemplate.match(/__LEARN_ID_\d+__/g) || []).length;
-
-    if (count > 8) return false;
-
-    // [V4] ترتيب الخانات لا يُبدَّل بين الطرفين.
-    // قالب يعيد ترتيب الخانات يُركِّب المعامِلات في مواضع غير مواضعها، فيغيّر
-    // دلالة السطر مع ثبات هدف الإسناد — فلا يراه حرس الهدف ولا المرجع الخلفي.
-    // والمقيس أن الأزواج الصحيحة الخمسة (secret / md5 / xss / sql parameterized /
-    // ذاتي المرجع) تحفظ الترتيب كلها، فالشرط بلا تكلفة ويمنع التبديل.
-    const seqOf = src => {
-      const out = [];
-      for (const tok of (src.match(/__LEARN_(?:ID|STR)_\d+__/g) || [])) {
-        if (out.indexOf(tok) === -1) out.push(tok);
-      }
-      return out;
-    };
-    const beforeSeq = seqOf(pattern.beforeTemplate);
-    const afterSeq  = seqOf(pattern.afterTemplate).filter(x => beforeSeq.indexOf(x) !== -1);
-    let seqAt = 0;
-    for (const tok of beforeSeq) if (afterSeq[seqAt] === tok) seqAt++;
-    if (seqAt !== afterSeq.length) return false;
-
-    const fixed = pattern.beforeTemplate
-      .replace(/__LEARN_ID_\d+__/g, '')
-      .replace(/\s+/g, '');
-
-    return fixed.length >= 3;
-  }
-
-  // ─── Extract Pair (LCS + Fail Closed) ────────────────
-  function extractPair(codeBefore, codeAfter, issue) {
-    const linesBefore = codeBefore.split('\n');
-    const linesAfter  = codeAfter.split('\n');
-    const ln          = (issue.line || 1) - 1;
-    const beforeLine  = linesBefore[ln]?.trim() || '';
-
-    if (!beforeLine || isSafe(beforeLine)) return null;
-
-    // LCS blocks
-    const blocks = lcsBlocks(
-      linesBefore.map(l => l.trim()),
-      linesAfter.map(l => l.trim())
-    );
-
-    // الـ hunk اللي يحتوي issue line
-    const hunk = blocks.find(b => b.removed.some(r => r.idx === ln));
-    if (!hunk || !hunk.added.length) return null;
-
-    // تصنيفُ البلاغ موزَّعٌ على حقولٍ عدّة، فيُقرأ من **مجموعها** لا من أوّل
-    // حقلٍ غير فارغ. و‎(type || cAct)‎ كان يُسقط سطحًا كاملًا من التعلّم:
-    // بلاغُ التراكم ‎type="bug"‎ واسمُه ‎strategy="ACCUMULATION"‎، و‎type‎ غيرُ
-    // فارغ فلا يُقرأ ما بعده ⇒ ‎t="bug"‎ ⇒ لا مفتاحَ في TYPE_FIXES يطابقه ⇒
-    // ‎knownType=false‎ ⇒ ‎null‎. أي أن زوجَ ‎= → +=‎ الصحيح كان لا يصل التعلّم
-    // إطلاقًا، لا لعطبٍ في التعلّم بل لحقلٍ لم يُقرأ. ونفسُ العِلّة تُسكِت أيَّ
-    // بلاغٍ يحمل كلمةً عامّة في ‎type‎ وتصنيفَه الحقيقي في غيره.
-    //
-    // ولا يُوسّع ذلك القبول: المفتاحُ المطابق يُلزِم سطرَ الإصلاح بشكلِ صنفه
-    // (TYPE_FIXES أدناه)، والمجهولُ يُرفض كما كان — fail-closed قائم.
-    const t = [issue.type, issue.cAct, issue.strategy]
-      .map(v => String(v == null ? '' : v)).join(' ').toLowerCase();
-
-    // TYPE_FIXES — ربط نوع الثغرة بـ regex الإصلاح
-    const TYPE_FIXES = {
-      secret:    /process\.env|os\.environ\.get|getenv/,
-      hardcoded: /process\.env|os\.environ\.get|getenv/,
-      cwe_798:   /process\.env|os\.environ\.get|getenv/,
-      sql:       /\?|prepare|parameterized|db\.query/,
-      cwe_89:    /\?|prepare|parameterized/,
-      xss:       /textContent|htmlspecialchars|sanitize|DOMPurify/,
-      crypto:    /sha256|bcrypt|argon2/,
-      cwe_327:   /sha256|bcrypt|argon2/,
-      eval:      /JSON\.parse|safeEval/,
-      cwe_094:   /JSON\.parse|safeEval/,
-      cmd:       /execFile|allowedCmds/,
-      accumul:   /\+=/,
-      counter:   /\+=/,
-    };
-
-    // Fail Closed: لو النوع غير معروف → رفض
-    const knownType = Object.keys(TYPE_FIXES).some(k => t.includes(k));
-    if (!knownType) return null;
-
-    // فلتر candidates من نفس الـ hunk
-    const candidates = hunk.added.filter(a => {
-      const l = a.line;
-      if (!l || l.length < 5) return false;
-      if (/^\/\//.test(l)) return false;
-      if (/^[{}();,#]$/.test(l)) return false;
-      return true;
-    });
-
-    if (!candidates.length) return null;
-
-    // اختر الـ candidate المقابل فعلياً للسطر الأصلي داخل نفس الـhunk
-    const removedRank = hunk.removed.findIndex(r => r.idx === ln);
-
-    let afterLine = '';
-    for (const [key, regex] of Object.entries(TYPE_FIXES)) {
-      if (!t.includes(key)) continue;
-      const typed = candidates.filter(c => regex.test(c.line));
-      const match = pickCorresponding(typed, hunk, beforeLine, removedRank);
-      if (match) { afterLine = match.line; break; }
-    }
-
-    // Fail Closed: لو ما في match → رفض
-    if (!afterLine || afterLine === beforeLine) return null;
-
-    return {
-      type:     issue.type || issue.cAct || 'unknown',
-      severity: issue.sev  || 'c',
-      before:   beforeLine,
-      after:    afterLine,
-    };
-  }
-  // ─── Validate Fix Before Learning ────────────────────
-  // لا نخزّن after لا نستطيع إثبات سلامته. لا parser جديد:
-  // isBalanced موجودة في analyzer.js:83 ويستخدمها المحلل لنفس الغرض
-  // (analyzer.js:129)، وacorn محمّل أصلاً في الصفحة.
-  function parsesAsJS(src) {
-    for (const sourceType of ['module', 'script']) {
-      try { acorn.parse(src, { ecmaVersion: 'latest', sourceType }); return true; }
-      catch(e) {}
-    }
-    return false;
-  }
-
-  // التحقق على مستوى الزوج نفسه — لا على مستوى الملف، حتى لا يُرفض
-  // نمط صحيح بسبب سطر مكسور آخر يحقنه محرك الإصلاح في مكان بعيد.
-  function isPairUsable(pair, fileName) {
-    // Fail Closed: بلا أداة تحقق متاحة لا نتعلم شيئاً
-    if (typeof isBalanced !== 'function') return false;
-
-    // 1) توازن الأقواس — لكل اللغات (JS/TS/Python/PHP).
-    //    لا نحاسب سطراً كان أصلاً غير متوازن (سطر جزئي مثل "items.forEach(i => {")
-    if (isBalanced(pair.before) && !isBalanced(pair.after)) return false;
-
-    // 2) JS النقي فقط: تحقق نحوي بـacorn. لا يدعم TS/JSX فتُستثنى،
-    //    ونحكم فقط إذا كان before سطراً مكتملاً يُحلَّل وحده — وإلا لا حكم.
-    if (/\.(js|mjs|cjs)$/i.test(fileName || '')) {
-      if (typeof acorn === 'undefined' || typeof acorn.parse !== 'function') return false;
-      if (parsesAsJS(pair.before) && !parsesAsJS(pair.after)) return false;
-    }
-
-    return true;
-  }
 
   // ─── Learn ──────────────────────────────────────────
   function learn(codeBefore, codeAfter, issues, fileName) {
@@ -688,7 +177,7 @@ var LearningEngine = (() => {
     // [P3] السقف يُطبَّق عند الإضافة لا عند الامتلاء: الإخلاء المرتَّب أفضل من
     // رفض الحصّة، لأن الرفض يُفقد التعديل كلّه (ومنه حظرٌ مستحق) لا أقلَّ عنصرٍ
     // قيمة. والأنماط المُضافة الآن محميّة: lastTouch = created = الآن.
-    pruneToCap(db, MAX_PATTERNS);
+    pruneToCap(db, _K().MAX_PATTERNS);
     save(db);
 
     // [C1] معرّفات فريدة. خط الأنابيب ينادي verify(id, true) لكل معرّف يُعاد،
@@ -704,27 +193,11 @@ var LearningEngine = (() => {
     const p = db.patterns.find(p => p.id === patternId);
     if (!p) return;
 
-    if (success) {
-      p.verified = (p.verified || 0) + 1;
-    } else {
-      p.failures = (p.failures || 0) + 1;
-      // revoke approval لو فشل كثير
-      if (p.failures >= 3) p.approved = false;
-    }
-
-    // calcConfidence هو المصدر النهائي — لا manual decay
-    p.confidence = calcConfidence(p.verified || 0, p.failures || 0);
-
-    // موافقة تلقائية — الفشل المتكرر يمنع إعادة الاعتماد
-    if (
-      p.failures < 3 &&
-      p.verified >= THRESHOLDS.MIN_VERIFIED &&
-      p.confidence >= THRESHOLDS.MIN_CONFIDENCE
-    ) {
-      p.approved = true;
-    } else if (p.failures >= 3) {
-      p.approved = false;
-    }
+    // [S1] حكمُ الدليل في طبقة التحقّق — والفحصُ المكرَّر وُحِّد هناك.
+    // كان الحظر يُفحَص مرّتين (داخل فرع الإخفاق، ثم في سلسلة إعادة
+    // الاعتماد)، والثانية تحكم دائمًا فالأولى بلا أثر — أثبته كنسُ
+    // تحوّرات المرحلة صفر. السلوك هو هو، والموضع واحد.
+    _V().recordOutcome(p, !!success);
 
     // [P3] المعرّف يُرجَع إذا وصل الحكم إلى المخزن فقط. كان يُرجَع دائمًا،
     // فمنادٍ يرى نجاحًا والحظر لم يُكتب.
@@ -736,154 +209,6 @@ var LearningEngine = (() => {
   // ولا في الاختبارات. سطحٌ مُصدَّر بلا أثر، وإبقاؤه يوهم بوجود مسار تسجيل
   // ثانٍ. البديل القائم: verify(patternId, success).
 
-
-  // ─── Generalized Pattern Matching ───────────────────
-  function matchGeneralPattern(line, pattern) {
-    if (!pattern || !pattern.beforeTemplate) return null;
-
-    const template = pattern.beforeTemplate;
-    const tokenRe = /__LEARN_(ID_[0-9]+|STR_[0-9]+)__/g;
-
-    // [VBR] خانة تتكرّر في القالب كانت تُنتج مجموعة التقاط مستقلة لكل ظهور،
-    // بلا مرجع خلفي. فيترتّب على ذلك أمران مقيسان:
-    //   (1) القالب يطابق سطورًا تختلف فيها مواضع الخانة الواحدة، و
-    //   (2) حلقة القيم تكتب فوق القيمة فيبقى آخر ظهور وحده فيُركَّب في الكل.
-    // المقيس:  a.innerHTML = b.innerHTML + m   ⇒   b.textContent = b.textContent + m
-    //          (وجهة الكتابة تبدّلت، والكتابة إلى a اختفت)
-    //          db.query("a=" + x + " b=" + y)  ⇒   db.query("a=? b=?", [y, y])
-    //          (x فُقد صامتًا)
-    // groupOf يربط كل خانة بمجموعتها، فالظهور التالي مرجع خلفي لا مجموعة جديدة،
-    // أي أن القالب يشترط تساوي المواضع — وهو المعنى المقصود من تكرار الخانة.
-    let regex = "";
-    const groupOf = {};
-    let groupNo = 0;
-    let last = 0;
-    let match;
-
-    while ((match = tokenRe.exec(template)) !== null) {
-      regex += template.slice(last, match.index)
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-      const slotId = match[1];
-      const slot = (pattern.beforeSlots || []).find(x => x.id === slotId);
-
-      if (!slot) return null;
-
-      // ظهور تالٍ لخانة سبقت ⇒ مرجع خلفي، فالموضعان يجب أن يتساويا.
-      if (Object.prototype.hasOwnProperty.call(groupOf, slotId)) {
-        regex += "\\" + groupOf[slotId];
-        last = match.index + match[0].length;
-        continue;
-      }
-      groupNo++;
-      groupOf[slotId] = groupNo;
-
-      if (slot.kind === "string") {
-        regex += '((?:"(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'|`(?:\\\\.|[^`\\\\])*`))';
-      } else {
-        regex += "([A-Za-z_$][A-Za-z0-9_$]*)";
-      }
-
-      last = match.index + match[0].length;
-    }
-
-    regex += template.slice(last)
-      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-    const result = new RegExp("^" + regex + "$").exec(line);
-    if (!result) return null;
-
-    // قيمة واحدة لكل خانة، من مجموعتها وحدها — لا كتابة فوق قيمة سابقة.
-    const values = {};
-    for (const slotId in groupOf) values[slotId] = result[groupOf[slotId]];
-
-    return { values };
-  }
-
-  function renderGeneralTemplate(template, values) {
-    if (!template || !values) return null;
-
-    return template.replace(
-      /__LEARN_(ID_[0-9]+|STR_[0-9]+)__/g,
-      function(token) {
-        const id = token.slice(8, -2);
-        return Object.prototype.hasOwnProperty.call(values, id)
-          ? values[id]
-          : token;
-      }
-    );
-  }
-
-  // ─── Assignment Target Preservation ─────────────────
-  // [V2′] الإصلاح المتعلَّم لا يجوز أن يغيّر وجهة الكتابة.
-  // مسار المطابقة الحرفية (t === p.before) لا يعبر matchGeneralPattern أصلًا،
-  // فالمرجع الخلفي لا يراه. والمقيس أن زوجًا مثل:
-  //     const A_KEY = "sk_live_…";  →  const B_KEY = process.env.A_KEY;
-  // تقبله corresponds (إسنادان يتقاسمان معرّفًا، وهي سَعَة موثَّقة) فيُخزَّن
-  // ويُعتمد، وتطبيقه يعيد تسمية التصريح فتصير كل استعمالات A_KEY غير معرَّفة.
-  // تُقارَن بادئة المسار كاملةً لا جذره وحده: el.innerHTML → el.textContent
-  // مقبول (المقطع الأخير هو ما يُصلحه الإصلاح)، و a.b.c → a.z.c مرفوض.
-  // وهدفٌ من مقطع واحد يُطابَق تامًّا، لأن الاسم المجرَّد هوية لا خاصية.
-  // نقاط عمى مسجَّلة (assignTarget تُرجع null): الفهرسة a[i]= والتفكيك
-  // و{**=, &&=, %=, &=, |=, ^=, >>=} — لا حماية ولا رفض، وتوسيعها يمسّ
-  // assignTarget المشتركة مع corresponds فيؤجَّل إلى جولة مستقلة.
-  function preservesTarget(beforeLine, afterLine) {
-    const b = assignTarget(beforeLine);
-    const a = assignTarget(afterLine);
-    if ((b === null) !== (a === null)) return false;  // تغيّر شكل العبارة
-    if (b === null) return true;                      // ليس إسنادًا ⇒ لا حكم
-    const bs = b.split('.'), as = a.split('.');
-    if (bs.length !== as.length) return false;
-    if (bs.length === 1) return bs[0] === as[0];
-    return bs.slice(0, -1).join('.') === as.slice(0, -1).join('.');
-  }
-
-  // ─── Value Order Preservation ───────────────────────
-  // [V4″] ترتيب القيم لا يُبدَّل — على مستوى السطر هذه المرة لا القالب.
-  //
-  // V4 يحرس القالب وقت التخزين، وV4′ يعيد حرسه وقت التطبيق. لكن المطابقة
-  // الحرفية (t === p.before) لا قالب لها أصلاً، فزوجٌ حرفي يعكس وسطاء
-  // الاستعلام يُطبَّق كما هو. والمقيس:
-  //   before: conn.exec("… a=" + userId + " AND b=" + tenantId);
-  //   after : conn.exec("… a=? AND b=?", [tenantId, userId]);
-  // صحيح نحويًا، وتقبله البوابات الثلاث (المحلّل يُنتج نفس قائمة البلاغات
-  // للمقلوب والسليم)، ودلالته مقلوبة: قيمة العمود a تذهب إلى b والعكس.
-  //
-  // والفحص على المعرّفات **خارج النصوص** حصرًا: محتوى النص يعيد ترتيب نفسه
-  // بطبيعة هذا الإصلاح (‎"… a=" + x + " AND b="‎ ⇒ ‎"… a=? AND b=?"‎)، فقياسه
-  // يرفض الإصلاح السليم رفضًا كاذبًا — مقيس قبل الاستقرار على هذه الصيغة.
-  // والكلمات المفتاحية تُستثنى كما تفعل generalizeLinePair.
-  //
-  // يسري على المسارين معًا لأنه عند نقطة الخانق الوحيدة قبل الكتابة.
-  // تُبنى مرة واحدة لا في كل نداء: الدالة على المسار الساخن (نداء لكل سطر
-  // يُستبدَل)، وبناء الـSet والregex داخلها قاس +184% على حالة "كل سطر
-  // يُطبَّق" — مقيس. الثابتان هنا يُلغيان ذلك.
-  const VO_KEYWORDS = new Set([
-    'const','let','var','function','def','return','new','this','self',
-    'class','public','private','protected','static','final','import',
-    'from','require','if','else','for','while','try','catch',
-    'async','await','true','false','null','undefined'
-  ]);
-  const VO_STRING_RE = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g;
-  const VO_IDENT_RE  = /\b[A-Za-z_$][\w$]*\b/g;
-
-  function preservesValueOrder(beforeLine, afterLine) {
-    const seq = src => {
-      const bare = String(src).replace(VO_STRING_RE, ' ');
-      const out = [];
-      let m;
-      VO_IDENT_RE.lastIndex = 0;   // regex مشترك ‎/g‎ ⇒ تصفير lastIndex إلزامي
-      while ((m = VO_IDENT_RE.exec(bare)) !== null) {
-        if (!VO_KEYWORDS.has(m[0]) && out.indexOf(m[0]) === -1) out.push(m[0]);
-      }
-      return out;
-    };
-    const b = seq(beforeLine);
-    const a = seq(afterLine).filter(x => b.indexOf(x) !== -1);
-    let at = 0;
-    for (const tok of b) if (a[at] === tok) at++;
-    return at === a.length;
-  }
 
   // ─── Apply Learned ──────────────────────────────────
   function applyLearned(code, fileName, opts) {
@@ -906,13 +231,8 @@ var LearningEngine = (() => {
     // المسؤول عن تعديل رفضته البوابة. بلا الخيار لا يتغيّر أي سلوك.
     const onlyIds = (opts && Array.isArray(opts.onlyIds)) ? new Set(opts.onlyIds) : null;
 
-    const goodPatterns = db.patterns.filter(p =>
-      p.approved &&
-      p.confidence >= THRESHOLDS.MIN_CONFIDENCE &&
-      p.verified >= THRESHOLDS.MIN_VERIFIED &&
-      (p.language === fileLang) &&
-      (!onlyIds || onlyIds.has(p.id))
-    );
+    // [S1] الشرطُ معيارٌ واحد في طبقة التحقّق — نفسُ البنود بنفس الترتيب
+    const goodPatterns = db.patterns.filter(p => _V().isEligible(p, fileLang, onlyIds));
 
     if (!goodPatterns.length) {
       return { fixed: code, applied: 0, uses: [] };
@@ -1074,9 +394,9 @@ var LearningEngine = (() => {
       banned:   banned,
       langless: langless,
       inert:    db.patterns.filter(p => (p.failures || 0) >= 3 || !p.language).length,
-      capacity: MAX_PATTERNS,
+      capacity: _K().MAX_PATTERNS,
       evicted:  (db.meta && db.meta.evicted) || 0,
-      saveFailures: saveFailures,
+      saveFailures: _K().saveFailures,
       patterns: db.patterns.map(p => ({
         id:          p.id,
         type:        p.type,
@@ -1107,7 +427,7 @@ var LearningEngine = (() => {
   }
 
   function reset() {
-    try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
+    _K().clear();
   }
 
   return { learn, learnSafe, applyLearned, markUsed, verify, getStats, getBoosts, reset };
