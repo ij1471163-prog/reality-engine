@@ -223,7 +223,14 @@ test('[CH-7] قائمةُ كاشفات الخادم لا تنقص عن الوا�
   assert.ok(srv.length >= 20, 'محركات الخادم: ' + srv.length);
 
   const DETECTOR = /analyz|scanner|detector|taint|patterns|knowledge|deep_flow|smart_context/i;
-  const missing = ui.filter(f => DETECTOR.test(f) && !srv.includes(f));
+
+  // طبقاتُ التعلّم ليست كاشفات، ولا تعمل في VM الخادم أصلًا: مسارُ الخادم
+  // لا يحمّل learning_engine.js ولا fix_engine_pipeline.js — وهما خارج هذا
+  // النمط فلم يطلبهما هذا الاختبار يومًا. و‎knowledge‎ في النمط أعلاه كُتب
+  // لـknowledge_base.js؛ فتسميةُ learning_knowledge.js تصادفه لا تعنيه.
+  // (لو صار الخادم يتعلّم فذاك تغييرٌ مقصود، وحارسُه اختبارٌ يقيس التعلّم.)
+  const LEARNING = /^learning_/;
+  const missing = ui.filter(f => DETECTOR.test(f) && !LEARNING.test(f) && !srv.includes(f));
   assert.deepStrictEqual(missing, [],
     'كاشفاتٌ في الواجهة وغائبة عن الخادم ⇒ الخادم يرى أقلَّ فيُصلح أقلّ');
 });

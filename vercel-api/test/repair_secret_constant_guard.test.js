@@ -104,7 +104,7 @@ const REAL = [
   ['deep_flow.js',        /^\s*SECRET:\s+'secret',/],
   ['smart_context.js',    /^\s*SECRET:\s+'secret',/],
   ['type_inference.js',   /^\s*SECRET:\s+'secret',/],
-  ['learning_engine.js',  /STORAGE_KEY = 're_learned_patterns_v2'/],
+  ['learning_knowledge.js', /STORAGE_KEY = 're_learned_patterns_v2'/],
   ['self_healing_engine.js', /_key: "sh_(?:log|snaps)"/],
   ['repair_engine.js',    /HARDCODED_SECRET: 'SECRET', HARDCODED_PASS: 'SECRET'/],
 ];

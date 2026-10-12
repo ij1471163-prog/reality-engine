@@ -28,7 +28,12 @@ const vm     = require('node:vm');
 
 const PUBLIC_DIR  = path.join(__dirname, '..', 'public');
 const STORAGE_KEY = 're_learned_patterns_v2';
-const SRC = fs.readFileSync(path.join(PUBLIC_DIR, 'learning_engine.js'), 'utf8');
+// التعلّم موزَّعٌ على طبقات (تحقّق/معرفة/محرّك)، والسقف يملكه من يملك
+// المخزن. فيُبحث عنه في الطبقات الموجودة لا في ملفٍ بالاسم: الاختبار
+// يحرس الرقم، لا موضعَ تعريفه.
+const LEARN_LAYERS = ['learning_validation.js', 'learning_knowledge.js', 'learning_engine.js']
+  .filter(f => fs.existsSync(path.join(PUBLIC_DIR, f)));
+const SRC = LEARN_LAYERS.map(f => fs.readFileSync(path.join(PUBLIC_DIR, f), 'utf8')).join('\n');
 
 // السقف يُقرأ من الإنتاج لا يُفترض — فلا يخضر الاختبار على رقم آخر
 const CAP = Number((SRC.match(/const MAX_PATTERNS\s*=\s*(\d+)/) || [])[1]);

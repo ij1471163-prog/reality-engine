@@ -536,20 +536,48 @@ test('[E2E-9b] تحديد الوحدة: حقن خلل في learning_engine يُ�
   // ولماذا ليس `const THRESHOLDS = { MIN_VERIFIED: 0,` كما حاولت أولًا: إضافة
   // المفتاح في أول الكائن يسبقه المفتاح الأصلي لاحقًا، والأخير يغلب في JS —
   // فكان الحقن بلا أثر. قياسٌ أثبت أن الفرضية خاطئة لا الإنتاج.
-  const realLE = fs.readFileSync(path.join(PUBLIC_DIR, 'learning_engine.js'), 'utf8');
-  const A = 'MIN_VERIFIED:   2,';
-  assert.strictEqual(realLE.split(A).length - 1, 1, 'مرساة العتبة موجودة مرة واحدة');
-  const defectiveLE = realLE.replace(A, 'MIN_VERIFIED:   1,');
+  //
+  // [S1] العتبة انتقلت إلى طبقة التحقّق ضمن تقسيم التعلّم. والمقصود ثابت:
+  // خللٌ مزروع في وحدةٍ يُنسَب **إليها**. فتُحدَّد الوحدة التي تُسلّم العتبة
+  // فعلًا بدل تثبيت اسمٍ يتقادم.
+  // [S1] العتبة انتقلت إلى طبقة التحقّق، وهي ملفٌّ **غير مُتتبَّع** في git بعد،
+  // فالمُفارِق لا يجد له مرجعًا ويصير الحكم PRE_EXISTING لا HUNK_REGRESSION —
+  // وذلك صحيحٌ من التشخيص لا خطأ فيه. فالمرساة تُنقل إلى حارسٍ ما زال في
+  // learning_engine.js (بوابة اللغة المجهولة)، وهو يُسقط مِجسًّا واحدًا كذلك.
+  // ولا تصلح بوابةُ اللغة مِرساةً: تعطيلُها بلا نمطٍ لغتُه 'unknown' في المخزن
+  // لا يُغيّر حكمًا (مقيس في كنس تحوّرات المرحلة صفر). فالمِرساة اعتمادُ النمط
+  // عند إنشائه — تحويلُه إلى true يُسقط مِجسّ «أول مشاهدة لا تُعتمد» وحده.
+  //
+  // [S4] ثم بَطَلت تلك المِرساةُ أيضًا، لسببٍ مقصود: الترحيل يشتقّ ‎approved‎
+  // من العدّادات في كل قراءة، فحقلٌ مكتوبٌ خطأً لا يمنح ثقةً غيرَ مستحقّة —
+  // وهذا يُخفي صنفَ الخلل الذي كان يُحقَن هنا. والمِرساةُ الآن **دليلٌ
+  // مزروع** لا حكمٌ مزروع: ‎verified: 0 → 9‎ في السجل الجديد، فيُعتمد من أول
+  // مشاهدة باشتقاقٍ صحيحٍ من عدّادٍ كاذب.
+  //
+  // ⚠️ والساقطُ ثلاثةُ مِجسّات لا واحد، وذلك لازمٌ لا تهاون: متى صار الحكمُ
+  // دالةً من العدّادات، فكلُّ ما يُعتمد من أول مشاهدة يُسقط معه «عتبةُ
+  // الأدلة» و«الاعتماد عند الدليل الثاني» — لا انتقالَ false→true يُشاهد.
+  // وموضوعُ هذا الاختبار هو **النسبة** (كلُّ فشلٍ يُنسب إلى وحدته)، وهو
+  // يُقاس على ثلاثةٍ أقوى منه على واحد. والحلقةُ أدناه هي التأكيد المقصود.
+  const owner = 'learning_engine.js';
+  const A = 'verified:    0,';
+  const realLE = fs.readFileSync(path.join(PUBLIC_DIR, owner), 'utf8');
+  assert.strictEqual(realLE.split(A).length - 1, 1, 'مرساة الدليل موجودة مرة واحدة');
+  const defectiveLE = realLE.replace(A, 'verified:    9,');
 
-  const opts = Object.assign({ publicDir: PUBLIC_DIR, sources: injectedSources({ 'learning_engine.js': defectiveLE }) }, FOCUS);
+  const inject = {}; inject[owner] = defectiveLE;
+  const opts = Object.assign({ publicDir: PUBLIC_DIR, sources: injectedSources(inject) }, FOCUS);
   const b = ESD.runBattery(opts);
-  assert.deepStrictEqual(b.failed, ['learning.evidence-threshold-holds'],
-    'الخلل يجب أن يُسقط مِجسّ العتبة وحده — الساقط: ' + JSON.stringify(b.failed));
-  assert.match(b.results['learning.evidence-threshold-holds'].actual, /approved=1/,
-    'الدليل يُظهر الاعتماد بدليل واحد');
+  assert.deepStrictEqual(b.failed.slice().sort(), [
+    'learning.approves-on-second-evidence',
+    'learning.evidence-threshold-holds',
+    'learning.first-observation-not-approved',
+  ], 'الساقط غيرُ المتوقَّع: ' + JSON.stringify(b.failed));
+  assert.match(b.results['learning.first-observation-not-approved'].actual, /approved=1/,
+    'الدليل يُظهر اعتمادًا من أول مشاهدة');
   for (const id of b.failed) {
     assert.strictEqual(b.results[id].module, 'learning_engine.js',
-      'كل فشل يجب أن يُنسب إلى الوحدة المحقونة، لا إلى ' + b.results[id].module);
+      'كل فشل يجب أن يُنسب إلى الوحدة التي يقيسها المِجسّ، لا إلى ' + b.results[id].module);
   }
 
   const dx = ESD.diagnose(ESD.detect(Object.assign({}, opts, { battery: b })).incidents[0], opts);

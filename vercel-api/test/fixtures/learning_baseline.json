@@ -1,0 +1,441 @@
+{
+ "api-surface": {
+  "arity": {
+   "applyLearned": 3,
+   "getBoosts": 0,
+   "getStats": 0,
+   "learn": 4,
+   "learnSafe": 2,
+   "markUsed": 1,
+   "reset": 0,
+   "verify": 2
+  },
+  "exported": [
+   "applyLearned",
+   "getBoosts",
+   "getStats",
+   "learn",
+   "learnSafe",
+   "markUsed",
+   "reset",
+   "verify"
+  ],
+  "global": "object",
+  "kinds": {
+   "applyLearned": "function",
+   "getBoosts": "function",
+   "getStats": "function",
+   "learn": "function",
+   "learnSafe": "function",
+   "markUsed": "function",
+   "reset": "function",
+   "verify": "function"
+  }
+ },
+ "apply-exact": {
+  "applied": 1,
+  "fixed": "const apiKey = process.env.API_KEY;\nconsole.log(apiKey);\n",
+  "uses": [
+   {
+    "after": "const apiKey = process.env.API_KEY;",
+    "before": "const apiKey = \"sk_live_abc123xyz789def456ghi\";",
+    "lineIndex": 0,
+    "patternId": "<id>",
+    "via": "exact"
+   }
+  ]
+ },
+ "apply-is-pure": {
+  "storeUnchanged": true,
+  "storeWrites": 0
+ },
+ "apply-language-gate": {
+  "noExt": 0,
+  "otherLang": 0,
+  "sameLang": 1,
+  "unknownExt": 0
+ },
+ "apply-only-ids": {
+  "empty": 0,
+  "matching": 1,
+  "other": 0
+ },
+ "banned-pattern-inert": {
+  "appliedWhileBanned": 0,
+  "approved": [
+   false
+  ],
+  "failures": [
+   3
+  ],
+  "patternCount": 1,
+  "relearnIds": [],
+  "stats": {
+   "banned": 1,
+   "inert": 1
+  }
+ },
+ "boosts": {
+  "progression": [
+   {
+    "boosts": [],
+    "confidence": 0,
+    "verified": 1
+   },
+   {
+    "boosts": [],
+    "confidence": 0.6,
+    "verified": 2
+   },
+   {
+    "boosts": [],
+    "confidence": 0.6,
+    "verified": 3
+   },
+   {
+    "boosts": [],
+    "confidence": 0.6,
+    "verified": 4
+   },
+   {
+    "boosts": [],
+    "confidence": 0.7,
+    "verified": 5
+   },
+   {
+    "boosts": [],
+    "confidence": 0.7,
+    "verified": 6
+   },
+   {
+    "boosts": [],
+    "confidence": 0.7,
+    "verified": 7
+   },
+   {
+    "boosts": [],
+    "confidence": 0.7,
+    "verified": 8
+   },
+   {
+    "boosts": [],
+    "confidence": 0.7,
+    "verified": 9
+   },
+   {
+    "boosts": [
+     [
+      "EVAL_USAGE",
+      0.8
+     ]
+    ],
+    "confidence": 0.8,
+    "verified": 10
+   },
+   {
+    "boosts": [
+     [
+      "EVAL_USAGE",
+      0.8
+     ]
+    ],
+    "confidence": 0.8,
+    "verified": 11
+   },
+   {
+    "boosts": [
+     [
+      "EVAL_USAGE",
+      0.8
+     ]
+    ],
+    "confidence": 0.8,
+    "verified": 12
+   }
+  ]
+ },
+ "corrupt-store": {
+  "applyOnGarbage": {
+   "applied": 0,
+   "fixed": "var a = 1;",
+   "uses": []
+  },
+  "onBadShape": "db.patterns.filter is not a function",
+  "statsOnGarbage": {
+   "approved": 0,
+   "banned": 0,
+   "capacity": 2000,
+   "evicted": 0,
+   "inert": 0,
+   "langless": 0,
+   "patterns": [],
+   "pending": 0,
+   "safe": 0,
+   "saveFailures": 0,
+   "total": 0
+  }
+ },
+ "empty-store": {
+  "apply": {
+   "applied": 0,
+   "fixed": "var a = eval(x);",
+   "uses": []
+  },
+  "boosts": [],
+  "stats": {
+   "approved": 0,
+   "banned": 0,
+   "capacity": 2000,
+   "evicted": 0,
+   "inert": 0,
+   "langless": 0,
+   "patterns": [],
+   "pending": 0,
+   "safe": 0,
+   "saveFailures": 0,
+   "total": 0
+  },
+  "wroteStore": false
+ },
+ "guard-unknown-language": {
+  "unknownOnJs": 0,
+  "unknownOnUnknown": 0,
+  "unknownOnYaml": 0
+ },
+ "guard-value-order": {
+  "inOrder": 1,
+  "reversed": 0
+ },
+ "guards-target-and-order": {
+  "comment": 0,
+  "identical": 1,
+  "keepsTarget": 1,
+  "otherTarget": 1,
+  "renamesTarget": 0
+ },
+ "learn-once": {
+  "db": {
+   "meta": {
+    "schemaVersion": 3,
+    "total": 1
+   },
+   "patterns": [
+    {
+     "after": "var a = JSON.parse(x);",
+     "approved": false,
+     "before": "var a = eval(x);",
+     "confidence": 0,
+     "context": {
+      "fileName": "a.js",
+      "functionName": "f",
+      "scope": "function"
+     },
+     "created": "<ts>",
+     "failures": 0,
+     "fileName": "a.js",
+     "fingerprint": "6dnz4e",
+     "generalized": {
+      "afterSlots": [
+       {
+        "id": "<id>",
+        "kind": "identifier",
+        "value": "a"
+       },
+       {
+        "id": "<id>",
+        "kind": "identifier",
+        "value": "x"
+       }
+      ],
+      "afterTemplate": "var __LEARN_ID_1__ = JSON.parse(__LEARN_ID_2__);",
+      "beforeSlots": [
+       {
+        "id": "<id>",
+        "kind": "identifier",
+        "value": "a"
+       },
+       {
+        "id": "<id>",
+        "kind": "identifier",
+        "value": "x"
+       }
+      ],
+      "beforeTemplate": "var __LEARN_ID_1__ = eval(__LEARN_ID_2__);",
+      "sharedTokens": [
+       "a",
+       "x"
+      ]
+     },
+     "id": "<id>",
+     "language": "js",
+     "lastSeen": "<ts>",
+     "observed": 1,
+     "severity": "c",
+     "type": "EVAL_USAGE",
+     "verified": 0
+    }
+   ],
+   "safe": []
+  },
+  "ids": [
+   "<id>"
+  ],
+  "stats": {
+   "approved": 0,
+   "banned": 0,
+   "capacity": 2000,
+   "evicted": 0,
+   "inert": 0,
+   "langless": 0,
+   "patterns": [
+    {
+     "after": "var a = JSON.parse(x);",
+     "approved": false,
+     "before": "var a = eval(x);",
+     "confidence": "0.00",
+     "context": {
+      "fileName": "a.js",
+      "functionName": "f",
+      "scope": "function"
+     },
+     "failures": 0,
+     "fingerprint": "6dnz4e",
+     "id": "<id>",
+     "language": "js",
+     "observed": 1,
+     "type": "EVAL_USAGE",
+     "verified": 0
+    }
+   ],
+   "pending": 1,
+   "safe": 0,
+   "saveFailures": 0,
+   "total": 1
+  }
+ },
+ "learn-safe": {
+  "first": 0,
+  "safe": [],
+  "secondIdempotent": 0
+ },
+ "learn-twice-merges": {
+  "first": [
+   "<id>"
+  ],
+  "observed": [
+   2
+  ],
+  "patternCount": 1,
+  "second": [
+   "<id>"
+  ]
+ },
+ "mark-used": {
+  "badInput": 0,
+  "countersUntouched": true,
+  "emptyInput": 0,
+  "lastUsedSet": true,
+  "returned": 1,
+  "unknownId": 0
+ },
+ "reset": {
+  "afterReset": null,
+  "hadStore": true,
+  "stats": {
+   "approved": 0,
+   "banned": 0,
+   "capacity": 2000,
+   "evicted": 0,
+   "inert": 0,
+   "langless": 0,
+   "patterns": [],
+   "pending": 0,
+   "safe": 0,
+   "saveFailures": 0,
+   "total": 0
+  }
+ },
+ "verify-failure-ban": {
+  "afterFiveSuccesses": {
+   "approved": false,
+   "confidence": 0.48999999999999994,
+   "failures": 3,
+   "verified": 7
+  },
+  "steps": [
+   {
+    "approved": true,
+    "confidence": 0.39999999999999997,
+    "fail": 1,
+    "failures": 1,
+    "verified": 2
+   },
+   {
+    "approved": true,
+    "confidence": 0.3,
+    "fail": 2,
+    "failures": 2,
+    "verified": 2
+   },
+   {
+    "approved": false,
+    "confidence": 0.24,
+    "fail": 3,
+    "failures": 3,
+    "verified": 2
+   }
+  ]
+ },
+ "verify-success-curve": {
+  "steps": [
+   {
+    "approved": false,
+    "confidence": 0,
+    "failures": 0,
+    "n": 1,
+    "returned": "<id>",
+    "verified": 1
+   },
+   {
+    "approved": true,
+    "confidence": 0.6,
+    "failures": 0,
+    "n": 2,
+    "returned": "<id>",
+    "verified": 2
+   },
+   {
+    "approved": true,
+    "confidence": 0.6,
+    "failures": 0,
+    "n": 3,
+    "returned": "<id>",
+    "verified": 3
+   },
+   {
+    "approved": true,
+    "confidence": 0.6,
+    "failures": 0,
+    "n": 4,
+    "returned": "<id>",
+    "verified": 4
+   },
+   {
+    "approved": true,
+    "confidence": 0.7,
+    "failures": 0,
+    "n": 5,
+    "returned": "<id>",
+    "verified": 5
+   },
+   {
+    "approved": true,
+    "confidence": 0.7,
+    "failures": 0,
+    "n": 6,
+    "returned": "<id>",
+    "verified": 6
+   }
+  ]
+ }
+}

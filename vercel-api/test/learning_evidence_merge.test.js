@@ -43,18 +43,36 @@ const vm     = require('node:vm');
 const PUBLIC_DIR  = path.join(__dirname, '..', 'public');
 const LE_PATH     = path.join(PUBLIC_DIR, 'learning_engine.js');
 const LE_HEAD     = fs.readFileSync(LE_PATH, 'utf8');
+
+// [S1] بعد تقسيم التعلّم قد يكون سطرُ الحارس في طبقة التحقّق أو المعرفة لا في
+// المحرّك. والانضباط باقٍ — «موجودٌ حرفيًا ومرّةً واحدة» — لكن البحث يجري في
+// طبقات التعلّم كلها، والتعطيل يقع في الملف الذي يحمله فعلًا. فلا يقيس
+// الاختبار نسخةً لم تُعطَّل، ولا يحتاج تعديلًا كلّما انتقل سطر.
+const LEARN_LAYERS = ['learning_validation.js', 'learning_knowledge.js', 'learning_engine.js']
+  .filter(f => fs.existsSync(path.join(PUBLIC_DIR, f)));
+const layerSrc = f => fs.readFileSync(path.join(PUBLIC_DIR, f), 'utf8');
+const countInLayers = line =>
+  LEARN_LAYERS.reduce((n, f) => n + (layerSrc(f).split(line).length - 1), 0);
+function disableLine(line, replacement) {
+  const hits = LEARN_LAYERS.filter(f => layerSrc(f).includes(line));
+  if (hits.length !== 1) {
+    throw new Error('سطرُ الحارس في ' + hits.length + ' ملف من طبقات التعلّم: ' + line.slice(0, 60));
+  }
+  const out = {}; out[hits[0]] = layerSrc(hits[0]).replace(line, replacement);
+  return out;
+}
 const STORAGE_KEY = 're_learned_patterns_v2';
 
 // شرط اتجاه التحويل كما هو في الملف المُسلَّم. نسخة بإضعافه — تطابق قالب
 // «قبل» وحده — تُثبت أنه هو من يفصل الاتجاهين، بنفس انضباط GATE_LINE.
 const DIR_LINE = `          ? (p.generalized.beforeTemplate === gen.beforeTemplate &&
              p.generalized.afterTemplate  === gen.afterTemplate)`;
-const LE_WEAK_DIR = LE_HEAD.replace(DIR_LINE,
+const LE_WEAK_DIR = disableLine(DIR_LINE,
   '          ? (p.generalized.beforeTemplate === gen.beforeTemplate)');
 
 // وشرط اللغة؛ نسخة بإسقاطه تُثبت أنه هو من يفصل اللغتين.
 const LANG_LINE = '        p.language === lang &&';
-const LE_NO_LANG = LE_HEAD.replace(LANG_LINE, '        true &&');
+const LE_NO_LANG = disableLine(LANG_LINE, '        true &&');
 
 function loadCtx(learningEngineSrc) {
   const noop = () => {};
@@ -75,8 +93,11 @@ function loadCtx(learningEngineSrc) {
   for (const m of html.matchAll(/<script src="\/([^"]+)"/g)) {
     const p = path.join(PUBLIC_DIR, m[1]);
     if (!fs.existsSync(p)) continue;
-    if (m[1] === 'learning_engine.js' && learningEngineSrc) {
-      vm.runInContext(learningEngineSrc, ctx, { filename: m[1] });
+    const _ov = (typeof learningEngineSrc === 'string')
+      ? { 'learning_engine.js': learningEngineSrc }
+      : (learningEngineSrc || {});
+    if (_ov[m[1]]) {
+      vm.runInContext(_ov[m[1]], ctx, { filename: m[1] });
       continue;
     }
     try { vm.runInContext(fs.readFileSync(p, 'utf8'), ctx, { filename: m[1] }); } catch (e) { /* ملف واجهة فقط */ }
@@ -121,10 +142,12 @@ test('tripwire: المخزن حقيقي، وأسطر الشرطين موجودة
   }));
   assert.strictEqual(ctx.LearningEngine.getStats().total, 2, 'المخزن يقرأ ما كُتب فيه');
 
-  assert.strictEqual(LE_HEAD.split(DIR_LINE).length - 1, 1,
+  assert.strictEqual(countInLayers(DIR_LINE), 1,
     'شرط اتجاه التحويل يظهر مرة واحدة — وإلا فنسخة الإضعاف تُضعف غيره');
-  assert.notStrictEqual(LE_WEAK_DIR, LE_HEAD, 'ونسخة إضعافه تختلف فعلاً');
-  assert.notStrictEqual(LE_NO_LANG, LE_HEAD, 'ونسخة إسقاط شرط اللغة تختلف فعلاً');
+  assert.ok(LE_WEAK_DIR[Object.keys(LE_WEAK_DIR)[0]] !== layerSrc(Object.keys(LE_WEAK_DIR)[0]),
+    'ونسخة إضعافه تختلف فعلاً');
+  assert.ok(LE_NO_LANG[Object.keys(LE_NO_LANG)[0]] !== layerSrc(Object.keys(LE_NO_LANG)[0]),
+    'ونسخة إسقاط شرط اللغة تختلف فعلاً');
 });
 
 test('isolation: الأزواج الثلاثة تُنتج القالب المعمَّم نفسه', () => {
@@ -301,10 +324,12 @@ test('ولا تضخيم عبر إصلاحين حقيقيين: verified يساو�
 // ═══ 4. العتبات والمخزن ════════════════════════════════
 
 test('العتبات كما هي — لم تُغيَّر في هذه المرحلة', () => {
-  assert.match(LE_HEAD, /MIN_VERIFIED:\s*2,/,    'MIN_VERIFIED = 2');
-  assert.match(LE_HEAD, /MIN_CONFIDENCE:\s*0\.20,/, 'MIN_CONFIDENCE = 0.20');
-  assert.match(LE_HEAD, /MAX_CONFIDENCE:\s*0\.97,/, 'MAX_CONFIDENCE = 0.97');
-  assert.match(LE_HEAD, /DECAY_ON_FAIL:\s*0\.15,/,  'DECAY_ON_FAIL = 0.15');
+  // [S1] العتبات انتقلت إلى طبقة التحقّق — تُقرأ من حيث تُسلَّم فعلًا
+  const TH = LEARN_LAYERS.map(layerSrc).join('\n');
+  assert.match(TH, /MIN_VERIFIED:\s*2,/,    'MIN_VERIFIED = 2');
+  assert.match(TH, /MIN_CONFIDENCE:\s*0\.20,/, 'MIN_CONFIDENCE = 0.20');
+  assert.match(TH, /MAX_CONFIDENCE:\s*0\.97,/, 'MAX_CONFIDENCE = 0.97');
+  assert.match(TH, /DECAY_ON_FAIL:\s*0\.15,/,  'DECAY_ON_FAIL = 0.15');
 });
 
 test('المطابقة الحرفية بلا تغيير: زوج بلا قالب صالح يبقى على البصمة', () => {

@@ -69,7 +69,7 @@ const mkDb = patterns => JSON.stringify({ patterns, safe: [], meta: { total: pat
 const outcomeOf = (report, id) => (report.learnedOutcomes || []).find(o => o.patternId === id) || null;
 const pat = (id, before, after, lang, extra) => Object.assign({
   id, type: 'T', language: lang, before, after, fingerprint: 'fp-' + id,
-  verified: 3, failures: 0, confidence: 0.7, approved: true,
+  verified: 3, failures: 0, confidence: 0.6, approved: true,   // [S4] = calcConfidence(3,0)
 }, extra || {});
 
 // سطر لا يمسّه أي مُصلِح آخر — مقيس
@@ -134,7 +134,7 @@ for (const [name, mkPat, reason] of [
 
     const p = db.patterns.find(x => x.id === p0.id);
     assert.strictEqual(p.failures, 1, 'الفشل لم يصل إلى المخزن ⇒ الحلقة ما زالت مقطوعة');
-    assert.ok(p.confidence < 0.7, `confidence لم ينزل (المقيس ${p.confidence})`);
+    assert.ok(p.confidence < 0.6, `confidence لم ينزل (المقيس ${p.confidence})`);
     assert.strictEqual(p.verified, 3, 'verified تحرّك بالفشل — لا يجب');
     assert.strictEqual(p.approved, true, 'فشل واحد أسقط الاعتماد — الإسقاط عند 3 وحده');
   });
@@ -178,7 +178,7 @@ test('غير ضارّ: «بلا تحسّن مقيس» لا يُسجَّل فشل
   const p = db.patterns.find(x => x.id === 'p-benign');
   assert.strictEqual(p.failures, 0,
     `عوقب نمط سليم: failures=${p.failures} · السبب ${o.gateReason}/${o.ghostReason}`);
-  assert.strictEqual(p.confidence, 0.7, 'confidence نزل بلا ضرر مقيس');
+  assert.strictEqual(p.confidence, 0.6, 'confidence نزل بلا ضرر مقيس');
   assert.strictEqual(p.approved, true, 'الاعتماد أُسقط بلا ضرر مقيس');
 });
 
@@ -207,7 +207,7 @@ test('PASS لا يُحرّك failures ولا يُنقص الثقة', () => {
   assert.ok(!/eval\(x\)/.test(out['p.js']), 'eval باقٍ ⇒ لم يُصلَح شيء');
   const p = db.patterns.find(x => x.id === 'p-pass');
   assert.strictEqual(p.failures, 0, 'failures تحرّك على حكم موجب');
-  assert.ok(p.confidence >= 0.7, 'confidence نزل على حكم موجب');
+  assert.ok(p.confidence >= 0.6, 'confidence نزل على حكم موجب');
 });
 
 test('مرجع: السطر الموجب لا يمسّه مُصلِح آخر — الإحالة نظيفة', () => {

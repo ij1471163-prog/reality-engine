@@ -112,7 +112,7 @@ test('does not change: issue title without a variable name', () => {
 
 // ═══ 3. الملفات الحقيقية: لا تراكم مزيّف ولا syntax مكسور ═══
 const REAL = ['command_injection_fix.js', 'repair_auth.js', 'deep_flow.js', 'accumulation_detector.js',
-  'engine_java.js', 'learning_engine.js', 'ml_pattern_finder.js', 'server_engine_registration.js',
+  'engine_java.js', 'learning_knowledge.js', 'ml_pattern_finder.js', 'server_engine_registration.js',
   'analyzer.js', 'code_intelligence.js'];
 for (const file of REAL) {
   test(`real file ${file}: accumulation issues produce no "+=" edit and the output parses`, () => {

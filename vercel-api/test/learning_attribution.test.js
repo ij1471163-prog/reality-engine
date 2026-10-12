@@ -62,7 +62,11 @@ function loadCtx() {
 }
 
 // نمط مزروع معتمد. العدّادات ثابتة معروفة حتى نكشف أي تحريك لها.
-const SEED_COUNTERS = { observed: 3, verified: 3, failures: 0, confidence: 0.7, approved: true };
+// [S4] الثقةُ المزروعة تساوي ما يُنتجه المنحنى لـverified=3 بالضبط
+// (calcConfidence(3,0) = 0.60). كانت 0.70 — حالةٌ لا يُنتجها الإنتاج:
+// verify() تشتقّ الثقة من المنحنى في كل مرة، فلا تتباعد عن العدّاد.
+// وترحيلُ [S4] يشتقّها عند القراءة كذلك، فظهر التباعدُ المزروع.
+const SEED_COUNTERS = { observed: 3, verified: 3, failures: 0, confidence: 0.6, approved: true };
 function pat(id, before, after) {
   return Object.assign({
     id, type: 'XSS', severity: 'c', before, after, language: 'js',
@@ -193,7 +197,7 @@ test('مرفوض بمُسهم واحد: FAIL بالضرورة، وبلا أي ت
     'لا تعديل ⇒ لا حكم، أو SKIPPED — ولا PASS بحال');
   assert.ok(db.patterns.every(p => !p.lastUsed), 'ولا lastUsed');
   assert.deepStrictEqual(countersOf(db), [{
-    id: 'p-shape', verified: 3, failures: 0, confidence: 0.7, approved: true,
+    id: 'p-shape', verified: 3, failures: 0, confidence: 0.6, approved: true,
   }], 'والعدّادات كما زُرعت');
 });
 
@@ -218,7 +222,7 @@ test('lastUsed لا يتغيّر قبل قرار البوابة: applyLearned ق
   const db2 = JSON.parse(ctx.__store.get(STORAGE_KEY));
   assert.ok(db2.patterns[0].lastUsed, 'lastUsed صار مسجَّلًا');
   assert.deepStrictEqual(countersOf(db2), [{
-    id: 'p-good', verified: 3, failures: 0, confidence: 0.7, approved: true,
+    id: 'p-good', verified: 3, failures: 0, confidence: 0.6, approved: true,
   }], 'والعدّادات لم تتغيّر — markUsed تسجيل لا حكم');
 });
 
@@ -236,7 +240,7 @@ test('INCONCLUSIVE لا يغيّر أي عدّاد ولا حالة اعتماد'
   const good = db.patterns.find(p => p.id === 'p-good');
   assert.deepStrictEqual(
     { id: good.id, verified: good.verified, failures: good.failures, confidence: good.confidence, approved: good.approved },
-    { id: 'p-good', verified: 3, failures: 0, confidence: 0.7, approved: true },
+    { id: 'p-good', verified: 3, failures: 0, confidence: 0.6, approved: true },
     'عدّادات النمط غير المحسوم تحرّكت — تخمين لا إسناد');
 });
 
@@ -257,7 +261,7 @@ test('[P3] FAIL ضارّ يُسجَّل فشلاً على المسؤول — ا�
   const bad = db.patterns.find(p => p.id === 'p-bad');
   assert.strictEqual(bad.failures, 1, 'failures لم تتحرّك ⇒ الحلقة ما زالت مقطوعة');
   assert.strictEqual(bad.verified, 3, 'verified لا يجب أن يتحرّك بالفشل');
-  assert.ok(bad.confidence < 0.7, `confidence يجب أن ينزل بالفشل (المقيس ${bad.confidence})`);
+  assert.ok(bad.confidence < 0.6, `confidence يجب أن ينزل بالفشل (المقيس ${bad.confidence})`);
   assert.strictEqual(bad.approved, true,
     'فشل واحد لا يُسقط الاعتماد — الإسقاط عند failures ≥ 3 وحده');
 });
@@ -269,7 +273,7 @@ test('PASS كذلك لا يرفع verified — القيد يسري على الح
   const p = db.patterns[0];
   assert.strictEqual(p.verified, 3, 'verified لم تتحرّك');
   assert.strictEqual(p.failures, 0, 'failures لم تتحرّك');
-  assert.strictEqual(p.confidence, 0.7, 'confidence لم تتحرّك');
+  assert.strictEqual(p.confidence, 0.6, 'confidence لم تتحرّك');
   assert.strictEqual(p.approved, true, 'approved لم تتغيّر');
 });
 

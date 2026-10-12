@@ -50,12 +50,30 @@ const vm     = require('node:vm');
 const PUBLIC_DIR  = path.join(__dirname, '..', 'public');
 const LE_PATH     = path.join(PUBLIC_DIR, 'learning_engine.js');
 const LE_HEAD     = fs.readFileSync(LE_PATH, 'utf8');
+
+// [S1] بعد تقسيم التعلّم قد يكون سطرُ الحارس في طبقة التحقّق أو المعرفة لا في
+// المحرّك. والانضباط باقٍ — «موجودٌ حرفيًا ومرّةً واحدة» — لكن البحث يجري في
+// طبقات التعلّم كلها، والتعطيل يقع في الملف الذي يحمله فعلًا. فلا يقيس
+// الاختبار نسخةً لم تُعطَّل، ولا يحتاج تعديلًا كلّما انتقل سطر.
+const LEARN_LAYERS = ['learning_validation.js', 'learning_knowledge.js', 'learning_engine.js']
+  .filter(f => fs.existsSync(path.join(PUBLIC_DIR, f)));
+const layerSrc = f => fs.readFileSync(path.join(PUBLIC_DIR, f), 'utf8');
+const countInLayers = line =>
+  LEARN_LAYERS.reduce((n, f) => n + (layerSrc(f).split(line).length - 1), 0);
+function disableLine(line, replacement) {
+  const hits = LEARN_LAYERS.filter(f => layerSrc(f).includes(line));
+  if (hits.length !== 1) {
+    throw new Error('سطرُ الحارس في ' + hits.length + ' ملف من طبقات التعلّم: ' + line.slice(0, 60));
+  }
+  const out = {}; out[hits[0]] = layerSrc(hits[0]).replace(line, replacement);
+  return out;
+}
 const STORAGE_KEY = 're_learned_patterns_v2';
 
 // سطر V4 كما هو في الملف المُسلَّم. إن تغيّر نصه فالقسم كله يفشل صراحةً بدل
 // أن يقيس نسخة لم تُعطَّل فعلاً — نفس انضباط GATE_LINE في ملف حرس corresponds.
 const V4_LINE  = '    if (seqAt !== afterSeq.length) return false;';
-const LE_NO_V4 = LE_HEAD.replace(V4_LINE, '    if (false) return false;');
+const LE_NO_V4 = disableLine(V4_LINE, '    if (false) return false;');
 
 function loadCtx(learningEngineSrc) {
   const noop = () => {};
@@ -76,8 +94,11 @@ function loadCtx(learningEngineSrc) {
   for (const m of html.matchAll(/<script src="\/([^"]+)"/g)) {
     const p = path.join(PUBLIC_DIR, m[1]);
     if (!fs.existsSync(p)) continue;
-    if (m[1] === 'learning_engine.js' && learningEngineSrc) {
-      vm.runInContext(learningEngineSrc, ctx, { filename: m[1] });
+    const _ov = (typeof learningEngineSrc === 'string')
+      ? { 'learning_engine.js': learningEngineSrc }
+      : (learningEngineSrc || {});
+    if (_ov[m[1]]) {
+      vm.runInContext(_ov[m[1]], ctx, { filename: m[1] });
       continue;
     }
     try { vm.runInContext(fs.readFileSync(p, 'utf8'), ctx, { filename: m[1] }); } catch (e) { /* ملف واجهة فقط */ }
@@ -167,9 +188,11 @@ test('tripwire: المخزن حقيقي، وسطر V4 موجود مرة واحد
   assert.strictEqual(ctx.LearningEngine.getStats().total, 0,
     'وبإزالة المفتاح يعود صفرًا — أي أن القراءة من المخزن فعلاً في كل نداء');
 
-  assert.strictEqual(LE_HEAD.split(V4_LINE).length - 1, 1,
+  assert.strictEqual(countInLayers(V4_LINE), 1,
     'سطر V4 يجب أن يظهر مرة واحدة بالضبط — وإلا فنسخة التعطيل تُعطّل غيره أو لا تُعطّل شيئًا');
-  assert.notStrictEqual(LE_NO_V4, LE_HEAD, 'ونسخة التعطيل تختلف فعلاً عن الملف المُسلَّم');
+  assert.ok(Object.keys(LE_NO_V4).length === 1 &&
+    LE_NO_V4[Object.keys(LE_NO_V4)[0]] !== layerSrc(Object.keys(LE_NO_V4)[0]),
+    'ونسخة التعطيل تختلف فعلاً عن الملف المُسلَّم');
 });
 
 test('isolation: النمط المزروع مؤهَّل، وقالبه مطابق لقالب النمط السليم', () => {

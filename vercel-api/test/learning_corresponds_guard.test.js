@@ -49,23 +49,41 @@ const vm     = require('node:vm');
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const LE_PATH    = path.join(PUBLIC_DIR, 'learning_engine.js');
 const LE_HEAD    = fs.readFileSync(LE_PATH, 'utf8');
+
+// [S1] بعد تقسيم التعلّم قد يكون سطرُ الحارس في طبقة التحقّق أو المعرفة لا في
+// المحرّك. والانضباط باقٍ — «موجودٌ حرفيًا ومرّةً واحدة» — لكن البحث يجري في
+// طبقات التعلّم كلها، والتعطيل يقع في الملف الذي يحمله فعلًا. فلا يقيس
+// الاختبار نسخةً لم تُعطَّل، ولا يحتاج تعديلًا كلّما انتقل سطر.
+const LEARN_LAYERS = ['learning_validation.js', 'learning_knowledge.js', 'learning_engine.js']
+  .filter(f => fs.existsSync(path.join(PUBLIC_DIR, f)));
+const layerSrc = f => fs.readFileSync(path.join(PUBLIC_DIR, f), 'utf8');
+const countInLayers = line =>
+  LEARN_LAYERS.reduce((n, f) => n + (layerSrc(f).split(line).length - 1), 0);
+function disableLine(line, replacement) {
+  const hits = LEARN_LAYERS.filter(f => layerSrc(f).includes(line));
+  if (hits.length !== 1) {
+    throw new Error('سطرُ الحارس في ' + hits.length + ' ملف من طبقات التعلّم: ' + line.slice(0, 60));
+  }
+  const out = {}; out[hits[0]] = layerSrc(hits[0]).replace(line, replacement);
+  return out;
+}
 const STORAGE_KEY = 're_learned_patterns_v2';
 
 // سطر البوابة كما هو في الملف المُسلَّم. إن تغيّر نصه فهذا الاختبار يفشل
 // صراحةً بدل أن يمرّ بصمت وهو يقيس نسخة لم تُعطَّل فعلاً.
 const GATE_LINE = 'const confirm = c => (c && corresponds(beforeLine, c.line)) ? c : null;';
-const LE_NO_GATE = LE_HEAD.replace(GATE_LINE, 'const confirm = c => (c || null);');
+const LE_NO_GATE = disableLine(GATE_LINE, 'const confirm = c => (c || null);');
 
 // [P1] حرس V2′ في applyLearned — نقطة الخانق الوحيدة قبل الكتابة. نسخة
 // بتعطيله وحده تُثبت أنه هو الفاعل لا مرحلة أخرى، بنفس انضباط GATE_LINE.
 const V2_LINE   = '      if (!preservesTarget(t, replacement)) continue;';
-const LE_NO_V2  = LE_HEAD.replace(V2_LINE, '      if (false) continue;');
+const LE_NO_V2  = disableLine(V2_LINE, '      if (false) continue;');
 
 // [P1/V4] شرط حفظ ترتيب الخانات في isGeneralPatternUsable — يرفض **التعميم**
 // لا الزوج. نسخة بتعطيله وحده تُثبت أنه هو من يرفض القالب المبدِّل، بنفس
 // انضباط GATE_LINE و V2_LINE. القسم 6 أدناه هو انحدار هذه الحماية.
 const V4_LINE   = '    if (seqAt !== afterSeq.length) return false;';
-const LE_NO_V4  = LE_HEAD.replace(V4_LINE, '    if (false) return false;');
+const LE_NO_V4  = disableLine(V4_LINE, '    if (false) return false;');
 
 function loadCtx(learningEngineSrc) {
   const noop = () => {};
@@ -86,8 +104,11 @@ function loadCtx(learningEngineSrc) {
   for (const m of html.matchAll(/<script src="\/([^"]+)"/g)) {
     const p = path.join(PUBLIC_DIR, m[1]);
     if (!fs.existsSync(p)) continue;
-    if (m[1] === 'learning_engine.js' && learningEngineSrc) {
-      vm.runInContext(learningEngineSrc, ctx, { filename: m[1] });
+    const _ov = (typeof learningEngineSrc === 'string')
+      ? { 'learning_engine.js': learningEngineSrc }
+      : (learningEngineSrc || {});
+    if (_ov[m[1]]) {
+      vm.runInContext(_ov[m[1]], ctx, { filename: m[1] });
       continue;
     }
     try { vm.runInContext(fs.readFileSync(p, 'utf8'), ctx, { filename: m[1] }); } catch (e) { /* ملف واجهة فقط */ }
@@ -126,16 +147,18 @@ const C_AFTER  = 'function auth() {\n  const API_KEY = process.env.API_KEY;\n  r
 // ═══ 0. شروط العزل ═════════════════════════════════════
 
 test('tripwire: سطر البوابة موجود حرفيًا في الملف المُسلَّم', () => {
-  assert.ok(LE_HEAD.includes(GATE_LINE),
+  assert.strictEqual(countInLayers(GATE_LINE), 1,
     'سطر confirm تغيّر — نسخة "الحارس معطَّل" في هذا الملف لم تعطّل شيئًا، فكل قياس بعدها باطل');
-  assert.notStrictEqual(LE_NO_GATE, LE_HEAD, 'نسخة التعطيل يجب أن تختلف فعلاً عن HEAD');
+  assert.ok(LE_NO_GATE[Object.keys(LE_NO_GATE)[0]] !== layerSrc(Object.keys(LE_NO_GATE)[0]),
+    'نسخة التعطيل يجب أن تختلف فعلاً عن الملف المُسلَّم');
 });
 
 test('tripwire: سطر حرس V2′ موجود حرفيًا في الملف المُسلَّم', () => {
   assert.ok(LE_HEAD.includes(V2_LINE),
     'سطر preservesTarget تغيّر — نسخة "V2′ معطَّل" لم تعطّل شيئًا، فكل قياس بعدها باطل');
-  assert.notStrictEqual(LE_NO_V2, LE_HEAD, 'نسخة التعطيل يجب أن تختلف فعلاً عن HEAD');
-  assert.ok(/function preservesTarget\(beforeLine, afterLine\)/.test(LE_HEAD),
+  assert.ok(LE_NO_V2[Object.keys(LE_NO_V2)[0]] !== layerSrc(Object.keys(LE_NO_V2)[0]),
+    'نسخة التعطيل يجب أن تختلف فعلاً عن الملف المُسلَّم');
+  assert.ok(LEARN_LAYERS.some(f => /function preservesTarget\(beforeLine, afterLine\)/.test(layerSrc(f))),
     'دالة الحرس يجب أن تكون موجودة بالاسم المتوقَّع');
 });
 
@@ -494,7 +517,8 @@ test('إيجابي: V2′ لا يمنع إصلاحًا سليمًا — نفس �
 // فيُسجَّل هنا كسلوك مقيس للدالة، لا كخلل.
 
 test('documented: corresponds تقبل تقاسم معرّف واحد بين سطرين مختلفي الوظيفة', () => {
-  const src = LE_HEAD;
+  // [S1] الدوال قد تكون في طبقة التحقّق — يُبحَث في الطبقات كلها
+  const src = LEARN_LAYERS.map(layerSrc).join('\n');
   const grab = re => { const m = src.match(re); assert.ok(m, 'الدالة غير موجودة: ' + re); return m[0]; };
   const sand = {};
   vm.createContext(sand);
@@ -604,10 +628,10 @@ const SQL_SWAP   = 'function q(x, y) {\n  db.query("SELECT * FROM t WHERE a=? AN
 const SQL_KEEP   = 'function q(x, y) {\n  db.query("SELECT * FROM t WHERE a=? AND b=?", [x, y]);\n}\n';
 
 test('tripwire: سطر V4 موجود حرفيًا في الملف المُسلَّم ومرة واحدة', () => {
-  const hits = LE_HEAD.split(V4_LINE).length - 1;
+  const hits = countInLayers(V4_LINE);
   assert.strictEqual(hits, 1,
     'سطر V4 يجب أن يظهر مرة واحدة بالضبط — وإلا فنسخة التعطيل تُعطّل غيره أو لا تُعطّل شيئًا');
-  assert.notStrictEqual(LE_NO_V4, LE_HEAD,
+  assert.ok(LE_NO_V4[Object.keys(LE_NO_V4)[0]] !== layerSrc(Object.keys(LE_NO_V4)[0]),
     'ونسخة التعطيل تختلف فعلاً عن الملف المُسلَّم');
 });
 
