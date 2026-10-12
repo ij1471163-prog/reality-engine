@@ -165,12 +165,46 @@ function engineList(result) {
     return [];
 }
 
+// ═══════════════════════════════════════════════════════
+// [ENGINE-FAIL] عطبُ محرّكٍ لا يُقرأ «لا مشكلاتَ في الملف»
+// ═══════════════════════════════════════════════════════
+// ‎runEngine‎ يعزل كلَّ كاشفٍ كي لا يُسقط عطبُه الملفَ كلَّه — وهذا صحيح.
+// لكنّه كان يُرجع ‎[]‎ ويكتفي بـ‎console.warn‎، و‎[]‎ لا يُميَّز عن «فحصتُ
+// فلم أجد». فمحرّكٌ ميّتٌ يبدو ملفًا سليمًا.
+//
+// والعطبُ ليس فرضيًّا: ‎analyzeProject‎ يرمي ‎code.split is not a function‎
+// في **كلِّ** نداء (24 من 24 مقيسًا) لتصادمِ ‎extractFunctions‎ بين
+// ‎project_intelligence.js‎ و‎test_generator.js‎ — ولم يَظهر ذلك في أيِّ
+// مخرَجٍ ولا اختبارٍ ولا واجهة، لأنّه يُبتلع هنا.
+//
+// فالسجلُّ أدناه يجعل العطبَ **مقروءًا**: المحرّكُ والمرحلةُ والسببُ والملف،
+// ويبقى السلوكُ كما هو بتًّا — نفسُ ‎[]‎ ونفسُ استمرارِ بقيةِ المحرّكات.
+// ولا يُضاف بلاغٌ إلى النتيجة عن قصد: بلاغٌ يظهر في ‎after‎ وحده (لأن محرّكًا
+// يرمي على الشفرةِ المُصلَحة فقط) يرفع العدَّ فترفض البوابةُ إصلاحًا صحيحًا.
+// فالقناةُ خارجَ النتيجة: ‎engineFailures()‎ يقرأها الاختبارُ والواجهةُ والخادم.
+const ENGINE_FAILURES = [];
+const ENGINE_FAILURES_MAX = 200;
+let _engineFile = '';
+
+/** سجلُّ أعطابِ المحرّكات في آخرِ تحليل (نسخةٌ، فلا يُعدّله القارئ). */
+function engineFailures() { return ENGINE_FAILURES.map(r => Object.assign({}, r)); }
+function clearEngineFailures() { ENGINE_FAILURES.length = 0; }
+
 /** Run one external detector in isolation — a broken engine must not lose the whole file. */
-function runEngine(name, fn) {
+function runEngine(name, fn, stage) {
     try { return engineList(fn()); }
     catch (e) {
+        const rec = {
+            engine: String(name),
+            stage: String(stage || 'analyze'),
+            reason: String((e && e.message) || e),
+            file: _engineFile,
+            kind: (e && e.name) ? String(e.name) : 'Error',
+        };
+        if (ENGINE_FAILURES.length < ENGINE_FAILURES_MAX) ENGINE_FAILURES.push(rec);
         if (typeof console !== 'undefined' && console.warn)
-            console.warn('analyzer: ' + name + ' failed — ' + (e && e.message));
+            console.warn('[ENGINE-FAIL] ' + rec.engine + ' @' + rec.stage +
+                         (rec.file ? ' (' + rec.file + ')' : '') + ' — ' + rec.reason);
         return [];
     }
 }
@@ -359,10 +393,13 @@ function analyzeCode(code, fileName) {
     if (typeof code !== 'string') code = (code == null) ? '' : String(code);
     fileName = (typeof fileName === 'string') ? fileName : '';
     const ext = extOf(fileName);
+    // [ENGINE-FAIL] سجلُّ الأعطابِ يخصُّ هذا التحليل، فيُصفّر عند مدخله
+    ENGINE_FAILURES.length = 0;
+    _engineFile = fileName;
     if (!code.trim()) return [];
 
     if (typeof analyzeJava !== 'undefined' && ext === 'java') {
-        const javaIssues = runEngine('analyzeJava', () => analyzeJava(code, fileName));
+        const javaIssues = runEngine('analyzeJava', () => analyzeJava(code, fileName), 'lang:java');
         finalizeIssues(javaIssues, code);
         return dedupeIssues(dropRedactedLogFindings(javaIssues, code));
     }
@@ -396,7 +433,7 @@ function analyzeCode(code, fileName) {
     // وكل ما يُضاف بعده كان يخرج بلا دليل ثقة إطلاقاً.
     // Crypto scan
     if (typeof scanCrypto === 'function') {
-        const cryptoIssues = runEngine('scanCrypto', () => scanCrypto(code, fileName));
+        const cryptoIssues = runEngine('scanCrypto', () => scanCrypto(code, fileName), 'crypto');
         cryptoIssues.forEach(ci => {
             const dup = issues.some(x => x.line === ci.line && x.title === ci.title);
             if (!dup) issues.push(ci);
@@ -406,7 +443,7 @@ function analyzeCode(code, fileName) {
     const ext2 = ext;
     if (ext2 === 'ts' || ext2 === 'tsx') {
         if (typeof analyzeTypeScript === 'function') {
-            const tsResult = runEngine('analyzeTypeScript', () => analyzeTypeScript(code, fileName));
+            const tsResult = runEngine('analyzeTypeScript', () => analyzeTypeScript(code, fileName), 'lang:ts');
             tsResult.forEach(i => {
                 const dup = issues.some(x => x.line === i.line && x.title === i.title);
                 if (!dup) issues.push(i);
@@ -415,7 +452,7 @@ function analyzeCode(code, fileName) {
     }
     if (ext2 === 'kt') {
         if (typeof analyzeKotlin === 'function') {
-            const ktResult = runEngine('analyzeKotlin', () => analyzeKotlin(code, fileName));
+            const ktResult = runEngine('analyzeKotlin', () => analyzeKotlin(code, fileName), 'lang:kt');
             ktResult.forEach(i => {
                 const dup = issues.some(x => x.line === i.line && x.title === i.title);
                 if (!dup) issues.push(i);
@@ -424,7 +461,7 @@ function analyzeCode(code, fileName) {
     }
     if (ext2 === 'php') {
         if (typeof analyzePHP === 'function') {
-            const phpResult = runEngine('analyzePHP', () => analyzePHP(code, fileName));
+            const phpResult = runEngine('analyzePHP', () => analyzePHP(code, fileName), 'lang:php');
             phpResult.forEach(i => {
                 const dup = issues.some(x => x.line === i.line && x.title === i.title);
                 if (!dup) issues.push(i);
@@ -433,7 +470,7 @@ function analyzeCode(code, fileName) {
     }
     // C/C++ Analysis
     if (['c','cpp','cc','h','hpp'].includes(ext) && typeof analyzeCCpp === 'function') {
-        const cResult = runEngine('analyzeCCpp', () => analyzeCCpp(code, fileName));
+        const cResult = runEngine('analyzeCCpp', () => analyzeCCpp(code, fileName), 'lang:c');
         cResult.forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title))
                 issues.push(i);
@@ -441,7 +478,7 @@ function analyzeCode(code, fileName) {
     }
     // Secret Detection — النداء الوحيد (كان مكرراً مرتين على نفس الملف)
     if (typeof detectSecrets === 'function') {
-        const secrets = runEngine('detectSecrets', () => detectSecrets(code, fileName));
+        const secrets = runEngine('detectSecrets', () => detectSecrets(code, fileName), 'secrets');
         secrets.forEach(s => {
             if (!issues.some(x => x.line === s.line && x.title === s.title))
                 issues.push(s);
@@ -449,7 +486,7 @@ function analyzeCode(code, fileName) {
     }
     // Security scan
     if (typeof scanSecurity === 'function') {
-        const secIssues = runEngine('scanSecurity', () => scanSecurity(code, fileName));
+        const secIssues = runEngine('scanSecurity', () => scanSecurity(code, fileName), 'security');
         secIssues.forEach(si => {
             const dup = issues.some(x => x.line === si.line && x.title === si.title);
             if (!dup) issues.push(si);
@@ -457,7 +494,7 @@ function analyzeCode(code, fileName) {
     }
     // Pattern detection
     if (typeof detectPatterns === 'function') {
-        const patternIssues = runEngine('detectPatterns', () => detectPatterns(code, fileName));
+        const patternIssues = runEngine('detectPatterns', () => detectPatterns(code, fileName), 'patterns');
         patternIssues.forEach(pi => {
             const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
             if (!dup) issues.push(pi);
@@ -507,7 +544,7 @@ function analyzeCode(code, fileName) {
 
     // Dart/Flutter Analysis
     if (ext === 'dart' && typeof analyzeDart === 'function') {
-        runEngine('analyzeDart', () => analyzeDart(code, fileName)).forEach(i => {
+        runEngine('analyzeDart', () => analyzeDart(code, fileName), 'lang:dart').forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title))
                 issues.push(i);
         });
@@ -515,7 +552,7 @@ function analyzeCode(code, fileName) {
 
     // C# / Unity Analysis
     if (ext === 'cs' && typeof analyzeCSharp === 'function') {
-        runEngine('analyzeCSharp', () => analyzeCSharp(code, fileName)).forEach(i => {
+        runEngine('analyzeCSharp', () => analyzeCSharp(code, fileName), 'lang:cs').forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title))
                 issues.push(i);
         });
@@ -524,7 +561,7 @@ function analyzeCode(code, fileName) {
         // AST Deep Analysis (JS only)
     if (['js','ts','jsx','tsx'].includes(ext)) {
         if (typeof analyzeJSWithAST === 'function') {
-            runEngine('analyzeJSWithAST', () => analyzeJSWithAST(code, fileName)).forEach(i => {
+            runEngine('analyzeJSWithAST', () => analyzeJSWithAST(code, fileName), 'ast').forEach(i => {
                 if (!issues.some(x => x.line === i.line && x.title === i.title))
                     issues.push(i);
             });
@@ -533,7 +570,7 @@ function analyzeCode(code, fileName) {
 
         // Deep Analysis (Type Inference + Data Flow + Call Graph + Scope)
     if (typeof deepAnalyze === 'function') {
-        runEngine('deepAnalyze', () => deepAnalyze(code, fileName)).forEach(i => {
+        runEngine('deepAnalyze', () => deepAnalyze(code, fileName), 'deep').forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title))
                 issues.push(i);
         });
@@ -734,17 +771,17 @@ function analyzeCode(code, fileName) {
         // Taint Analysis
     const ext3 = ext;
     if ((ext3 === 'js' || ext3 === 'ts') && typeof analyzeTaintJS === 'function') {
-        runEngine('analyzeTaintJS', () => analyzeTaintJS(code, fileName)).forEach(i => {
+        runEngine('analyzeTaintJS', () => analyzeTaintJS(code, fileName), 'taint:js').forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
         });
     }
     if (ext3 === 'py' && typeof analyzeTaintPY === 'function') {
-        runEngine('analyzeTaintPY', () => analyzeTaintPY(code, fileName)).forEach(i => {
+        runEngine('analyzeTaintPY', () => analyzeTaintPY(code, fileName), 'taint:py').forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
         });
     }
     if (ext3 === 'php' && typeof analyzeTaintPHP === 'function') {
-        runEngine('analyzeTaintPHP', () => analyzeTaintPHP(code, fileName)).forEach(i => {
+        runEngine('analyzeTaintPHP', () => analyzeTaintPHP(code, fileName), 'taint:php').forEach(i => {
             if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
         });
     }
@@ -753,35 +790,35 @@ function analyzeCode(code, fileName) {
 
   // SmartContext — يدرس الكود قبل التحليل
   if (typeof SmartContext !== 'undefined' && SmartContext && typeof SmartContext.analyze === 'function') {
-    runEngine('SmartContext', () => SmartContext.analyze(code, fileName)).forEach(i => {
+    runEngine('SmartContext', () => SmartContext.analyze(code, fileName), 'context').forEach(i => {
       if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
     });
   }
 
   // SemanticLayer — فهم النية والسياق
   if (typeof SemanticLayer !== 'undefined' && SemanticLayer && typeof SemanticLayer.analyze === 'function') {
-    runEngine('SemanticLayer', () => SemanticLayer.analyze(code, fileName)).forEach(i => {
+    runEngine('SemanticLayer', () => SemanticLayer.analyze(code, fileName), 'semantic').forEach(i => {
       if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
     });
   }
 
   // ProjectIntelligence — فهم السياق الكامل
   if (typeof analyzeProject !== 'undefined') {
-    runEngine('analyzeProject', () => analyzeProject(code, fileName, issues)).forEach(i => {
+    runEngine('analyzeProject', () => analyzeProject(code, fileName, issues), 'project').forEach(i => {
       if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
     });
   }
 
   // ExtendedPatterns Analysis
   if (typeof ExtendedPatterns !== 'undefined' && ExtendedPatterns && typeof ExtendedPatterns.analyze === 'function') {
-    runEngine('ExtendedPatterns', () => ExtendedPatterns.analyze(code, fileName)).forEach(i => {
+    runEngine('ExtendedPatterns', () => ExtendedPatterns.analyze(code, fileName), 'extended').forEach(i => {
       if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
     });
   }
 
   // CVEPatterns Analysis
   if (typeof CVEPatterns !== 'undefined' && CVEPatterns && typeof CVEPatterns.analyze === 'function') {
-    runEngine('CVEPatterns', () => CVEPatterns.analyze(code, fileName)).forEach(i => {
+    runEngine('CVEPatterns', () => CVEPatterns.analyze(code, fileName), 'cve').forEach(i => {
       const key = `${i.line}:${i.cwe||i.type}`;
       if (!issues.some(x => `${x.line}:${x.cwe||x.type}` === key)) issues.push(i);
     });
@@ -789,7 +826,7 @@ function analyzeCode(code, fileName) {
 
   // KnowledgeBase Analysis
   if (typeof KnowledgeBase !== 'undefined' && KnowledgeBase && typeof KnowledgeBase.analyze === 'function') {
-    runEngine('KnowledgeBase', () => KnowledgeBase.analyze(code, fileName)).forEach(i => {
+    runEngine('KnowledgeBase', () => KnowledgeBase.analyze(code, fileName), 'knowledge').forEach(i => {
       if (!issues.some(x => x.line === i.line && x.title === i.title)) issues.push(i);
     });
   }
