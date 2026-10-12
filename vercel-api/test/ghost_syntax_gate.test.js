@@ -23,22 +23,15 @@ const assert = require('node:assert');
 const fs     = require('node:fs');
 const path   = require('node:path');
 const vm     = require('node:vm');
+const { readEngineManifest } = require('./helpers/engine_manifest.js');
 
 const PUBLIC_DIR  = path.join(__dirname, '..', 'public');
 const ANALYZE_API = path.join(__dirname, '..', 'api', 'analyze.js');
 
 // ── قائمة المحركات كما هي في api/analyze.js (لا نسخة) ──
-function serverEngineList() {
-  const src = fs.readFileSync(ANALYZE_API, 'utf8');
-  const m = src.match(/const\s+engines\s*=\s*\[([\s\S]*?)\]/);
-  assert.ok(m, 'api/analyze.js يجب أن يحوي `const engines = [...]`');
-  return m[1]
-    .replace(/\/\*[\s\S]*?\*\//g, '')     // تعليقات كتلية داخل المصفوفة
-    .replace(/\/\/[^\n]*/g, '')           // تعليقات سطرية
-    .split(',')
-    .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
-    .filter(Boolean);
-}
+// تُقرأ بالقارئ المشترك: النمطُ غيرُ النَّهِم كان يقف عند أول ‎]‎ ولو داخل
+// تعليق، فيقتطع القائمة بصمت ويُحمَّل سياقٌ أصغر من سياق الإنتاج.
+const serverEngineList = () => readEngineManifest(ANALYZE_API, 'engines');
 
 // ── سياق VM بنفس شكل سياق السيرفر ──
 function loadContext(files) {

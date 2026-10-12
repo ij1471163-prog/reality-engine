@@ -11,6 +11,7 @@ const assert = require('node:assert');
 const fs     = require('node:fs');
 const path   = require('node:path');
 const vm     = require('node:vm');
+const { readEngineManifest } = require('./helpers/engine_manifest.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const API_DIR    = path.join(__dirname, '..', 'api');
@@ -31,12 +32,9 @@ function loadContext(files) {
 }
 
 // قائمة المحركات مقروءة من api/analyze.js — مصدر واحد للحقيقة، بلا نسخ يدوي
-function serverEngineList() {
-  const src = fs.readFileSync(path.join(API_DIR, 'analyze.js'), 'utf8');
-  const m = src.match(/const engines\s*=\s*\[([\s\S]*?)\]/);
-  assert.ok(m, 'تعذّر استخراج قائمة engines من api/analyze.js');
-  return m[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
-}
+// والقارئُ مشترك: يعدّ الأقواس بدل الوقوف عند أولها، فلا يقتطع بصمت.
+const serverEngineList = () =>
+  readEngineManifest(path.join(API_DIR, 'analyze.js'), 'engines');
 
 // استدعاء استراتيجية بنفس طريقة repairCode
 function callStrategy(ctx, name, code, line, ext, fileName) {

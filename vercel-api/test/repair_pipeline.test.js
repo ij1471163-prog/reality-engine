@@ -10,6 +10,7 @@ const assert = require('node:assert');
 const fs     = require('node:fs');
 const path   = require('node:path');
 const vm     = require('node:vm');
+const { readEngineManifest } = require('./helpers/engine_manifest.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const API_DIR    = path.join(__dirname, '..', 'api');
@@ -36,12 +37,9 @@ function browserEngineList() {
   return list.filter(f => !/\.min\.js$/.test(f));
 }
 
-function serverEngineList() {
-  const src = fs.readFileSync(path.join(API_DIR, 'analyze.js'), 'utf8');
-  const m = src.match(/const engines\s*=\s*\[([\s\S]*?)\]/);
-  assert.ok(m, 'تعذّر استخراج قائمة engines من api/analyze.js');
-  return m[1].split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
-}
+// القارئُ المشترك: يعدّ الأقواس، فلا يقتطع عند قوسٍ في تعليق.
+const serverEngineList = () =>
+  readEngineManifest(path.join(API_DIR, 'analyze.js'), 'engines');
 
 // ═══ 1. هوية اللغة من الامتداد، لا من تخمين المحتوى ═══
 // ملفات Dart/Kotlin/Ruby تحتوي import/print/require فيصنّفها تخمين المحتوى

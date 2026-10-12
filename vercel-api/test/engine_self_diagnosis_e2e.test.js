@@ -22,6 +22,7 @@ const test   = require('node:test');
 const assert = require('node:assert');
 const fs     = require('node:fs');
 const path   = require('node:path');
+const { readEngineManifest } = require('./helpers/engine_manifest.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const ESD = require(path.join(PUBLIC_DIR, 'engine_self_diagnosis.js'));
@@ -720,10 +721,9 @@ test('[E2E-10c] ملفان متطابقان ⇒ صفر hunks، وإعادة ال
 // ═══════════════════════════════════════════════════════════════════════
 
 test('[E2E-11] قائمة الوحدات لا تتباعد عن قائمة api/analyze.js', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'api', 'analyze.js'), 'utf8');
-  const m = src.match(/const engines = \[([\s\S]*?)\];/);
-  assert.ok(m, 'قائمة محركات الخادم غير موجودة في analyze.js — تغيّر شكلها');
-  const serverList = [...m[1].matchAll(/'([^']+\.js)'/g)].map(x => x[1]);
+  // القارئُ المشترك: النمطُ السابق يقف عند أول ‎];‎ ولو داخل تعليق.
+  const serverList = readEngineManifest(
+    path.join(__dirname, '..', 'api', 'analyze.js'), 'engines');
 
   assert.deepStrictEqual(ESD.MODULES.slice(), serverList,
     'قائمة البطارية يجب أن تطابق قائمة الخادم حرفًا وترتيبًا — وإلا اختُبر محرك غير المُشغَّل');

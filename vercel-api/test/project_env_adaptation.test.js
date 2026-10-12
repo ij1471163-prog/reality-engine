@@ -26,6 +26,7 @@ const assert = require('node:assert');
 const fs     = require('node:fs');
 const path   = require('node:path');
 const vm     = require('node:vm');
+const { readEngineManifest } = require('./helpers/engine_manifest.js');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const REPO_ROOT  = path.join(__dirname, '..', '..');
@@ -597,10 +598,9 @@ test('[CI-STUDY] api/analyze.js لا يستقبل إلا ملفًا واحدًا
 });
 
 test('[CI-STUDY] لا منادي لـanalyzeWithIntelligence في قائمة الخادم إلا SelfHealing', () => {
+  // القارئُ المشترك: لا يقتطع عند قوسٍ في تعليق.
   const src = fs.readFileSync(path.join(API_DIR, 'analyze.js'), 'utf8');
-  const m = src.match(/const engines = \[([\s\S]*?)\];/);
-  assert.ok(m, 'قائمة محركات الخادم غير موجودة');
-  const list = [...m[1].matchAll(/'([^']+\.js)'/g)].map(x => x[1]);
+  const list = readEngineManifest(path.join(API_DIR, 'analyze.js'), 'engines');
 
   assert.ok(!list.includes('code_intelligence.js'),
     'code_intelligence.js أُضيف — فليُقَس أثره من جديد ويُحدَّث هذا القرار');
