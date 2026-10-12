@@ -55,6 +55,10 @@ function createRepairEngine() {
     "taint_php.js",
     "context_analyzer.js",
     "deep_analyzer.js",
+    // AST-PARITY: يُعرّف analyzeJSWithAST، و‎analyzeCode‎ تستشيره بـtypeof
+    // فتتخطّاه صامتةً حين يغيب: بقُّ التراكم و‎return‎ داخل forEach لا
+    // يُبلَّغ عنهما على الخادم وحده. نفسُ موضعه في بيان الصفحة.
+    "ast-engine.js",
     "typo_detector.js",
     "accumulation_detector.js",
     "pattern_detector.js",

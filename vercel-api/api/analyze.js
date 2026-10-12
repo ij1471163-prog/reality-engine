@@ -70,6 +70,8 @@ module.exports = async (req, res) => {
       'secret_detector.js', 'taint_core.js', 'taint_js.js',
       'taint_py.js', 'taint_php.js', 'context_analyzer.js',
       'deep_analyzer.js',
+      // AST-PARITY: انظر التعليق في server_repair_adapter.js
+      'ast-engine.js',
       'typo_detector.js',
       'accumulation_detector.js',
       'pattern_detector.js',
