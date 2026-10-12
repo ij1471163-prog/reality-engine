@@ -191,3 +191,38 @@ test('[AM-5] الحارسُ قائم: ‎repairCode‎ على ملفٍ حقيق�
   assert.ok(r && typeof r.repaired === 'string', 'لا ناتج من repairCode');
   assert.ok(n <= 12, 'نداءاتُ المحلّل في repairCode = ' + n + ' — السقفُ 12');
 });
+
+test('[AM-6] والبلاغاتُ المُسلَّمة نسخةٌ، لا كائناتِ الذاكرة', () => {
+  // ‎.slice()‎ كانت تنسخ المصفوفةَ ولا تنسخ الكائنات، فما تُسلّمه البوابةُ
+  // في ‎afterIssues‎ هو كائناتُ الذاكرة نفسُها — وهي تُخزَّن في
+  // ‎R[fn].issues‎ (‎fallback_fixes.js:942,974‎) فتصير بياناتِ واجهةٍ حيّة.
+  // والمقيس قبل الإصلاح: تلويثُ بلاغٍ مُسلَّم يصل الذاكرةَ فيراه النداءُ
+  // التالي. فما يُحرَس هنا هو عقدُ ما قبل الحفظ: نداءٌ للمحلّل ⇒ كائناتٌ طازجة.
+  const ctx = loadCtx();
+  const an = (c, f) => ctx.analyzeCode(c, f);
+
+  const v1 = ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x.js', an);
+  const v2 = ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x.js', an);
+  const i1 = v1.afterIssues || [], i2 = v2.afterIssues || [];
+  assert.ok(i1.length > 0 && i2.length === i1.length,
+    'tripwire: لا بلاغاتٍ في الناتج (' + i1.length + '/' + i2.length + ')');
+  assert.notStrictEqual(i1[0], i2[0], 'نداءان سلّما الكائنَ نفسَه — الكائناتُ مُشتركة');
+
+  // ولا يبلغ الذاكرةَ تلويثُ حقلٍ أوّليّ ولا حقلٍ مصفوفيّ (‎cEv‎)
+  const arrField = Object.keys(i1[0]).find(k => Array.isArray(i1[0][k]));
+  i1[0].title = 'POISONED';
+  if (arrField) i1[0][arrField].push('POISONED');
+
+  const v3 = ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x.js', an);
+  const i3 = v3.afterIssues || [];
+  assert.notStrictEqual(i3[0].title, 'POISONED', 'تلويثُ حقلٍ أوّليّ وصل الذاكرة');
+  if (arrField) assert.ok(!(i3[0][arrField] || []).includes('POISONED'),
+    'تلويثُ حقلٍ مصفوفيّ (' + arrField + ') وصل الذاكرة — النسخُ ضحلٌ أكثرَ من اللازم');
+
+  // والنسخُ لا يُغيّر حكمًا: القيمةُ تُقارَن لا الهُويّة
+  assert.strictEqual(v3.accepted, v1.accepted, 'الحكمُ تغيّر بالنسخ');
+  assert.strictEqual(String(v3.reason), String(v1.reason), 'السببُ تغيّر بالنسخ');
+
+  // ⚠️ حارسٌ على الحارس: لا يُرضي هذا الاختبارَ إلغاءُ الحفظ — ‎[AM-4b]‎
+  // تُلزِم ألّا يُعاد التحليلُ على نفس الزوج، وهي قائمةٌ إلى جانبه.
+});

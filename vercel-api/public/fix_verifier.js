@@ -1781,6 +1781,38 @@ var FixVerifier = (() => {
   const _ANALYZE_CACHE = (typeof WeakMap === 'function') ? new WeakMap() : null;
   const _ANALYZE_CAP = 32;
 
+  // ‎.slice()‎ تنسخ المصفوفةَ ولا تنسخ الكائنات، فبلاغاتُ الذاكرة كانت
+  // تخرج من الوحدة كما هي. والمقيس: تلويثُ بلاغٍ مُسلَّم يصل الذاكرةَ فيراه
+  // النداءُ التالي — و‎afterIssues‎ تُخزَّن في ‎R[fn].issues‎
+  // (‎fallback_fixes.js:942,974‎) فتصير بياناتِ واجهةٍ حيّة.
+  //
+  // والنسخُ داخل الذاكرة يُغلق البابَ لكنه يدفع الثمنَ على **كل** نداءٍ
+  // للغلاف، وأكثرُها إصاباتٌ داخليةٌ لا تخرج. والمقيس على ملفٍ بـ450 بلاغًا:
+  // ‎repairCode‎ تُنادي الغلافَ أربعًا وثلاثين مرة، فيمرّ به 10,980 كائنًا —
+  // مقابل 360 تُغادر الوحدةَ فعلًا. أي ثلاثون ضعفًا من نسخٍ لا يحمي شيئًا
+  // (وقِيس أثرُه ‎+35%‎ على ‎repairCode‎ حين جُرّب).
+  //
+  // فيُنسَخ عند حدِّ الخروج وحده — وهو واحد:
+  //
+  //   • المستهلكون الداخليون (‎hasSqlIssue‎ و‎matchingIssues‎ و‎issueCounts‎
+  //     و‎diffCounts‎) يقرأون ويُهملون: ‎some‎ و‎filter‎ و‎forEach‎ وعَدٌّ،
+  //     بلا كتابةٍ ولا احتفاظ — مُراجَعٌ موضعًا موضعًا.
+  //   • ‎verify()‎ تُسرّب ‎newIssues‎/‎resolvedIssues‎، لكنها حين تُنادى من
+  //     ‎fullVerify‎ تأخذ الدالةَ الخام لا المحفوظة فكائناتُها طازجة؛ وحين
+  //     تُنادى من داخل ‎verifyFix‎ يُهمَل ناتجُها عدا ‎diff‎.
+  //   • فيبقى ‎afterIssues‎ وحده (أسفلَ هذا الملف) — وهناك يقع النسخ.
+  //
+  // والنسخُ ضحلٌ مع سلخِ الحقول المصفوفية: البلاغُ خمسةَ عشرَ حقلًا، أوّليةٌ
+  // كلُّها عدا ‎cEv‎ (مصفوفةُ نصوص)، مقيسًا على ‎js‎ و‎py‎ و‎php‎. ولا حقلَ
+  // أعمقَ، فلا داعيَ لنسخٍ عميقٍ كلفتُه ستةُ أضعاف.
+  function _copyIssue(o) {
+    if (!o || typeof o !== 'object') return o;
+    const c = Object.assign({}, o);
+    for (const k of Object.keys(c)) if (Array.isArray(c[k])) c[k] = c[k].slice();
+    return c;
+  }
+  function _copyIssues(v) { return Array.isArray(v) ? v.map(_copyIssue) : v; }
+
   function _memoAnalyze(fn, fileName) {
     if (typeof fn !== 'function' || !_ANALYZE_CACHE) return fn;
     let per = _ANALYZE_CACHE.get(fn);
@@ -2109,8 +2141,12 @@ var FixVerifier = (() => {
     }
 
     // نعيد تحليل الناتج لتمريره كأساس للـfixer التالي
+    //
+    // ‎_copyIssues‎ هنا هي حدُّ الخروج: هذه المصفوفةُ وحدها تُغادر الوحدةَ
+    // إلى ‎R[fn].issues‎، فتُسلَّم نسخةً لا كائناتِ الذاكرة. وهذا عقدُ ما قبل
+    // الحفظ بالحرف — نداءٌ للمحلّل ⇒ كائناتٌ طازجة. (انظر ‎_memoAnalyze‎.)
     let afterIssues = null;
-    try { afterIssues = normalizeIssues(analyzeFunc(afterCode, fileName)); }
+    try { afterIssues = _copyIssues(normalizeIssues(analyzeFunc(afterCode, fileName))); }
     catch (e) { afterIssues = null; }
     if (afterIssues === null) {
       return { accepted: false, reason: "REJECTED_ANALYSIS_INCONCLUSIVE",
