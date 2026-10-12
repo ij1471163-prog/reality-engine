@@ -384,14 +384,41 @@ test('[UI-5f] وفشلُ الجلسة لا يُجمِّدها — المحاول
 // ═══ 6. عدّ الإصلاحات ════════════════════════════════════════════════
 test('[UI-6] الجردُ شاملٌ وحصري، والعدّ بالبلاغات لا بالملفات', () => {
   const html = fs.readFileSync(INDEX, 'utf8');
-  const fn = html.slice(html.indexOf('function fixAllEngineUI'), html.indexOf('function fixAllEngineUI') + 3000);
+  const at = html.indexOf('function fixAllEngineUI');
+  const fn = html.slice(at, at + 4500);
   assert.match(fn, /other\+\+/, 'قرارٌ غير مصنَّف ما زال يسقط من الجرد');
   assert.match(fn, /issuesBefore/, 'لا يُقاس عددُ البلاغات قبل');
   assert.match(fn, /issuesAfter/,  'لا يُقاس عددُ البلاغات بعد');
-  assert.match(fn, /أُصلحت ' \+ fixedIssues/, 'الرسالة ما زالت تعدّ الملفات وحدها');
+  assert.match(fn, /fixedIssues/,  'الرسالة ما زالت تعدّ الملفات وحدها');
 
   const ai = html.slice(html.indexOf('async function fixAllWithAI'), html.indexOf('async function fixAllWithAI') + 3000);
   assert.match(ai, /noOutput\+\+/, 'ملفٌ بلا ناتج من AI ما زال يسقط من الجرد');
+});
+
+test('[UI-6b] الصفرُ في تمريرةٍ ثانية لا يُقرأ فشلًا — العدّ تراكمي', () => {
+  // العيبُ المقيس على مستخدمٍ حقيقي: ‎GameServer.js‎ دخل بـ33 بلاغًا وخرج
+  // بـ11 بعد 22 إصلاحًا. ثم ضغطةٌ ثانية على الزر نفسه أنتجت
+  //     «أُصلحت 0 مشكلة من 11»
+  // وهي صحيحةٌ لتمريرتها وكاذبةٌ في أثرها: قرأها المستخدم «المحرّك لا
+  // يفعل شيئًا» وقد كان قد فرغ ممّا يستطيع إصلاحه بأمان. فالرسالةُ تحمل
+  // الآن إجمالَ الجلسة، وتفسّر الصفرَ بدل عرضه عاريًا.
+  const html = fs.readFileSync(INDEX, 'utf8');
+  const at = html.indexOf('function fixAllEngineUI');
+  const fn = html.slice(at, at + 4500);
+
+  assert.match(fn, /_engineFixedTotal/, 'لا عدّادَ تراكميًا للجلسة');
+  assert.match(fn, /_engineFixedTotal\s*=\s*\(window\._engineFixedTotal\s*\|\|\s*0\)\s*\+\s*fixedIssues/,
+    'الإجمالي لا يتراكم عبر التمريرات');
+  assert.match(fn, /لا شيء آخر يُصلَح آليًا/,
+    'الصفرُ ما زال يُعرَض بلا تفسير');
+
+  // والفرعُ الثالث قائم: صفرٌ بلا إصلاحٍ سابق ليس كصفرٍ بعد إصلاح
+  assert.match(fn, /لم يُصلَح شيء آليًا/,
+    'لا تمييزَ بين صفرٍ من أول تمريرة وصفرٍ بعد إصلاح');
+
+  // ولا يُعلَن نجاحٌ على فراغ: نغمةُ الرسالة تتبع الإجمالي لا التمريرة
+  assert.match(fn, /fixedIssues \? 's' : \(total > 0 \? 's' : 'w'\)/,
+    'نغمةُ الرسالة لا تميّز الفراغ من الاكتمال');
 });
 
 // ═══ 7. نافذة الترحيب ════════════════════════════════════════════════

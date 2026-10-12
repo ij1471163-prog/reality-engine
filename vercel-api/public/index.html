@@ -981,12 +981,35 @@ function fixAllEngineUI() {
     });
 
     const fixedIssues = Math.max(0, issuesBefore - issuesAfter);
-    let msg = '✅ أُصلحت ' + fixedIssues + ' مشكلة من ' + issuesBefore +
+
+    // [RUN-TOTAL] الرسالة تعدّ التمريرة الواحدة، والمستخدم يقرأ الجلسة.
+    //
+    // المقيس على GameServer.js: التمريرة الأولى 33 بلاغًا ⇒ 11، أي 22 إصلاحًا
+    // فعليًا. ثم ضغطةٌ ثانية على الزر نفسه تُنتج «أُصلحت 0 مشكلة من 11» —
+    // وهي صحيحةٌ لتمريرتها وكاذبةٌ في أثرها: تُقرأ «المحرّك لا يفعل شيئًا»،
+    // والحقيقة أنه فرغ ممّا يستطيع إصلاحه بأمان. فالعدّاد صار تراكميًا،
+    // والصفرُ صار يُفسَّر بدل أن يُعرَض عاريًا.
+    window._engineFixedTotal = (window._engineFixedTotal || 0) + fixedIssues;
+    const total = window._engineFixedTotal;
+
+    let msg;
+    if (fixedIssues > 0) {
+        msg = '✅ أُصلحت ' + fixedIssues + ' مشكلة من ' + issuesBefore +
               ' (' + appliedFiles + ' ملف)';
+        if (total > fixedIssues) msg += ' • الإجمالي في هذه الجلسة ' + total;
+    } else if (issuesBefore > 0) {
+        // صفرٌ في هذه التمريرة: المعنى يختلف جذريًا بحسب ما سبقها
+        msg = total > 0
+            ? '✔️ لا شيء آخر يُصلَح آليًا — أُصلحت ' + total + ' مشكلة في هذه الجلسة'
+            : 'ℹ️ لم يُصلَح شيء آليًا من ' + issuesBefore + ' مشكلة';
+        msg += ' • الباقي ' + issuesBefore + ' يحتاج مراجعة';
+    } else {
+        msg = '✔️ لا مشاكل';
+    }
     if (rejected) msg += ' • رُفض ' + rejected;
     if (aiNeeded) msg += ' • ' + aiNeeded + ' تحتاج AI';
     if (other)    msg += ' • ' + other + ' بلا إجراء';
-    toast(msg, fixedIssues ? 's' : 'w');
+    toast(msg, fixedIssues ? 's' : (total > 0 ? 's' : 'w'));
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
 }
