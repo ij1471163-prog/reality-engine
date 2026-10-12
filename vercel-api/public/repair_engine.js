@@ -740,13 +740,18 @@ function fixHardcodedSecret(code, issue, lines, ext) {
 const _LOG_SENSITIVE_WORDS = new Set(['password', 'passwd', 'pwd', 'secret', 'token',
   'key', 'apikey', 'credential', 'credentials', 'auth', 'cvv', 'ssn']);
 
+// تقسيمُ آخرِ مقطعٍ من الاسم إلى كلمات: camelCase و‎_‎ و‎-‎
+function _logNameWords(name) {
+  return String(name).split('.').pop()
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_\-]+/g, ' ')
+    .toLowerCase().trim().split(/\s+/).filter(Boolean);
+}
+
 function _isSensitiveLogName(name) {
-  const tail = String(name).split('.').pop();
-  // تقسيمٌ على camelCase وعلى ‎_‎ وعلى الأرقام
-  const words = tail.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-                    .replace(/[_\-]+/g, ' ')
-                    .toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const words = _logNameWords(name);
   if (!words.length) return false;
+
   if (_LOG_SENSITIVE_WORDS.has(words[words.length - 1])) return true;
   // ‎api_key‎ و‎apikey‎ ككلمةٍ واحدة
   return words.length === 1 && _LOG_SENSITIVE_WORDS.has(words[0]);
@@ -790,6 +795,56 @@ function _redactLogArgs(args) {
   }).join('');
 }
 
+// ═══════════════════════════════════════════════════════
+// [LOG-SINK] مَصرِفُ تسجيلٍ خارج ‎console‎ و‎logging‎
+// ═══════════════════════════════════════════════════════
+// ‎scanSecurity‎ (security_scanner.js:168) يُبلّغ عن ‎/console\.log|print|Log\./i‎
+// فيشمل ‎log.info‎ و‎Log.debug‎ و‎appLog.warn‎ و‎log.warning‎. والبلاغُ يُوجَّه
+// إلى ‎LOG_SECRET‎ صحيحًا، و‎fixLogSecret‎ **تُنادى**، ثم تُرجع ‎null‎ لأن
+// نمطَها كان ‎console.*‎ و‎logging.*‎ وحدَهما. وعندها يُسقط البلاغُ **صامتًا**:
+// ‎repair_engine.js‎ (المخرجُ عند ‎!result || result.fixed === repairedCode‎)
+// لا يُسجّل في ‎rejected‎ ولا في ‎aiNeeded‎ إلا إذا كان ‎issue.aiRequired‎،
+// و‎scanSecurity‎ لا يضعه. مقيسٌ: سبعةُ أشكالٍ من سبعة — js و ts و py.
+//
+// فالعطبُ ليس في الاكتشاف ولا في التوجيه، بل في أن مفرداتِ المُصلِحِ أضيقُ
+// من مفرداتِ الكاشف، والفرقُ يُبتلع بلا أثر.
+//
+// والمُستقبِلُ محدودٌ بحدِّ الكلمة: آخرُ كلمةٍ في اسمه ‎log‎/‎logger‎/‎logging‎.
+// فـ‎dialog‎ و‎catalog‎ و‎blog‎ لا تُمَسّ وإن أبلغ عنها الكاشفُ (ونمطُه
+// ‎/Log\./i‎ غيرُ محصورٍ بحدِّ كلمةٍ فيُطابق ‎dialog.‎) — لأن
+// ‎dialog.show(password)‎ نداءٌ وظيفيٌّ وتنقيحُه إفسادٌ للسلوك لا إصلاحٌ له.
+// وبقاؤها بلا إصلاحٍ هو ما يفعله المحرّكُ اليوم: لا تراجُع عن شيءٍ قائم.
+//
+// والدالّةُ من قائمةٍ صريحةٍ لا ‎\w+‎، لنفس سببِ ‎[PY-LOG-METHODS]‎:
+// ‎\w+‎ يطابق ‎getLogger‎ و‎basicConfig‎ و‎addHandler‎ و‎setLevel‎، وتنقيحُ
+// وسائطِها يُفسد التهيئة ولا يُنقّح تسجيلًا.
+const _LOG_RECEIVER_WORDS = new Set(['log', 'logger', 'logging']);
+const _LOG_SINK_METHODS = new Set(['log', 'info', 'debug', 'warn', 'warning', 'error',
+  'critical', 'fatal', 'exception', 'trace', 'verbose', 'notice']);
+const _LOG_SINK_CALL = /((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(([^)]+)\)/g;
+
+function _isLogReceiver(name) {
+  const words = _logNameWords(name);
+  return words.length > 0 && _LOG_RECEIVER_WORDS.has(words[words.length - 1]);
+}
+
+// يُنقّح أوّلَ نداءِ تسجيلٍ **مؤهَّلٍ** في السطر. والمسحُ يتجاوز نداءً غيرَ
+// مؤهَّلٍ يسبقه (‎if (cfg.ok()) log.info(password)‎) بدل أن يتوقف عنده.
+function _redactLoggerSink(line) {
+  _LOG_SINK_CALL.lastIndex = 0;
+  let m;
+  while ((m = _LOG_SINK_CALL.exec(line)) !== null) {
+    const [whole, recv, meth, args] = m;
+    if (!_isLogReceiver(recv)) continue;
+    if (!_LOG_SINK_METHODS.has(String(meth).toLowerCase())) continue;
+    const redacted = _redactLogArgs(args);
+    if (redacted === args) continue;
+    return line.slice(0, m.index) + recv + '.' + meth + '(' + redacted + ')' +
+           line.slice(m.index + whole.length);
+  }
+  return line;
+}
+
 // ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
 function fixLogSecret(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
@@ -828,6 +883,9 @@ function fixLogSecret(code, issue, lines, ext) {
         return redacted === args ? whole : `${fn}${redacted})`;
       }
     );
+    // [LOG-SINK] ‎log.info‎/‎Log.debug‎/‎appLog.warn‎ — إضافةٌ لا تبديل:
+    // لا تُستشار إلا إذا لم يُنتج مسارُ ‎console‎ تغييرًا، فسلوكُه يبقى كما هو بتًّا.
+    if (fixed === line) fixed = _redactLoggerSink(line);
   } else if (ext === 'py') {
     // print(password) أو logging.info(secret)
     fixed = line.replace(
@@ -837,6 +895,8 @@ function fixLogSecret(code, issue, lines, ext) {
         return redacted === args ? whole : `${fn}${redacted})`;
       }
     );
+    // [LOG-SINK] ‎log.warning‎ و‎logger.debug‎ — وكذلك إضافةٌ لا تبديل
+    if (fixed === line) fixed = _redactLoggerSink(line);
   }
 
   if (fixed === line) return null;
