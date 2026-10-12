@@ -126,7 +126,20 @@ var ExtendedPatterns = (() => {
     { pattern: /urllib\.request\.urlopen\s*\(\s*(?:request\.|url)/, sev: 'c', title: '🔴 SSRF via urllib', type: 'SSRF' },
 
     // Logging
-    { pattern: /logging\.(info|debug|warning)\s*\(.*(?:password|token|secret)/i, sev: 'h', title: '🟠 Sensitive Data in Logs', type: 'DATA_EXPOSURE' },
+    //
+    // [PY-LOG-METHODS] قائمةُ الدوالّ كانت ‎info|debug|warning‎ وحدها، وهي
+    // ثلاثٌ من تسعٍ في واجهةِ ‎logging‎ القياسية. فـ‎logging.error(password)‎
+    // لا يُكتشَف أصلًا — ومن ثَمّ لا يُصلَح، لا لعجزٍ في الإصلاح بل لأن
+    // البلاغَ لا يُنشأ. والمقيس على ثماني دوالّ، بسؤالَين منفصلين:
+    //
+    //     logging.info/debug/warning        يُكتشَف ✓   يُصلحه fixLogSecret ✓
+    //     logging.error/critical/exception  لا يُكتشَف ✘  يُصلحه fixLogSecret ✓
+    //     logging.warn/log                  لا يُكتشَف ✘  يُصلحه fixLogSecret ✓
+    //
+    // أي أن قدرةَ الإصلاح 8 من 8 والاكتشافَ 3 من 8 — فالمانعُ هنا وحده.
+    // والدوالُّ تُعَدّ صريحةً لا بـ‎\w+‎: الأخيرةُ تُطابق ‎logging.getLogger‎
+    // و‎logging.basicConfig‎ فتُنتج بلاغاتٍ على أسطرٍ لا تُسجّل شيئًا.
+    { pattern: /logging\.(info|debug|warning|warn|error|critical|fatal|exception|log)\s*\(.*(?:password|token|secret)/i, sev: 'h', title: '🟠 Sensitive Data in Logs', type: 'DATA_EXPOSURE' },
     { pattern: /print\s*\(.*(?:password|token|secret)/i, sev: 'h', title: '🟠 Sensitive Data via print()', type: 'DATA_EXPOSURE' },
   ];
 

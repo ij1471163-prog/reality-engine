@@ -314,10 +314,20 @@ test('phase 3: a ≤300-line repo file whose reply would exceed the budget → w
   assert.ok(ClaudeRepairEngine._estimateTokens(code) > ClaudeRepairEngine.FULL_FILE_TOKEN_BUDGET);
   const ctx = ClaudeRepairEngine._extractContext(code, 120);
   assert.equal(ctx.fullFile, false);
-  // Phase 5: النافذة = تعليق القسم + المصفوفة PY_PATTERNS كاملة (88–170) بدل ±40 (80–160) التي كانت تقطعها
+  // Phase 5: النافذة = تعليق القسم + المصفوفة المُحيطة كاملةً، بدل ±40
+  // (80–160) التي كانت تقطعها.
+  //
+  // ⚠️ العيّنةُ ملفُ إنتاجٍ حيّ، فالأرقامُ تتبع شكله. وكانت 88–170 حين كان
+  // الحدُّ يتجاوز ‎PY_PATTERNS‎ (89–131) إلى ‎PHP_PATTERNS‎ (132–170) — أي
+  // مصفوفتين. ولمّا طال قسمُ بايثون بثلاثةَ عشرَ سطرًا ([PY-LOG-METHODS])
+  // صارت النافذةُ 88–144: تعليقُ القسم ثم إغلاقُ ‎PY_PATTERNS‎ وحدها، وهي
+  // المصفوفةُ المُحيطةُ بالسطر 120 فعلًا. فالنافذةُ أدقُّ لا أضعف.
+  const close = code.split('\n').findIndex((l, i) => i > 89 && /^ {2}\];/.test(l)) + 1;
   assert.equal(ctx.fromLine, 88);
-  assert.equal(ctx.toLine, 170);
-  assert.match(ClaudeRepairEngine._buildPrompt({ line: 120, type: 'X', title: 'X' }, code, 'extended_patterns.js'), /Target context \(lines 88–170 of \d+\)/);
+  assert.equal(ctx.toLine, 144);
+  assert.equal(ctx.toLine, close,
+    'النافذةُ لم تنتهِ عند إغلاق المصفوفة المُحيطة بالسطر 120 (المتوقَّع ' + close + ')');
+  assert.match(ClaudeRepairEngine._buildPrompt({ line: 120, type: 'X', title: 'X' }, code, 'extended_patterns.js'), /Target context \(lines 88–144 of \d+\)/);
 });
 
 test('phase 3: that windowed repo file is repaired and reconstructed in full → FIXED', async () => {
