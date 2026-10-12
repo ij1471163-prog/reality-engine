@@ -93,7 +93,7 @@ test('mixed line: == 2 fixed only when nothing inside a literal changes', () => 
 const LIT = {
   'EVAL_USAGE: eval inside a string':   ['EVAL_USAGE', "  ['a.py', 'x = eval(data)\\n', 't'],", "  ['a.py', 'x = JSON.parse(data)\\n', 't'],", 'js'],
   'EVAL_USAGE: eval inside a comment':  ['EVAL_USAGE', '// do not eval(data) here', '// do not JSON.parse(data) here', 'js'],
-  'CMD_INJECTION: exec inside a string': ['CMD_INJECTION', "const none = 'exec(\"ls \" + d);\\n';", "// SECURITY: validate input before exec\nconst safeArgs = \"ls \" + d.replace(/[^a-zA-Z0-9 ]/g, '');\nconst none = 'exec(safeArgs);\\n';", 'js'],
+  'CMD_INJECTION: exec inside a string': ['CMD_INJECTION', "const none = 'exec(\"ls \" + d);\\n';", "// SECURITY: validate input before exec\nconst safeArgs = \"ls \" + d" + ctx.cmdSanitizeCall() + ";\nconst none = 'exec(safeArgs);\\n';", 'js'],
   'CMD_INJECTION_PY: os.system inside a string': ['CMD_INJECTION_PY', "s = \"os.system('ls ' + d)\"", "s = \"subprocess.run(shlex.split('ls ' + d))\"", 'py'],
   'SQL_INJECTION: SQL inside a code-as-text string': ['SQL_INJECTION', "  f({ ev: 'cursor.execute(\"DELETE FROM t WHERE id = \" + uid)' });", "  f({ ev: 'cursor.execute(\"DELETE FROM t WHERE id = ?\")' });", 'js'],
   'SQL_INJECTION: legacy candidate (string + appended comment)': ['SQL_INJECTION', "  f({ ev: 'cursor.execute(\"DELETE FROM t WHERE id = \" + uid)' });", "  f({ ev: 'cursor.execute(\"DELETE FROM t WHERE id = ?\")' }); // use: db.query(sql, [param])", 'js'],
@@ -105,7 +105,7 @@ for (const [name, [strat, before, after, ext]] of Object.entries(LIT)) {
 }
 const LIT_OK = {
   'EVAL_USAGE: eval in code': ['EVAL_USAGE', 'const x = eval(data);', 'const x = JSON.parse(data);', 'js'],
-  'CMD_INJECTION: exec in code': ['CMD_INJECTION', '  exec("ls " + req.query.dir);', "  // SECURITY: validate input before exec\n  const safeArgs = \"ls \" + req.query.dir.replace(/[^a-zA-Z0-9 ]/g, '');\n  exec(safeArgs);", 'js'],
+  'CMD_INJECTION: exec in code': ['CMD_INJECTION', '  exec("ls " + req.query.dir);', "  // SECURITY: validate input before exec\n  const safeArgs = \"ls \" + req.query.dir" + ctx.cmdSanitizeCall() + ";\n  exec(safeArgs);", 'js'],
   'SQL_INJECTION: real query string, concat → param': ['SQL_INJECTION', '  return db.query("SELECT * FROM users WHERE id = " + id);', '  return db.query("SELECT * FROM users WHERE id = ?", [id]);', 'js'],
   'SQL_INJECTION: real quoted concat': ['SQL_INJECTION', "    var query = \"SELECT * FROM p WHERE u='\" + u + \"'\";", '    var query = "SELECT * FROM p WHERE u=?";', 'js'],
   'SQL_INJECTION: real query + legacy comment': ['SQL_INJECTION', '  db.query("SELECT * FROM t WHERE id = " + id);', '  db.query("SELECT * FROM t WHERE id = ?", [id]); // use: db.query(sql, [param])', 'js'],

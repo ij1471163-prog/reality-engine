@@ -143,7 +143,7 @@ test('JS: "ls -la /var/" + dir → accepted, identical to fixer output', () => {
   assert.strictEqual(run(code, 'a.js', 2, 'exec("ls -la /var/" + dir)').repaired, [
     'const { exec } = require("child_process");',
     '// SECURITY: validate input before exec',
-    'const safeArgs = "ls -la /var/" + dir.replace(/[^a-zA-Z0-9 ]/g, \'\');',
+    'const safeArgs = "ls -la /var/" + dir' + ctx.cmdSanitizeCall() + ';',
     'exec(safeArgs);',
   ].join('\n'));
 });

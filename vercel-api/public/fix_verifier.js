@@ -1544,11 +1544,18 @@ var FixVerifier = (() => {
       // فيُرفض إصلاح SQL سليم — أسقط ذلك اختبارًا قائمًا قبل الاستثناء.
       sink: /(?<![.\w$])exec(?:Sync)?\s*\(|(?:child_process|cp)\s*\.\s*exec(?:Sync)?\s*\(|\bshell_exec\s*\(|\bpassthru\s*\(|(?<![.\w$])system\s*\(|os\s*\.\s*popen\s*\(|os\s*\.\s*system\s*\(|shell\s*=\s*True|Runtime\s*\.\s*getRuntime\s*\(\s*\)\s*\.\s*exec|\bcommands\s*\.\s*getoutput\s*\(/i,
       // العلاجات المقبولة — مقيسة على ما يُنتجه repair_engine فعلًا:
-      //   js : ‎const safeArgs = "ls " + d.replace(/[^a-zA-Z0-9 ]/g, '')‎ ثم exec
+      //   js : ‎const safeArgs = "ls " + d.replace(/[^A-Za-z0-9 ._/=:-]/g, '')‎ ثم exec
       //   py : ‎subprocess.run(shlex.split("ls " + x), check=True, …)‎
       // والحارس يُثبت أن علاجًا **أُدخِل**، لا أن قائمة السماح كافية — كفايتُها
       // عقدُ fixCmdInjection في repair_engine لا عقدُ البوابة. وهذا حدٌّ معلن.
-      remedy: /\bexecFile(?:Sync)?\s*\(|\bspawn(?:Sync)?\s*\(|shell\s*:\s*false|shlex\s*\.\s*(?:quote|split)\s*\(|subprocess\.(?:run|Popen|check_output|check_call)\s*\(\s*\[|escapeshellarg\s*\(|escapeshellcmd\s*\(|new\s+ProcessBuilder\s*\(|\.replace\s*\(\s*\/\[\^[^\]/]*\]\s*\/[a-z]*\s*,/i,
+      //
+      // ومحتوى الصنف كان ‎[^\]/]*‎ — يستثني ‎/‎. ولمّا صارت قائمةُ السماح تُبقي
+      // ‎/‎ لتسلم المسارات (انظر ‎[CMD-ALLOWLIST]‎ في repair_engine) لم يُطابِق
+      // النمطُ علاجَه، فحُكم ‎REJECTED_CMD_FIX_UNPROVEN‎، وهو رفضٌ ضارّ فأسقط
+      // مسارُ الإنقاذ الخطوةَ كاملةً: أي أن الإصلاح توقّف عن أن يُطبَّق أصلًا.
+      // مقيس. والحدُّ هنا ‎[^\]]*‎: الصنفُ ما زال محصورًا بـ‎]‎، والشكلُ مثبَّتٌ
+      // بـ‎.replace( /[^ … ]/flags ,‎ كما كان — ولا يتغيّر ما يُثبته الحارس.
+      remedy: /\bexecFile(?:Sync)?\s*\(|\bspawn(?:Sync)?\s*\(|shell\s*:\s*false|shlex\s*\.\s*(?:quote|split)\s*\(|subprocess\.(?:run|Popen|check_output|check_call)\s*\(\s*\[|escapeshellarg\s*\(|escapeshellcmd\s*\(|new\s+ProcessBuilder\s*\(|\.replace\s*\(\s*\/\[\^[^\]]*\]\s*\/[a-z]*\s*,/i,
       reason: "REJECTED_CMD_FIX_UNPROVEN — نقص بلاغ Command Injection لكن الـcandidate لا يُدخل تنفيذًا بوسائط مفصولة ولا تهريبًا ولا قائمة سماح",
     },
     crypto: {

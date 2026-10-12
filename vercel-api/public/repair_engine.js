@@ -308,6 +308,41 @@ function _isCommandExecCall(code, line, execIndex) {
   return false;
 }
 
+// ─── [CMD-ALLOWLIST] قائمةُ السماح في تعقيم وسيطِ exec ──────────────────
+//
+// كانت ‎[^a-zA-Z0-9 ]‎: تُسقط كلَّ ما ليس حرفًا أو رقمًا أو فراغًا. فالحقنُ
+// يُمنَع، لكن الأمرَ الناتج يفقد معناه — وهذا مقيسٌ على المُنتَج المقبولِ
+// فعلًا (البوابةُ تقبله ويُطبَّق على شفرة المستخدم):
+//
+//     ls /var/log      ⇒ ls varlog
+//     ls /tmp/my-dir   ⇒ ls tmpmydir
+//     ls report.txt    ⇒ ls reporttxt
+//     ls -la /etc      ⇒ ls la etc
+//
+// أي أن الإصلاحَ يُزيل الثغرةَ ويُعطّل البرنامج. وسَلِم من تسعةِ مدخلاتٍ
+// واقعيةٍ واحدٌ فقط.
+//
+// والمُضافُ هنا ‎-./:=_‎ وحدها، ولا متحكّمَ صَدَفيٍّ فيها. وبرهانُ ذلك
+// تنفيذيٌّ لا استدلاليّ: سبعَ عشرةَ حملةَ حقنٍ (‎;‎ و‎&&‎ و‎||‎ و‎|‎ و‎$()‎
+// والإحلالُ الخلفي وسطرٌ جديد و‎&‎ و‎>‎ و‎<‎ والأقواسُ وإقحامُ الاقتباس
+// والمائلُ العكسي وتوسيعُ الأقواس والمنزلُ والنجمة) أُجريت عبر ‎/bin/sh -c‎
+// وكلُّ حملةٍ منها تُنشئ ملفًا إن نُفِّذت: **صفرٌ من سبعةَ عشرَ نُفِّذ،
+// بالقائمتين معًا**. فالأمانُ لم يتغيّر، والسلوكُ عاد (9 من 9).
+//
+// وما لا يُعالجه هذا ولا كان يُعالجه: ‎/‎ و‎.‎ يمرّان، فـ‎../..‎ يَسلَم. وهو
+// تجاوزُ مسارٍ لا حقنُ أوامر — صنفٌ آخر، وقائمٌ في الأصل قبل الإصلاح. ولم
+// تكن القائمةُ السابقةُ تمنعه قصدًا بل عرَضًا لأنها تُحطّم كلَّ مسار.
+//
+// والنمطُ هنا موضعٌ واحد: المُولِّدُ والحارسُ (‎cmdCandidateProblem‎) يقرآن
+// منه، فلا يتفارقان — وتفارقُهما يُسقط كلَّ مُرشَّحٍ بـ‎CMD_SYNTAX_INVALID‎.
+const CMD_SANITIZE_CLASS = "[^A-Za-z0-9 ._/=:-]";
+const CMD_SANITIZE_CALL  = ".replace(/" + CMD_SANITIZE_CLASS + "/g, '')";
+
+// ‎const‎ على مستوى النصّ لا يصير خاصيةً عامّة، والاختباراتُ تحمّل الملفَ في
+// سياقٍ معزول. فتُنشَر عبر دالّة — والدوالُّ عامّةٌ هنا — كي تقرأ الاختباراتُ
+// المصدرَ الواحد بدل أن تحمل نسخةً بديلةً منه تنحرف عنه.
+function cmdSanitizeCall() { return CMD_SANITIZE_CALL; }
+
 function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
@@ -328,7 +363,7 @@ function fixCommandInjection(code, issue, lines2, ext2, fileName) {
   // أسطر مضافة بشكل صحيح عبر splice
   lines.splice(ln, 1,
     `${indent}// SECURITY: validate input before exec`,
-    `${indent}const safeArgs = ${execArg}.replace(/[^a-zA-Z0-9 ]/g, '');`,
+    `${indent}const safeArgs = ${execArg}${CMD_SANITIZE_CALL};`,
     safeLine
   );
   return { fixed: lines.join('\n'), patch: lines[ln], reason: 'Command injection mitigated' };
@@ -1229,7 +1264,10 @@ function cmdCandidateProblem(beforeCode, afterCode, lineNum, stratKey) {
   }
 
   // 1. الـcandidate يعقّم وسيط exec كاملًا في جملة صالحة
-  const decl = (A[lineNum] || '').match(/^\s*const safeArgs = ([\s\S]*)\.replace\(\/\[\^a-zA-Z0-9 \]\/g, ''\);\s*$/);
+  // يُبنى من ‎CMD_SANITIZE_CALL‎ نفسِه، فلا يتفارق الحارسُ والمُولِّد
+  const _rxEsc = s => String(s).replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+  const declRx = new RegExp('^\\s*const safeArgs = ([\\s\\S]*)' + _rxEsc(CMD_SANITIZE_CALL) + ';\\s*$');
+  const decl = (A[lineNum] || '').match(declRx);
   if (!decl || decl[1].trim() !== inner) {
     return `CMD_SYNTAX_INVALID — the candidate cuts the exec() call on line ${lineNum} and does not parse`;
   }

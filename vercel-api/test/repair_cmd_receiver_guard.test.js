@@ -56,7 +56,7 @@ function synthCandidate(code, lineNo) {
   const safeLine = line.replace(/exec\s*\([^)]+\)/, 'exec(safeArgs)');
   lines.splice(lineNo - 1, 1,
     `${indent}// SECURITY: validate input before exec`,
-    `${indent}const safeArgs = ${arg}.replace(/[^a-zA-Z0-9 ]/g, '');`,
+    `${indent}const safeArgs = ${arg}${ctx.cmdSanitizeCall()};`,
     safeLine);
   return lines.join('\n');
 }
