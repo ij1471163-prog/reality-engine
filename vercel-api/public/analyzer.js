@@ -364,7 +364,7 @@ function analyzeCode(code, fileName) {
     if (typeof analyzeJava !== 'undefined' && ext === 'java') {
         const javaIssues = runEngine('analyzeJava', () => analyzeJava(code, fileName));
         finalizeIssues(javaIssues, code);
-        return dedupeIssues(javaIssues);
+        return dedupeIssues(dropRedactedLogFindings(javaIssues, code));
     }
 
     const issues = [];
@@ -798,7 +798,9 @@ function analyzeCode(code, fileName) {
   finalizeIssues(issues, code);
 
   // Final dedup — بمفتاح نوع الثغرة لا لغة الملف
-  return dedupeIssues(issues);
+  // (و‎[LOG-REDACTED]‎ قبله: سطرٌ نُقِّح ولا يُسجّل شيئًا ديناميًّا لا يُبلَّغ
+  //  عنه تسريبًا — انظر التعليق عند ‎dropRedactedLogFindings‎.)
+  return dedupeIssues(dropRedactedLogFindings(issues, code));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1210,6 +1212,78 @@ return issues;
 // ═══════════════════════════════════════════════════════
 // Finalize: calcConf on all issues
 // ═══════════════════════════════════════════════════════
+
+// ─── [LOG-REDACTED] السطرُ المُنقَّح لا يُبلَّغ عنه تسريبًا ───────────────
+//
+// أربعةُ كاشفاتٍ تُطابق الكلمةَ الحسّاسة في **سطرِ** نداء اللوج كلِّه
+// (‎cve_patterns‎ مرّتين، و‎extended_patterns‎، و‎security_scanner‎)، فتُطابقها
+// داخلَ نصِّ الرسالة لا في القيمة المُسجَّلة وحدها. ونصُّ الرسالة هو عنوانُ
+// السرّ لا السرُّ، والتنقيحُ لا يملك أن يحذفه.
+//
+// والمقيس أن ذلك يُجمّد الإصلاح كاملًا:
+//
+//     console.log("password:", password)      ⇒ 6 بلاغات
+//     console.log("password:", "[REDACTED]")  ⇒ 6 بلاغات   (نفسُها)
+//
+// فتحكم البوابةُ ‎REJECTED_NO_IMPROVEMENT‎ ثم تُلغي Ghost الدفعةَ كاملةً،
+// فيُفقد تنقيحٌ صحيحٌ أزال التسريبَ فعلًا. ومقيسًا على ستّة أشكال: الكلمةُ
+// خارجَ نصِّ الرسالة ⇒ يُقبل 3 من 3؛ وداخلَه ⇒ يُحجب 3 من 3.
+//
+// والحدُّ هنا أضيقُ ما يكفي، فلا يُضعِف اكتشافًا: لا يُكتَم بلاغٌ إلا على
+// سطرٍ يحمل عَلَمَ التنقيح ‎[REDACTED]‎ **ولا تبقى فيه وسيطةٌ ديناميّة**، أي
+// لا يُسجَّل فيه شيءٌ وقتَ التشغيل إطلاقًا. وما عداه يبقى مُبلَّغًا عنه —
+// مقيسًا على ثماني حالات، بلا خطأٍ واحد:
+//
+//     console.log("password:", userInput)     ⇒ يبقى (وسيطةٌ ديناميّة)
+//     console.log("[REDACTED]", realToken)    ⇒ يبقى (وسيطةٌ ديناميّة)
+//     console.log("your password is 12345")   ⇒ يبقى (لا عَلَمَ تنقيح)
+//
+// وآخرُها مقصود: السرُّ الحرفيُّ داخل الرسالة لا يكشفه كاشفٌ آخر (قِيس)،
+// فلا يُكتَم.
+const LOG_LEAK_TYPE_RX  = /DATA_EXPOSURE|CWE_312|CWE_532/;
+const LOG_LEAK_TITLE_RX = /Sensitive Data in (?:Console )?Log|Sensitive Data Logged|تسجيل بيانات حساسة/;
+const LOG_CALL_ARGS_RX  = /(?:console\.(?:log|error|warn|info|debug)|print|logging\.\w+|Log\.\w+)\s*\(([^)]*)\)/;
+
+// هل كلُّ ما يُسجَّل في هذا السطر نصوصٌ حرفية؟ (أي لا شيءَ ديناميّ)
+function logArgsAllLiteral(line) {
+    const m = String(line).match(LOG_CALL_ARGS_RX);
+    if (!m) return false;
+    const s = m[1];
+    const dynamic = [];
+    let i = 0, buf = '';
+    while (i < s.length) {
+        const c = s[i];
+        if (c === '"' || c === "'" || c === '`') {
+            if (buf) { dynamic.push(buf); buf = ''; }
+            let j = i + 1;
+            while (j < s.length) {
+                if (s[j] === '\\') { j += 2; continue; }
+                if (s[j] === c) { j++; break; }
+                j++;
+            }
+            i = j;
+            continue;
+        }
+        buf += c;
+        i++;
+    }
+    if (buf) dynamic.push(buf);
+    // ما بين النصوص الحرفية فواصلُ ومعاملاتُ ضمٍّ فقط ⇒ لا وسيطةَ ديناميّة
+    return dynamic.join('').replace(/[\s+,.]/g, '').length === 0;
+}
+
+function dropRedactedLogFindings(issues, code) {
+    if (!Array.isArray(issues) || !issues.length) return issues;
+    const lines = String(code == null ? '' : code).split('\n');
+    return issues.filter(iss => {
+        if (!iss) return true;
+        const tag = String(iss.type || '') + ' ' + String(iss.title || '');
+        if (!LOG_LEAK_TYPE_RX.test(tag) && !LOG_LEAK_TITLE_RX.test(tag)) return true;
+        const line = lines[(Number(iss.line) || 0) - 1];
+        if (!line || line.indexOf('[REDACTED]') === -1) return true;   // fail-open
+        return !logArgsAllLiteral(line);
+    });
+}
 
 function finalizeIssues(issues, code) {
     issues.forEach(iss => {

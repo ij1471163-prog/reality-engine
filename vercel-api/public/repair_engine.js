@@ -652,6 +652,86 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   return { fixed: out, patch: fixed.trim(), reason: 'Secret moved to env variable' };
 }
 
+// ─── تنقيحُ وسائطِ اللوج ──────────────────────────────
+//
+// العلّةُ المقيسة: الـregex الذي كان يُنقّح الوسائط يبتلع قوسَي النداء في
+// النمط الخارجي، فلا يبقى في ‎args‎ ما تستند إليه نظرتُه الخلفية على الوسيطة
+// الأولى ولا الأمامية على الأخيرة. فلم تُنقَّح إلا وسيطةٌ **وسطى**:
+//
+//     console.log("User:", password)   ⇒ لم يُمَسّ   (أخيرة)
+//     console.log(password)            ⇒ لم يُمَسّ   (وحيدة)
+//     console.log(password, "tail")    ⇒ لم يُمَسّ   (أولى)
+//     console.log("a", password, "b")  ⇒ نُقِّح       (وسطى)
+//
+// وكان يقتصر على معرِّفٍ مجرّد، فيفوته ‎user.token‎ و‎"tok: " + token‎ — وهما
+// أشيعُ ما يُكتَب فعلًا. فسبعةُ كاشفاتٍ تُبلّغ عن السطر، والمُصلِحُ يُنادى
+// خمسَ مرات ويُرجع ‎null‎ في كلِّها.
+//
+// والتنقيحُ هنا يقوم على تقسيمٍ أوّلي: النصوصُ الحرفية تُعزَل ولا تُمَسّ
+// إطلاقًا، فلا يُنقَّح ‎token‎ داخل ‎"token: "‎ (وذلك كان يُنتج نصًّا مكسورًا).
+// وفي غير الحرفيّ تُنقَّح سلسلةُ أعضاءٍ أو معرِّفٌ يحمل اسمًا حسّاسًا.
+//
+// وما لا يُمَسّ، مقيسًا: نداءُ دالّة (‎getToken()‎ — القيمةُ لا الاسم)،
+// والكلماتُ المحجوزة، والأسماءُ السليمة، وأيُّ شيءٍ داخل نصّ.
+// الحسّاسُ هو ما كانت **آخرُ** كلمةٍ في اسمه حسّاسة، لا ما وردت فيه الكلمةُ
+// حيثُ كان. فـ‎userPassword‎ و‎apiToken‎ و‎cfg.secretKey‎ أسماءُ السرِّ نفسِه،
+// أمّا ‎passwordCount‎ و‎tokenCount‎ فعدّاداتٌ عنه — وتنقيحُها إفسادٌ لشفرةٍ
+// سليمة. ومقيسٌ أن التوسيعَ بلا هذا التضييق يُنقّح ‎console.log(passwordCount)‎
+// في ‎repair_strategy_routing‎، وهو اختبارٌ موضوعٌ لهذا بعينه.
+// وكذلك ‎monkey‎ و‎keyboard‎ لا تُمَسّان: آخرُ كلمةٍ فيهما ليست ‎key‎.
+const _LOG_SENSITIVE_WORDS = new Set(['password', 'passwd', 'pwd', 'secret', 'token',
+  'key', 'apikey', 'credential', 'credentials', 'auth', 'cvv', 'ssn']);
+
+function _isSensitiveLogName(name) {
+  const tail = String(name).split('.').pop();
+  // تقسيمٌ على camelCase وعلى ‎_‎ وعلى الأرقام
+  const words = tail.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+                    .replace(/[_\-]+/g, ' ')
+                    .toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  if (_LOG_SENSITIVE_WORDS.has(words[words.length - 1])) return true;
+  // ‎api_key‎ و‎apikey‎ ككلمةٍ واحدة
+  return words.length === 1 && _LOG_SENSITIVE_WORDS.has(words[0]);
+}
+const _LOG_CHAIN = /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?![\w$(])/g;
+const _LOG_RESERVED = new Set(['true', 'false', 'null', 'undefined', 'this', 'new', 'typeof',
+  'JSON', 'String', 'Number', 'Boolean', 'Object', 'Array', 'Math', 'Date', 'console', 'process']);
+
+// يُقسّم نصَّ الوسائط إلى قطعٍ حرفيةٍ وغيرِ حرفية، فلا يُمَسّ داخلُ النصوص.
+function _logSplitLiterals(s) {
+  const out = [];
+  let i = 0, buf = '';
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '"' || c === "'" || c === '`') {
+      if (buf) { out.push({ lit: false, t: buf }); buf = ''; }
+      let j = i + 1;
+      while (j < s.length) {
+        if (s[j] === '\\') { j += 2; continue; }
+        if (s[j] === c) { j++; break; }
+        j++;
+      }
+      out.push({ lit: true, t: s.slice(i, j) });
+      i = j;
+      continue;
+    }
+    buf += c;
+    i++;
+  }
+  if (buf) out.push({ lit: false, t: buf });
+  return out;
+}
+
+function _redactLogArgs(args) {
+  return _logSplitLiterals(args).map(p => {
+    if (p.lit) return p.t;
+    return p.t.replace(_LOG_CHAIN, m => {
+      if (_LOG_RESERVED.has(m.split('.')[0])) return m;
+      return _isSensitiveLogName(m) ? '"[REDACTED]"' : m;
+    });
+  }).join('');
+}
+
 // ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
 function fixLogSecret(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
@@ -684,25 +764,19 @@ function fixLogSecret(code, issue, lines, ext) {
   } else if (ext === 'js' || ext === 'ts') {
     // console.log("User:", password) → console.log("User:", "[REDACTED]")
     fixed = line.replace(
-      /(console\.(?:log|error|warn|info)\s*\()([^)]+)\)/,
-      (_, fn, args) => {
-        const redacted = args.replace(
-          /(?<=[,\(]\s*)([A-Za-z_$][\w$]*)(?=\s*[,)])/g,
-          (m) => /password|secret|token|key/i.test(m) ? '"[REDACTED]"' : m
-        );
-        return `${fn}${redacted})`;
+      /(console\.(?:log|error|warn|info|debug)\s*\()([^)]+)\)/,
+      (whole, fn, args) => {
+        const redacted = _redactLogArgs(args);
+        return redacted === args ? whole : `${fn}${redacted})`;
       }
     );
   } else if (ext === 'py') {
     // print(password) أو logging.info(secret)
     fixed = line.replace(
       /((?:print|logging\.\w+)\s*\()([^)]+)\)/,
-      (_, fn, args) => {
-        const redacted = args.replace(
-          /(?<=[,\(]\s*)([A-Za-z_$][\w$]*)(?=\s*[,)])/g,
-          (m) => /password|secret|token|key/i.test(m) ? '"[REDACTED]"' : m
-        );
-        return `${fn}${redacted})`;
+      (whole, fn, args) => {
+        const redacted = _redactLogArgs(args);
+        return redacted === args ? whole : `${fn}${redacted})`;
       }
     );
   }
