@@ -1752,6 +1752,52 @@ var FixVerifier = (() => {
              kept: accepted.size, dropped: total - accepted.size };
   }
 
+  // [ANALYZE-CACHE] وعمرُ الحفظ أطولُ من النداء الواحد، بقَدرِ ما يُنادى.
+  //
+  // المقيس على ملفٍ من 472 سطرًا عبر ‎fixAllEngine‎ كاملًا — لا عبر
+  // ‎repairCode‎ وحدها:
+  //
+  //     fixAllEngine            20,555 ms
+  //     analyzeCode                 89 نداء  ·  4,822 ms
+  //     verifyFix                   39 نداء
+  //     نصوصٌ متمايزة                21
+  //
+  // أي أن 78 من 88 نداءً (89%) تأتي من ‎verify()‎ وحدها، ونصٌّ واحد يُحلَّل
+  // خمسًا وعشرين مرة. فالحفظُ داخل النداء لا يكفي: سلسلةُ الإنقاذ تُنادي
+  // البوابةَ تسعًا وثلاثين مرة على **نفس** نصّ «قبل».
+  //
+  // والنموُّ فوق-خطّي: 59 سطرًا ⇒ 548ms، و472 سطرًا ⇒ 20,555ms. ثمانيةُ
+  // أضعاف الأسطر تُنتج سبعةً وثلاثين ضعفَ الزمن.
+  //
+  // شروطُ سلامة الحفظ، وكلُّها مُتحقَّقة:
+  //   • الحتمية — ‎analyzeCode‎ تُرجع نفسَ الناتج لنفس ‎(code, fileName)‎.
+  //     مقيسٌ على 58 عيّنة، منها حالاتٌ حدّية، بلا اختلافٍ واحد.
+  //   • الهُويّة — المفتاحُ يضمّ اسمَ الملف مع النصّ، فلا يُقرأ تحليلُ ملفٍ
+  //     على آخر. والذاكرةُ معلّقةٌ بدالة التحليل نفسِها عبر WeakMap، فلا
+  //     يُقرأ ناتجُ محلّلٍ على محلّلٍ غيره.
+  //   • عدمُ التلوّث — تُعاد نسخةٌ سطحيةٌ من المصفوفة، فترتيبُ أو حذفُ
+  //     عنصرٍ عند مُستدعٍ لا يصل غيرَه.
+  //   • الحدّ — 32 مدخلًا لكل محلّل، تُمسَح كاملةً عند الامتلاء.
+  const _ANALYZE_CACHE = (typeof WeakMap === 'function') ? new WeakMap() : null;
+  const _ANALYZE_CAP = 32;
+
+  function _memoAnalyze(fn, fileName) {
+    if (typeof fn !== 'function' || !_ANALYZE_CACHE) return fn;
+    let per = _ANALYZE_CACHE.get(fn);
+    if (!per) { per = new Map(); _ANALYZE_CACHE.set(fn, per); }
+    return function (code, name) {
+      const key = String(name === undefined ? fileName : name) + '\u0000' + String(code);
+      if (per.has(key)) {
+        const hit = per.get(key);
+        return Array.isArray(hit) ? hit.slice() : hit;
+      }
+      const val = fn(code, name === undefined ? fileName : name);
+      if (per.size >= _ANALYZE_CAP) per.clear();
+      per.set(key, val);
+      return Array.isArray(val) ? val.slice() : val;
+    };
+  }
+
   function verifyFix(beforeCode, afterCode, fileName, _analyzeFunc, opts) {
     opts = opts || {};
     const allowUnverifiedLanguages = opts.allowUnverifiedLanguages === true;
@@ -1767,19 +1813,9 @@ var FixVerifier = (() => {
     //     نداءات analyzeCode   7  ⇒  40      (×5.7)
     //     زمنُ repairCode    499  ⇒  2174ms  (×4.4)،  منها 95% في المحلّل
     //
-    // وهو ما يُحسّه المستخدم تعليقًا. والحفظُ هنا لا يغيّر حكمًا: نفسُ الدالة
-    // ونفسُ المدخل ⇒ نفسُ الناتج، يُحسَب مرةً ويُعاد. والمفتاحُ هو النصّ
-    // نفسُه، فأيُّ نصٍّ جديد يُحلَّل من جديد.
-    const _memo = new Map();
-    const analyzeFunc = (typeof _analyzeFunc === 'function')
-      ? function (code, fn) {
-          const k = String(code);
-          if (_memo.has(k)) return _memo.get(k);
-          const v = _analyzeFunc(code, fn);
-          _memo.set(k, v);
-          return v;
-        }
-      : _analyzeFunc;
+    // وهو ما يُحسّه المستخدم تعليقًا. والحفظُ لا يغيّر حكمًا: نفسُ الدالة
+    // ونفسُ المدخل ⇒ نفسُ الناتج، يُحسَب مرةً ويُعاد.
+    const analyzeFunc = _memoAnalyze(_analyzeFunc, fileName);
 
     if (typeof afterCode !== "string" || afterCode.trim().length === 0) {
       return { accepted: false, reason: "REJECTED_EMPTY_OUTPUT", syntaxStatus: "unknown",

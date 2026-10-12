@@ -126,19 +126,55 @@ test('[AM-3] الحفظُ لا يغيّر الحكم — نفسُ الناتج �
   assert.strictEqual(String(a.reason), String(b.reason), 'السببُ تغيّر');
 });
 
-test('[AM-4] ولا يُسرّب بين نداءين: نصٌّ جديد يُحلَّل من جديد', () => {
-  // الحفظُ محصورٌ بالنداء الواحد. فلو سُرّب بين نداءين، لقُرئ تحليلُ ملفٍ
-  // على ملفٍ آخر — وهو أخطرُ بكثير من البطء الذي عالجه.
+test('[AM-4] ولا يُقرأ تحليلُ نصٍّ على نصٍّ غيره', () => {
+  // ⚠️ اتّسع عمرُ الحفظ عمدًا بعد أن قِيس أن سلسلة الإنقاذ تنادي البوابةَ
+  // تسعًا وثلاثين مرة على **نفس** نصّ «قبل»، فلم يكن الحصرُ بالنداء الواحد
+  // يكفي. والخطرُ الذي كان الحصرُ يمنعه يُمنَع الآن بالمفتاح نفسِه: اسمُ
+  // الملف مع النصّ، وذاكرةٌ معلّقةٌ بدالة التحليل عبر WeakMap.
+  //
+  // فما يُحرَس هنا ليس قِصَرَ العمر، بل ألّا يُقرأ تحليلُ شيءٍ على شيءٍ غيره.
   const ctx = loadCtx();
   const an = countingAnalyzer(ctx);
 
   ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x.js', an);
   const afterFirst = an.calls.length;
 
+  // نصٌّ جديد ⇒ تحليلٌ جديد
   const OTHER = 'const z = 1;\nmodule.exports = z;\n';
   ctx.FixVerifier.verifyFix(OTHER, OTHER.replace('1', '2'), 'y.js', an);
   assert.ok(an.calls.length > afterFirst,
-    'النداءُ الثاني لم يُحلّل شيئًا — الحفظُ تسرّب بين نداءين');
+    'النداءُ على نصٍّ جديد لم يُحلّل شيئًا — قُرئ تحليلُ نصٍّ آخر');
+
+  // ونفسُ النصّ باسمِ ملفٍ آخر ⇒ تحليلٌ جديد كذلك: المفتاحُ يضمّ الاسم،
+  // فمحلّلٌ يتفرّع على الامتداد لا يُقرأ حكمُه على امتدادٍ غيره.
+  // (باسمٍ من نفس اللغة: ‎.ts‎ تُرفض قبل أي تحليل بـ
+  //  ‎REJECTED_NO_SYNTAX_CHECKER‎، فلا تصلح شاهدًا هنا — مقيس.)
+  const beforeName = an.calls.length;
+  ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x2.js', an);
+  assert.ok(an.calls.length > beforeName,
+    'نفسُ النصّ باسمٍ آخر لم يُحلَّل — المفتاحُ يتجاهل اسمَ الملف');
+
+  // ومحلّلٌ آخر لا يرث ذاكرةَ الأول
+  const an2 = countingAnalyzer(ctx);
+  ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x.js', an2);
+  assert.ok(an2.calls.length > 0,
+    'المحلّلُ الثاني لم يُنادَ — ذاكرةٌ مشتركةٌ بين محلّلين مختلفين');
+});
+
+test('[AM-4b] والحفظُ يُفيد عبر النداءات على نفس الزوج', () => {
+  // هذا هو المكسبُ الذي من أجله اتّسع العمر: البوابةُ تُنادى مرارًا على
+  // نفس نصّ «قبل» داخل تشغيلٍ واحد، فلا يُعاد تحليلُه في كل مرة.
+  const ctx = loadCtx();
+  const an = countingAnalyzer(ctx);
+
+  ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x.js', an);
+  const first = an.calls.length;
+  ctx.FixVerifier.verifyFix(SAMPLE, FIXED, 'x.js', an);
+  const second = an.calls.length - first;
+
+  assert.ok(first >= 2, 'tripwire: النداءُ الأول حلّل ' + first + ' مرة فقط');
+  assert.strictEqual(second, 0,
+    'نداءٌ ثانٍ على نفس الزوج أعاد التحليل ' + second + ' مرة');
 });
 
 test('[AM-5] الحارسُ قائم: ‎repairCode‎ على ملفٍ حقيقي لا يتجاوز سقفَ التحليل', () => {
