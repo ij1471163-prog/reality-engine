@@ -69,7 +69,8 @@ const KEEP = {
   'LOOSE_EQUALITY: regex + division': ['LOOSE_EQUALITY', 'if (a / b == c) d(/x/.test(s));\n', 'if (a / b === c) d(/x/.test(s));\n', 'a.js'],
   'HARDCODED_SECRET: const API_SECRET': ['HARDCODED_SECRET', 'const API_SECRET = "sk_live_abc123xyz789def456ghi";\n', 'const API_SECRET = process.env.API_SECRET;\n', 'a.js'],
   'HARDCODED_SECRET: const A (value is the secret)': ['HARDCODED_SECRET', 'const A = "secret_value_here";\n', 'const A = process.env.A;\n', 'a.js'],
-  'HARDCODED_SECRET: python': ['HARDCODED_SECRET', 'password = "hunter2secret"\n', "password = os.environ.get('PASSWORD', '')\n", 'a.py'],
+  // import os يُضاف: الناتج القديم بدونه كان NameError وقت التشغيل (إصلاح مزيّف)
+  'HARDCODED_SECRET: python': ['HARDCODED_SECRET', 'password = "hunter2secret"\n', "import os\npassword = os.environ.get('PASSWORD', '')\n", 'a.py'],
   'HARDCODED_SECRET: function argument': ['HARDCODED_SECRET', 'const t = jwt.sign({ id }, "hardcoded", { expiresIn: "1h" });\n', 'const t = jwt.sign({ id }, process.env.T, { expiresIn: "1h" });\n', 'a.js'],
   'HARDCODED_PASS: object password': ['HARDCODED_PASS', '  password: "hunter2",\n', '  password: process.env.PASSWORD,\n', 'a.js'],
 };

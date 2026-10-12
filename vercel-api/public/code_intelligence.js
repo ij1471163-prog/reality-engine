@@ -418,6 +418,7 @@ function suggestRefactoring(code, fileName) {
             type: 'EXTRACT_METHOD',
             line: funcStart + 1,
             title: `♻️ Extract Method: ${funcName}() طويلة (${len} سطر)`,
+            strategy: null,
             description: `قسّم ${funcName}() إلى ${Math.ceil(len/20)} دوال أصغر`,
             priority: len > 80 ? 'HIGH' : 'MEDIUM',
           });

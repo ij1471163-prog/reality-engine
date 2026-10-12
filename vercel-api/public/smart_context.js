@@ -266,6 +266,7 @@ var SmartContext = (() => {
           issues.push({
             type: 'XSS', sev: 'c', line: ln, ev: t,
             title: `🔴 XSS: ${dangerousVars[0]} من user input → output بدون sanitize`,
+            strategy: 'XSS_INNER_HTML',
             reason: `${dangerousVars[0]} مصدره user input ويذهب لـ output مباشرة`,
             safe: false,
           });
@@ -281,6 +282,7 @@ var SmartContext = (() => {
           issues.push({
             type: 'CMD_INJECTION', sev: 'c', line: ln, ev: t,
             title: `🔴 Command Injection: ${dangerousVars[0]} يذهب لـ shell command`,
+            strategy: 'CMD_INJECTION',
             reason: `${dangerousVars[0]} من user input ويُنفَّذ كـ system command`,
             safe: false,
           });
@@ -296,6 +298,7 @@ var SmartContext = (() => {
           issues.push({
             type: 'CODE_INJECTION', sev: 'c', line: ln, ev: t,
             title: `🔴 Code Injection: ${dangerousVars[0]} في eval()`,
+            strategy: 'EVAL_USAGE',
             reason: `${dangerousVars[0]} من user input ويُنفَّذ كـ code`,
             safe: false,
           });
@@ -311,6 +314,7 @@ var SmartContext = (() => {
           issues.push({
             type: 'HARDCODED_SECRET', sev: 'h', line: ln, ev: t,
             title: `🟠 Secret مُضمَّن: ${secM[1]} يجب في environment variables`,
+            strategy: 'HARDCODED_SECRET',
             reason: `${secM[1]} = hardcoded value — خطر إذا انكشف الكود`,
             safe: false,
           });

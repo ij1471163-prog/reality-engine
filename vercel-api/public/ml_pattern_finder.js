@@ -177,6 +177,7 @@ function detectDeadCode(lines, issues, ext) {
           issues.push({
             type: 'pattern', sev: 'l', line: ln, ev: t,
             title: `🔵 متغير غير مستخدم: ${varName}`,
+            strategy: null,
             fix: `// احذف ${varName} أو استخدمه`,
             conf: 68, cIcon: '🔵', cAct: 'Unused variable',
             cEv: [`${varName} مُعرَّف لكن ما يُستخدم`],
@@ -216,6 +217,7 @@ function detectGodFunctions(lines, issues, ext) {
           issues.push({
             type: 'pattern', sev: 'l', line: funcStart + 1, ev: `function ${funcName}`,
             title: `🔵 God Function: ${funcName}() (${funcLength} سطر)`,
+            strategy: null,
             fix: `// قسّم ${funcName}() إلى دوال أصغر`,
             conf: 80, cIcon: '🔵', cAct: 'دالة كبيرة جداً',
             cEv: [`${funcName} يحتوي ${funcLength} سطر — يجب تقسيمها`],

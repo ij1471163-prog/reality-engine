@@ -72,6 +72,39 @@ var LearnedFixer = (() => {
 
   const VERSION = '2.1';
 
+  // ─── [S6] تفويضٌ إلى طبقتي التعلّم — بلا تغييرٍ في الواجهة ───────────
+  //
+  // كان هذا الملف يملك نسختَه من شيئين يملكهما غيرُه:
+  //
+  //   (1) قراءةُ المخزن: مفتاحُ ‎re_learned_patterns_v2‎ حرفيًّا، وJSON.parse،
+  //       وtry/catch خاصّ به. فصار للمخزن قارئان، وأيُّ تغييرٍ في شكله أو
+  //       في ترحيله يصل أحدَهما ويفوت الآخر. والتفويضُ هنا يُكسِب مجّانًا
+  //       اشتقاقَ الاعتماد عند القراءة: سجلٌّ عُدِّل بيدٍ ليُعلن ‎approved‎
+  //       لا يصير مرشَّحًا — وهو ما لم يكن يمنعه هذا الملف.
+  //
+  //   (2) عتبتا الاختيار: ‎confidence >= 0.20‎ و‎verified >= 2‎ مكتوبتين
+  //       رقمًا. وهما نفسُ ‎MIN_CONFIDENCE/MIN_VERIFIED‎ في طبقة التحقّق،
+  //       فنسخةٌ ثانية منهما تتباعد بأول تعديلٍ للعتبة. القيمتان اليوم
+  //       متطابقتان، فالتفويضُ لا يغيّر سلوكًا — يمنع تباعدَه غدًا.
+  //
+  // وما لا يُفوَّض: ‎GENERALIZERS‎. هي مُصلِحاتٌ بأنماطٍ مكتوبةٍ يدويًّا، لا
+  // قوالبُ متعلَّمة — آليةٌ أخرى، وجزءٌ من الواجهة المطلوب حفظُها.
+  //
+  // وغيابُ الطبقتين فشلٌ مغلق لا تدهورٌ صامت: صفرُ مرشَّحين. فاختيارُ
+  // مرشَّحٍ بعتباتٍ مجهولة أسوأ من ألا يُقترح مرشَّح — وهي قاعدةُ هذا
+  // الملف المعلنة في ترويسته.
+  let _Vcache = null, _Kcache = null;
+  function _layer(name, cacheGet, cacheSet, file) {
+    const got = cacheGet();
+    if (got) return got;
+    try { if (typeof globalThis !== 'undefined' && globalThis[name]) return cacheSet(globalThis[name]); } catch (e) {}
+    try { if (typeof window !== 'undefined' && window[name]) return cacheSet(window[name]); } catch (e) {}
+    try { if (typeof require === 'function') return cacheSet(require('./' + file)); } catch (e) {}
+    return null;
+  }
+  const _V = () => _layer('LearningValidation', () => _Vcache, v => (_Vcache = v), 'learning_validation.js');
+  const _K = () => _layer('LearningKnowledge',  () => _Kcache, v => (_Kcache = v), 'learning_knowledge.js');
+
   // ─── Pattern Generalizers ─────────────────────────
   //
   // كل generalizer: { ext, detect, fix, validate, enabled? }
@@ -172,10 +205,14 @@ var LearnedFixer = (() => {
     // فلتر patterns موثوقة فقط.
     // ⚠️ هذه شروط اختيار candidate — ليست إثبات سلامة. FixVerifier هو من
     // يقرر إن كان التعديل الناتج مقبولاً.
+    // [S6] العتبتان من طبقة التحقّق لا رقمين محليَّين — نفسُ القيم، بلا نسخة.
+    const V = _V();
+    if (!V) return { code, applied: 0 };          // بلا عتباتٍ معروفة: لا مرشَّح
+    const TH = V.THRESHOLDS;
     const approved = learnedPatterns.filter(p =>
       p && p.approved === true &&
-      p.confidence >= 0.20 &&
-      p.verified >= 2 &&
+      p.confidence >= TH.MIN_CONFIDENCE &&
+      p.verified >= TH.MIN_VERIFIED &&
       p.before && p.after &&
       p.before !== p.after
     );
@@ -231,14 +268,13 @@ var LearnedFixer = (() => {
   // ─── Smart Apply ──────────────────────────────────
   // [v2.1] لا يشترط LearningEngine — لم يكن يستخدمه إطلاقًا، وكان وجوده
   // شرطًا يعطّل الدالة بصمت حسب ترتيب تحميل السكربتات.
-  // المصدر الفعلي للأنماط هو localStorage، وغيابه يعني ببساطة صفر أنماط.
+  // [S6] والمخزنُ يُقرأ من مالكه: ‎LearningKnowledge.load()‎ — فمفتاحُ
+  // التخزين وشكلُه وترحيلُه في موضعٍ واحد، ومعه اشتقاقُ الاعتماد.
   function smartApply(code, fileName) {
     try {
-      const raw = (typeof localStorage !== 'undefined' && localStorage)
-        ? localStorage.getItem('re_learned_patterns_v2')
-        : null;
-      if (!raw) return { code, applied: 0 };
-      const db = JSON.parse(raw);
+      const K = _K();
+      if (!K) return { code, applied: 0 };
+      const db = K.load();
       const patterns = (db && Array.isArray(db.patterns)) ? db.patterns : [];
       return apply(code, fileName, patterns);
     } catch(e) {

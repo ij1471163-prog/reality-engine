@@ -13,6 +13,7 @@ function detectSecrets(code, fileName) {
     // ─── AWS ──────────────────────────────────────────
     {
       name:    'AWS Access Key ID',
+      strategy: null,
       regex:   /AKIA[0-9A-Z]{10,20}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -21,6 +22,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'AWS Secret Access Key',
+      strategy: 'HARDCODED_SECRET',
       regex:   /(?:aws[_\-]?secret|AWS_SECRET)[^=]*=\s*['"]?[A-Za-z0-9/+=]{40}['"]?/i,
       sev:     'c',
       cwe:     'CWE-798',
@@ -31,6 +33,7 @@ function detectSecrets(code, fileName) {
     // ─── GitHub ───────────────────────────────────────
     {
       name:    'GitHub Personal Access Token',
+      strategy: null,
       regex:   /ghp_[A-Za-z0-9]{36}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -39,6 +42,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'GitHub OAuth Token',
+      strategy: null,
       regex:   /gho_[A-Za-z0-9]{36}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -47,6 +51,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'GitHub Fine-grained Token',
+      strategy: null,
       regex:   /github_pat_[A-Za-z0-9_]{82}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -57,6 +62,7 @@ function detectSecrets(code, fileName) {
     // ─── Google ───────────────────────────────────────
     {
       name:    'Google API Key',
+      strategy: 'API_KEY',
       regex:   /AIza[0-9A-Za-z\-_]{35}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -65,6 +71,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'Google OAuth Client Secret',
+      strategy: 'HARDCODED_SECRET',
       regex:   /GOCSPX-[A-Za-z0-9\-_]{28}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -75,6 +82,7 @@ function detectSecrets(code, fileName) {
     // ─── Stripe ───────────────────────────────────────
     {
       name:    'Stripe Secret Key',
+      strategy: 'HARDCODED_SECRET',
       regex:   /sk_live_[A-Za-z0-9]{20,}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -83,6 +91,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'Stripe Publishable Key',
+      strategy: 'API_KEY',
       regex:   /pk_live_[A-Za-z0-9]{24,}/,
       sev:     'h',
       cwe:     'CWE-798',
@@ -93,6 +102,7 @@ function detectSecrets(code, fileName) {
     // ─── JWT ──────────────────────────────────────────
     {
       name:    'JWT Token (hardcoded)',
+      strategy: null,
       regex:   /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,
       sev:     'h',
       cwe:     'CWE-798',
@@ -101,6 +111,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'JWT Secret (weak)',
+      strategy: 'HARDCODED_SECRET',
       regex:   /jwt[_\-]?secret\s*[:=]\s*['"][^'"]{3,30}['"]/i,
       sev:     'h',
       cwe:     'CWE-330',
@@ -111,6 +122,7 @@ function detectSecrets(code, fileName) {
     // ─── Private Keys ─────────────────────────────────
     {
       name:    'RSA Private Key',
+      strategy: null,
       regex:   /-----BEGIN RSA PRIVATE KEY-----/,
       sev:     'c',
       cwe:     'CWE-321',
@@ -119,6 +131,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'Private Key (Generic)',
+      strategy: null,
       regex:   /-----BEGIN (?:EC|DSA|OPENSSH|PGP) PRIVATE KEY-----/,
       sev:     'c',
       cwe:     'CWE-321',
@@ -129,6 +142,7 @@ function detectSecrets(code, fileName) {
     // ─── Slack ────────────────────────────────────────
     {
       name:    'Slack Bot Token',
+      strategy: null,
       regex:   /xoxb-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -137,6 +151,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'Slack Webhook URL',
+      strategy: null,
       regex:   /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/,
       sev:     'h',
       cwe:     'CWE-798',
@@ -147,6 +162,7 @@ function detectSecrets(code, fileName) {
     // ─── Database ─────────────────────────────────────
     {
       name:    'Database Connection String',
+      strategy: null,
       regex:   /(?:mongodb|mysql|postgres|postgresql):\/\/[^:]+:[^@]+@[^/\s]+/i,
       sev:     'c',
       cwe:     'CWE-798',
@@ -157,6 +173,7 @@ function detectSecrets(code, fileName) {
     // ─── Generic Passwords ────────────────────────────
     {
       name:    'Hardcoded Password (strong)',
+      strategy: 'HARDCODED_PASS',
       regex:   /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/i,
       sev:     'h',
       cwe:     'CWE-259',
@@ -165,6 +182,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'Hardcoded API Key',
+      strategy: 'API_KEY',
       regex:   /(?:api[_\-]?key|apikey|access[_\-]?key)\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i,
       sev:     'h',
       cwe:     'CWE-798',
@@ -175,6 +193,7 @@ function detectSecrets(code, fileName) {
     // ─── Anthropic / OpenAI ───────────────────────────
     {
       name:    'Anthropic API Key',
+      strategy: 'API_KEY',
       regex:   /sk-ant-[A-Za-z0-9\-_]{40,}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -183,6 +202,7 @@ function detectSecrets(code, fileName) {
     },
     {
       name:    'OpenAI API Key',
+      strategy: 'API_KEY',
       regex:   /sk-[A-Za-z0-9]{48}/,
       sev:     'c',
       cwe:     'CWE-798',
@@ -193,6 +213,7 @@ function detectSecrets(code, fileName) {
     // ─── Firebase ─────────────────────────────────────
     {
       name:    'Firebase API Key',
+      strategy: 'API_KEY',
       regex:   /AIza[0-9A-Za-z\-_]{35}/,
       sev:     'h',
       cwe:     'CWE-798',
@@ -203,6 +224,7 @@ function detectSecrets(code, fileName) {
     // ─── SSH ──────────────────────────────────────────
     {
       name:    'SSH Private Key',
+      strategy: null,
       regex:   /-----BEGIN OPENSSH PRIVATE KEY-----/,
       sev:     'c',
       cwe:     'CWE-321',
@@ -234,6 +256,8 @@ function detectSecrets(code, fileName) {
           line:  ln,
           ev:    t.length > 80 ? t.substring(0, 77) + '...' : t,
           title: '🔐 ' + pat.name + (masked ? ': ' + masked : ''),
+          // strategy من اسم النمط فقط — masked جزء من قيمة الـsecret نفسها (بيانات مستخدم)
+          strategy: pat.strategy === undefined ? null : pat.strategy,
           fix:   pat.fix,
           conf:  pat.conf,
           cIcon: '🔐',

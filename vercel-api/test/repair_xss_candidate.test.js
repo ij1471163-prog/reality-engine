@@ -75,13 +75,23 @@ test('real analyzer + server adapter: res.send XSS stays reported and goes to ai
   const { createRepairEngine } = require(path.join(PUBLIC_DIR, 'server_repair_adapter.js'));
   const engine = createRepairEngine();
   const code = wrap('  res.send("Hello " + req.query.name);');
+  // لا يُثبَّت نصُّ عنوانٍ بعينه: أكثر من كاشف يُبلّغ عن نفس الثغرة على نفس
+  // السطر (analyzer يقول «XSS في res.send»، وknowledge_base يقول «XSS —
+  // user input في output» بثقةٍ أعلى)، وdedupeIssues يُبقي الأعلى ثقةً.
+  // فالمطلوب أن تبقى الثغرة **مُبلَّغًا عنها وموجَّهةً إلى AI** لا أن يفوز
+  // كاشفٌ بعينه. وaiRequired صار يُدمَج فلا يسقط مع الخاسر ([MERGE-KEEP]).
+  const xssOn = (list, line) => list.filter(i => i.line === line && /xss/i.test(String(i.type) + ' ' + String(i.title)));
   const issues = engine.analyze(code, 'a.js');
-  assert.ok(issues.some(i => /XSS في res\.send/.test(i.title) && i.aiRequired === true));
+  const xss = xssOn(issues, 2);
+  assert.ok(xss.length >= 1, 'لا بلاغ XSS على سطر res.send: ' + JSON.stringify(issues.map(i => i.title)));
+  assert.ok(xss.some(i => i.aiRequired === true),
+    'بلاغ XSS بلا aiRequired ⇒ لا مسار له إلى AI: ' + JSON.stringify(xss.map(i => i.title)));
+
   const out = engine.repair(code, issues, 'a.js');
   assert.strictEqual(out.repaired, code);
   // server_repair_adapter يُرجع repaired/repairs/aiNeeded فقط (لا rejected)
   assert.ok(out.aiNeeded.some(a => a.strategy === 'XSS_INNER_HTML' && a.line === 2));
-  assert.ok(engine.analyze(out.repaired, 'a.js').some(i => /XSS في res\.send/.test(i.title)),
+  assert.ok(xssOn(engine.analyze(out.repaired, 'a.js'), 2).length >= 1,
     'the XSS issue must still be reported on the returned code');
 });
 

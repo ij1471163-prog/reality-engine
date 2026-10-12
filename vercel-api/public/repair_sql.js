@@ -470,6 +470,23 @@
     // ── Python ──────────────────────────────────────
     if (lang === 'python') {
 
+      // [PY-SQL] أنماط الـplaceholder المعلومة في DB-API: '?' لـsqlite3،
+      // و'%s' لـpsycopg2 وPyMySQL. السائق مُثبَت بالاستيراد (detectDriver لا
+      // يُخمّن ويُرجع null بلا دليل)، فالنمط معلوم لا مُخمَّن. وأي سائق بنمط
+      // آخر يبقى بلا إصلاح: نمط خاطئ يكسر الاستعلام وقت التشغيل، والبوابة
+      // تقبله نحويًا فلا تكشفه — فالتحفّظ هنا شرط سلامة لا تزيّد.
+      const PY_PLACEHOLDER = ['?', '%s'];
+      const pyPh = PY_PLACEHOLDER.indexOf(driver.placeholder) !== -1
+        ? driver.placeholder : null;
+
+      // الخانة يجب أن تلي مساواة صريحة لعمود، فالقيمة قيمةٌ لا اسم جدول
+      // أو عمود أو جزء من بنية الاستعلام.
+      const pyValueSlot = prefixText =>
+        /\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*['"]?\s*$/i.test(prefixText);
+
+      // placeholder موجود مسبقًا في بقية النص ⇒ لا نلمس الاستعلام.
+      const pyHasOtherPh = rest => /\?|%s\b|:\w+|\$\d/.test(rest);
+
       // نصلح فقط cursor.execute("... = '" + variable + "'")
       // بمتغير واحد وشرط equality واضح.
       fixed = fixed.replace(
@@ -531,7 +548,12 @@
         /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)(["'])([^"'`]*(?:SELECT|INSERT|UPDATE|DELETE)[^"'`]*)\2\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/gi,
         (match, prefix, quote, queryPart, variable) => {
 
-          if (driver.family !== 'sqlite') {
+          // [PY-SQL] كان الشرط ‎driver.family !== 'sqlite'‎ يحجب هذا المسار
+          // عن psycopg2 وPyMySQL، مع أن نمط الـplaceholder لكليهما معلوم
+          // ('%s') والسائق مُثبَت. والمقيس: psycopg2 و pymysql مع الدمج
+          // ‎scan=1‎ و‎fix=0‎ — كشفٌ بلا تحويل. فصار الشرط على معلومية النمط
+          // لا على عائلة بعينها.
+          if (!pyPh) {
             return match;
           }
 
@@ -569,8 +591,97 @@
         }
       );
 
-      // f-string و SQL assignment متعمدًا بدون auto-fix هنا.
-      // لأنها تحتاج تحليل سياق أعمق، وتذهب لاحقًا إلى AI_REQUIRED.
+      // [PY-SQL] f-string بمتغيّر واحد:
+      //   cur.execute(f"SELECT ... WHERE id={uid}")
+      // كان scan يكشفها وfix لا يحوّلها (مقيس: scan=1، fix=0). والمسار هنا
+      // محافظ: خانة واحدة فقط، محتواها معرّف مجرّد لا تعبير، وتقع بعد مساواة
+      // صريحة. فلا يُخمَّن ترتيب ولا تُفكَّك عبارة.
+      fixed = fixed.replace(
+        /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)f(["'])([^"'\n]*)\2\s*\)/g,
+        (match, prefix, quote, body) => {
+
+          if (!pyPh) return match;
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(body)) return match;
+
+          // أقواس مهروبة ‎{{‎ أو ‎}}‎ تعني نصًّا لا خانة ⇒ لا نحلّلها.
+          if (/\{\{|\}\}/.test(body)) return match;
+
+          const slots = body.match(/\{[^{}]*\}/g) || [];
+          if (slots.length !== 1) return match;
+
+          // معرّف مجرّد فقط: لا نداء دالة ولا فهرسة ولا تنسيق ‎{x:>5}‎.
+          const inner = slots[0].slice(1, -1).trim();
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(inner)) return match;
+
+          const at = body.indexOf(slots[0]);
+          if (!pyValueSlot(body.slice(0, at))) return match;
+
+          const rest = body.slice(0, at) + body.slice(at + slots[0].length);
+          if (pyHasOtherPh(rest)) return match;
+
+          const cleanSQL =
+            body.slice(0, at) + pyPh + body.slice(at + slots[0].length);
+
+          const result =
+            `${prefix}${JSON.stringify(cleanSQL)}, (${inner},))`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'python_fstring_parameterization',
+            driver: driver.name
+          });
+
+          count++;
+          return result;
+        }
+      );
+
+      // [PY-SQL] تنسيق ‎%‎ بمتغيّر واحد:
+      //   cur.execute("SELECT ... WHERE id=%s" % uid)
+      // كان scan لا يكشفها أصلًا. والمسار محافظ: علامة ‎%s‎ واحدة بالضبط،
+      // والوسيط معرّف مجرّد لا tuple ولا قاموس — فترتيب الوسطاء غير قابل
+      // للالتباس. و‎% (a, b)‎ و‎%(name)s‎ يبقيان بلا إصلاح.
+      fixed = fixed.replace(
+        /(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*execute\s*\(\s*)(["'])([^"'\n]*)\2\s*%\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g,
+        (match, prefix, quote, body, variable) => {
+
+          if (!pyPh) return match;
+          if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(body)) return match;
+
+          // ‎%(name)s‎ تنسيق بقاموس ⇒ لا.
+          if (/%\(/.test(body)) return match;
+
+          // علامة تنسيق واحدة بالضبط، وتكون ‎%s‎.
+          const marks = body.match(/%[a-zA-Z]/g) || [];
+          if (marks.length !== 1 || marks[0] !== '%s') return match;
+
+          const at = body.indexOf('%s');
+          if (!pyValueSlot(body.slice(0, at))) return match;
+
+          const rest = body.slice(0, at) + body.slice(at + 2);
+          if (pyHasOtherPh(rest)) return match;
+
+          const cleanSQL =
+            body.slice(0, at) + pyPh + body.slice(at + 2);
+
+          const result =
+            `${prefix}${JSON.stringify(cleanSQL)}, (${variable},))`;
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'python_percent_parameterization',
+            driver: driver.name
+          });
+
+          count++;
+          return result;
+        }
+      );
+
+      // الإسناد إلى متغيّر ثم execute(var) يبقى بلا auto-fix هنا: يحتاج ربط
+      // سطرين، وSmartRepair يغطّيه اليوم. وما لا يُثبَت يبقى AI_REQUIRED.
     }
 
     // ── PHP ─────────────────────────────────────────
@@ -578,16 +689,34 @@
 
       // PDO فقط: concatenation بسيطة بمتغير واحد.
       // mysqli لا يدخل هذا المسار.
+      //
+      // [PHP-PREFIX] الاستبدال يُنتج **عبارتين**، فلا يصحّ وضعه حيث يُنتظر
+      // تعبير. والمقيس على الشكل الأشيع، ‎return $pdo->query(…)‎:
+      //     return $stmt = $pdo->prepare("… ?");
+      //     $stmt->execute([$name]);
+      // فالدالة تعود بـstatement لم يُنفَّذ، وسطرُ execute لا يُبلَغ أصلًا.
+      // ناتجٌ صحيحُ النحو وخاطئُ الدلالة — وهو ما لا تستطيع بوابةُ PHP كشفه
+      // إذ لا محلّل وصول لها. فالعلاج عند المصدر: يُلتقط ما يسبق الاستدعاء
+      // في السطر (‎return‎ أو إسناد)، ويُعاد وضعه على ‎$stmt‎ بعد التنفيذ.
+      //
+      // والمطابقة صارت على السطر كاملًا (‎m‎)، فما لا يُطابق سطرًا نظيفًا —
+      // استدعاءٌ داخل تعبير مركّب مثلًا — لا يُمَسّ، ويبقى AI_REQUIRED.
+      const phpStmtTaken = /\$stmt\b/.test(fixed);
       fixed = fixed.replace(
-        /(\$\w+)\s*->\s*query\s*\(\s*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"\s*\.\s*(\$[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*"([^"]*)"\s*\)\s*;?/gi,
-        (match, dbVar, queryPart, variable, suffix) => {
+        // [PHP-NOSUFFIX] اللاحقة النصّية اختيارية: الشكل الأشيع
+        //     $pdo->query("SELECT … WHERE id = " . $id)
+        // بلا نصٍّ بعد المتغيّر، وكان الشرط يُلزمه ‎. "…"‎ فلا يُطابَق أصلًا.
+        /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?(\$\w+)[ \t]*->[ \t]*query[ \t]*\([ \t]*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"[ \t]*\.[ \t]*(\$[A-Za-z_][A-Za-z0-9_]*)(?:[ \t]*\.[ \t]*"([^"]*)")?[ \t]*\)[ \t]*;?[ \t]*$/gim,
+        (match, indent, prefix, dbVar, queryPart, variable, suffix) => {
 
           if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(queryPart)) {
             return match;
           }
 
+          const tail = typeof suffix === "string" ? suffix : "";
+
           // لا نصلح إذا كان فيه placeholder موجود مسبقاً.
-          if (/[?$]\d*|%s\b|:\w+/.test(queryPart + suffix)) {
+          if (/[?$]\d*|%s\b|:\w+/.test(queryPart + tail)) {
             return match;
           }
 
@@ -596,14 +725,23 @@
             return match;
           }
 
+          // ‎$stmt‎ مُستعمل في الملف ⇒ لا نَدُسّ اسمًا قد يطمس قيمة قائمة.
+          if (phpStmtTaken) {
+            return match;
+          }
+
           const cleanSQL =
             queryPart.replace(/['"]\s*$/i, '') +
             '?' +
-            suffix.replace(/^\s*['"]/, '');
+            tail.replace(/^\s*['"]/, '');
 
-          const result =
-            `$stmt = ${dbVar}->prepare(${JSON.stringify(cleanSQL)});\n` +
-            `$stmt->execute([${variable}]);`;
+          const lines = [
+            `${indent}$stmt = ${dbVar}->prepare(${JSON.stringify(cleanSQL)});`,
+            `${indent}$stmt->execute([${variable}]);`,
+          ];
+          // ‎return‎ أو ‎$x =‎ يُعاد وضعه على نتيجة الاستدعاء، لا على prepare
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt;`);
+          const result = lines.join('\n');
 
           fixes.push({
             original: match,
@@ -616,6 +754,138 @@
           return result;
         }
       );
+    }
+
+    // [PHP-INTERP-FIX] الإقحام داخل نصٍّ مزدوج ⇒ مواضعُ معامِلات.
+    //
+    //   "SELECT * FROM t WHERE id = $id"        ⇒ "… id = ?"        + [$id]
+    //   "SELECT * FROM t WHERE n = '$name'"     ⇒ "… n = ?"         + [$name]
+    //   "SELECT * FROM t WHERE id = {$id}"      ⇒ "… id = ?"        + [$id]
+    //
+    // والاقتباسان المحيطان بالإقحام جزءٌ من صياغة النصّ المُستبدَل لا من
+    // الاستعلام — نفس عِلّة [SQL-QUOTED] في smart_repair.
+    //
+    // وfail-closed على كل ما لا نضمن ترجمته: ‎$obj->prop‎، ‎$arr['k']‎،
+    // ‎${expr}‎، واقتباسٌ غير متوازن حول الإقحام ⇒ null فلا يُمَسّ السطر
+    // ويبقى البلاغ قائمًا إلى مسار AI.
+    function _phpInterpParams(body) {
+      const params = [];
+      let out = '';
+      let i = 0;
+      while (i < body.length) {
+        const ch = body.charAt(i);
+        if (ch === '\\') { out += body.substr(i, 2); i += 2; continue; }
+        // النظرُ الأمامي ‎(?!…->|[|::)‎ شرطٌ لا زينة: بلا هذا يُطابَق ‎$o‎ من
+        // ‎$o->p‎ ويبقى ‎->p‎ في نصّ الاستعلام، فيُنتَج ‎id = ?->p‎ — استعلامٌ
+        // مكسور ومعامِلٌ خاطئ. وكذلك ‎$a[k]‎ ⇒ ‎id = ?[k]‎. أسقط ذلك اختبارَي
+        // السلبيات هنا قبل إضافته.
+        const m = /^('?)(?:\{\$([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*))(?!\s*(?:->|\[|::))('?)/.exec(body.slice(i));
+        if (m && (m[2] || m[3])) {
+          if ((m[1] === "'") !== (m[4] === "'")) return null;   // اقتباس غير متوازن
+          params.push('$' + (m[2] || m[3]));
+          out += '?';
+          i += m[0].length;
+          continue;
+        }
+        if (ch === '$') return null;        // شكلُ إقحامٍ غير مضمون
+        out += ch; i++;
+      }
+      if (!params.length) return null;
+      if (/[?]/.test(body)) return null;    // موضعُ معامِلٍ قائم أصلًا
+      if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(out)) return null;
+      return { query: out, params };
+    }
+
+    // ── PHP / mysqli ────────────────────────────────
+    //
+    // [PHP-MYSQLI] mysqli كان مستثنًى من مسار PHP كلّه، فحقنُ SQL في
+    //     mysqli_query($conn, "SELECT … WHERE id = " . $id)
+    // يُكتشَف ولا يُصلَح بحال — وهو شكلٌ شائع جدًّا في PHP.
+    //
+    // والعلاج عبارةٌ محضَّرة بالربط الذي يُثبته المُتحقِّق:
+    //     $stmt = $conn->prepare("SELECT … WHERE id = ?");
+    //     $stmt->bind_param("s", $id);
+    //     $stmt->execute();
+    //     return $stmt->get_result();
+    // ‎"s"‎ لأن MySQL يُكيّف النصّ إلى العدد في المقارنة، وهو ما يفعله
+    // buildPHPFix القائم أصلًا في هذا الملف — لا اجتهادَ جديدًا.
+    //
+    // ونفس تحفّظات مسار PDO حرفًا: سطرٌ نظيف كامل، متغيّرٌ واحد في موضع
+    // قيمةِ مساواة، ولا placeholder قائم، و‎$stmt‎ غير مستعمل في الملف.
+    if (lang === 'php' && driver === DRIVERS.mysqli) {
+      const mysqliStmtTaken = /\$stmt\b/.test(fixed);
+      fixed = fixed.replace(
+        /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?mysqli_query[ \t]*\([ \t]*(\$\w+)[ \t]*,[ \t]*"([^"]*(?:SELECT|INSERT|UPDATE|DELETE)[^"]*)"[ \t]*\.[ \t]*(\$[A-Za-z_][A-Za-z0-9_]*)(?:[ \t]*\.[ \t]*"([^"]*)")?[ \t]*\)[ \t]*;?[ \t]*$/gim,
+        (match, indent, prefix, connVar, queryPart, variable, suffix) => {
+          const tail = typeof suffix === "string" ? suffix : "";
+
+          if (!/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i.test(queryPart)) return match;
+          if (/[?$]\d*|%s\b|:\w+/.test(queryPart + tail)) return match;
+          if (!/\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*'?\s*$/i.test(queryPart)) return match;
+          if (mysqliStmtTaken) return match;
+
+          const cleanSQL =
+            queryPart.replace(/['"]\s*$/i, '') + '?' + tail.replace(/^\s*['"]/, '');
+
+          const lines = [
+            `${indent}$stmt = ${connVar}->prepare(${JSON.stringify(cleanSQL)});`,
+            `${indent}$stmt->bind_param("s", ${variable});`,
+            `${indent}$stmt->execute();`,
+          ];
+          // النتيجة تُعاد على get_result لا على prepare — نفس عِلّة [PHP-PREFIX]
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt->get_result();`);
+          const result = lines.join('\n');
+
+          fixes.push({
+            original: match,
+            fixed: result,
+            strategy: 'php_mysqli_simple_parameterization',
+            driver: driver.name
+          });
+
+          count++;
+          return result;
+        }
+      );
+    }
+
+    // ── PHP: الإقحام داخل النصّ (PDO وmysqli) ────────
+    if (lang === 'php' && (driver === DRIVERS.pdo || driver === DRIVERS.mysqli)) {
+      const interpStmtTaken = /\$stmt\b/.test(fixed);
+      const isPdo = driver === DRIVERS.pdo;
+      const callRx = isPdo
+        ? /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?(\$\w+)[ \t]*->[ \t]*query[ \t]*\([ \t]*"((?:\\.|[^"\\])*)"[ \t]*\)[ \t]*;?[ \t]*$/gim
+        : /^([ \t]*)(return[ \t]+|(?:\$\w+)[ \t]*=[ \t]*)?mysqli_query[ \t]*\([ \t]*(\$\w+)[ \t]*,[ \t]*"((?:\\.|[^"\\])*)"[ \t]*\)[ \t]*;?[ \t]*$/gim;
+
+      fixed = fixed.replace(callRx, (match, indent, prefix, dbVar, body) => {
+        if (interpStmtTaken) return match;
+        const parsed = _phpInterpParams(body);
+        if (!parsed) return match;
+
+        const lines = [
+          `${indent}$stmt = ${dbVar}->prepare(${JSON.stringify(parsed.query)});`,
+        ];
+        if (isPdo) {
+          lines.push(`${indent}$stmt->execute([${parsed.params.join(', ')}]);`);
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt;`);
+        } else {
+          lines.push(`${indent}$stmt->bind_param("${'s'.repeat(parsed.params.length)}", ${parsed.params.join(', ')});`);
+          lines.push(`${indent}$stmt->execute();`);
+          if (prefix) lines.push(`${indent}${prefix.trimEnd()} $stmt->get_result();`);
+        }
+        const result = lines.join('\n');
+
+        fixes.push({
+          original: match,
+          fixed: result,
+          strategy: isPdo ? 'php_pdo_interpolation_parameterization'
+                          : 'php_mysqli_interpolation_parameterization',
+          driver: driver.name
+        });
+
+        count++;
+        return result;
+      });
     }
 
     return {

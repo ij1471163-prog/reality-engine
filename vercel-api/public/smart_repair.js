@@ -121,25 +121,49 @@ var SmartRepairEngine = (() => {
   // يحوّل تعبير تجميع SQL إلى نص استعلام كامل + قائمة المعاملات بالترتيب.
   // لا يفقد أي مقطع من الاستعلام، ويرجع null (fail-closed) لأي جزء
   // لا نضمن ترجمته — تعبير مركّب، أو template literal، أو بلا معاملات.
+  // [SQL-QUOTED] المعامِل يُقحَم غالبًا بين علامتَي اقتباس SQL:
+  //     "… WHERE username='" + username + "' AND password='" + password + "'"
+  // وتجميعُ المقاطع حرفًا يُنتج ‎WHERE username='?' AND password='?'‎ — و‎'?'‎
+  // نصٌّ حرفي فيه علامة استفهام، لا موضعُ معامِل. فالناتج **لا يُصلح شيئًا**،
+  // وحارسُ repair_engine يرفضه بحقّ:
+  //     SQL_PLACEHOLDER_QUOTED — a placeholder inside quotes is a literal
+  // فيبقى حقنُ SQL بلا إصلاح ويذهب إلى مسار AI. وهو الشكل الأشيع في الكود
+  // الحقيقي (مقيس على GameServer.js المرفوع).
+  //
+  // والعلاج: علامتا الاقتباس المحيطتان بموضع الإقحام جزءٌ من صياغة النصّ
+  // المُستبدَل، لا من الاستعلام. فتُحذفان مع الإقحام ويحلّ ‎?‎ محلّ الكل.
+  // وغيرُ المتوازن (اقتباسٌ فُتح ولم يُغلق حول الإقحام) لا يُثبَت فيُرَدّ null.
   function parseSqlConcat(rhs) {
     const parts = splitTopLevelPlus(rhs);
     if (!parts) return null;
     let query = '';
     const params = [];
+    let openQuote = null;        // اقتباسُ SQL حُذف قبل معامِل، ويُنتظر إغلاقه
     for (const raw of parts) {
       const piece = raw.trim();
       if (!piece) return null;
       const lit = piece.match(/^(['"])((?:\\.|(?!\1)[^\\])*)\1$/);
       if (lit) {
-        const decoded = decodeStringLiteral(lit[2]);
+        let decoded = decodeStringLiteral(lit[2]);
         if (decoded === null) return null;
+        if (openQuote) {
+          if (decoded.charAt(0) !== openQuote) return null;   // غير متوازن
+          decoded = decoded.slice(1);
+          openQuote = null;
+        }
         query += decoded;
         continue;
       }
       if (!/^[A-Za-z_$][\w$]*$/.test(piece)) return null;
+      const last = query.charAt(query.length - 1);
+      if (last === "'" || last === '"') {
+        openQuote = last;
+        query = query.slice(0, -1);
+      }
       query += '?';
       params.push(piece);
     }
+    if (openQuote) return null;                 // اقتباسٌ لم يُغلَق
     if (!params.length) return null;
     if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(query)) return null;
     return { query, params };
@@ -155,15 +179,28 @@ var SmartRepairEngine = (() => {
     );
   }
 
+  // نفس الفكرة لبايثون: cursor.execute(q) بلا معاملات بعد. وجود معاملات
+  // أصلاً ⇒ لا تطابق ⇒ لا نلمس شيئًا (الربط قائم).
+  // executemany مستثنى عمدًا: يتوقع تتابع تتابعات، فربط (p,) عليه خطأ دلالي.
+  function pyExecuteCallRe(varName) {
+    return new RegExp(
+      '((?:cursor|cur|crsr|conn|connection|session|db)\\s*\\.\\s*execute\\s*\\(\\s*)' +
+      varName + '\\s*\\)');
+  }
+
   // يبحث عن موضع الاستدعاء داخل نفس الكتلة فقط (يتوقف عند أول سطر
   // إزاحته أقل من سطر الاستعلام ⇒ خرجنا من الكتلة).
-  function findQueryCallSite(lines, varName, fromLine, indentWidth) {
-    const re = queryCallRe(varName);
+  // reBuilder اختياري — الافتراضي شكل JS، ويمرّر فرع بايثون شكله الخاص.
+  function findQueryCallSite(lines, varName, fromLine, indentWidth, reBuilder) {
+    const re = (reBuilder || queryCallRe)(varName);
     for (let k = fromLine + 1; k < lines.length; k++) {
       const raw = lines[k];
       if (!raw.trim()) continue;
-      if (re.test(raw)) return k;
+      // [FIX] فحص الخروج من الكتلة قبل التطابق، لا بعده. كان التطابق يُفحَص
+      // أولاً فيفوز استدعاء على سطر أقل إزاحة — أي خارج الكتلة. في JS يحجب
+      // ذلك سطر `}` بالصدفة، وبايثون بلا أقواس فالثقب مكشوف هناك.
       if (raw.search(/\S/) < indentWidth) return -1;
+      if (re.test(raw)) return k;
     }
     return -1;
   }
@@ -186,34 +223,34 @@ var SmartRepairEngine = (() => {
       if (ctx.ext === 'py') {
         // يكتشف SQL concat في Python
         if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["'].*\+/.test(t) && !/cursor|execute/.test(t)) {
-          const varM = t.match(/(\w+)\s*=/);
-          if (!varM) continue;
-          const varName = varM[1];
-          const indent = ' '.repeat(line.search(/\S/));
-
-          // استخرج params من السياق
-          const sqlInfo = ctx.sqlVars.get(varName);
-          const params = sqlInfo?.params || [];
-          if (!params.length) continue;
-
-          // بناء query نظيف
-          const queryM = t.match(/["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']/i);
-          if (!queryM) continue;
-          let q = queryM[1].replace(/='\s*$/, '=?').replace(/'\s*$/, '?').trim();
-          if (!q.includes('?')) q += '?';
-
-          // احذف cursor.execute القديم
-          let j = i + 1;
-          while (j < lines.length && /cursor.*conn\.execute|conn\.execute|return cursor/.test(lines[j]))
-            lines.splice(j, 1);
-
-          lines[i] = `${indent}${varName} = "${q}"`;
-          lines.splice(i + 1, 0, `${indent}cursor = conn.cursor()`);
-          lines.splice(i + 2, 0, `${indent}cursor.execute(${varName}, (${params.join(', ')},))`);
-          lines.splice(i + 3, 0, `${indent}return cursor.fetchall()`);
-          repairs.push({ line: i + 1, fix: `${varName} → parameterized (${params.join(', ')})` });
-          changed = true;
-          i += 4;
+          // [FIX] كان هذا الفرع يبني patch بالقَولَبة لا بالإثبات، بثلاثة أعطال:
+          //   (أ) بتر الاستعلام — queryM يلتقط أول نص حرفي فقط فيُفقد كل ما بعد
+          //       أول +، ثم يُضاف placeholder واحد بلا نظر لعدد المعاملات.
+          //   (ب) زرع return cursor.fetchall() لم يكن في المصدر، بلا إثبات أن
+          //       الدالة تُرجع صفوف الاستعلام ولا أن conn موجود ⇒ يتغيّر ناتج
+          //       الدالة ويصير ما بعده كودًا ميتًا.
+          //   (ج) حلقة حذف الاستدعاء القديم معلّقة على conn.execute/return
+          //       cursor، والشكل الشائع cursor.execute(q) لا يطابقها، فيبقى
+          //       الاستدعاء الأصلي مكرَّرًا ميتًا.
+          // الآن: الاستعلام يُبنى من التعبير كاملاً بـparseSqlConcat نفسها التي
+          // يستخدمها فرع JS (fail-closed على أي مقطع لا نضمن ترجمته)، والمعاملات
+          // تُربط في موضع execute القائم فعلاً. لا يُحشَر سطر ولا يُحذَف سطر، وأي
+          // حالة لا تُثبَت تُترك كما هي فيبقى البلاغ قائمًا ويذهب لمسار AI.
+          const declM  = t.match(/^([A-Za-z_]\w*)\s*=\s*(.+?)\s*$/);
+          const parsed = declM ? parseSqlConcat(declM[2]) : null;
+          if (parsed) {
+            const varName = declM[1];
+            const indentW = line.search(/\S/);
+            const callIdx = findQueryCallSite(lines, varName, i, indentW, pyExecuteCallRe);
+            if (callIdx !== -1) {
+              const re = pyExecuteCallRe(varName);
+              lines[callIdx] = lines[callIdx].replace(re,
+                (m, head) => `${head}${varName}, (${parsed.params.join(', ')},))`);
+              lines[i] = `${' '.repeat(indentW)}${varName} = ${JSON.stringify(parsed.query)}`;
+              repairs.push({ line: i + 1, fix: `PY SQL → parameterized (${parsed.params.join(', ')})` });
+              changed = true;
+            }
+          }
         }
       }
 

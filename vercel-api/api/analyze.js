@@ -53,14 +53,44 @@ module.exports = async (req, res) => {
   try {
     const ctx = vm.createContext({ console, window: {}, global: {}, F: {}, R: {} });
 
+    // acorn أولًا: GhostMode.syntaxOk تُعطِّل نفسها إذا لم يكن acorn معرّفًا،
+    // فبدونه يمرّ إصلاح لا يُحلَّل بحكم pass. نفس ترتيب index.html.
+    //
+    // DETECTOR-PARITY: من deep_analyzer إلى dependency_analyzer كاشفاتٌ كانت
+    // في الواجهة وحدها. تفصيلُ السبب والقياس في
+    // public/server_repair_adapter.js. بدونها يرى هذا المسار بلاغاتٍ أقلَّ
+    // من الواجهة على نفس الملف، فيختلف ما يُعرَض عمّا يُصلَح.
+    //
+    // ولا أقواسَ مُعقَّفة في تعليقات هذه المصفوفة: اختبار ghost_syntax_gate
+    // يستخرج القائمة بـ‎/const engines = \[([\s\S]*?)\]/‎ غيرِ الشَرِه،
+    // فأيُّ ‎]‎ داخلها يقطع الاستخراج فتُقرأ القائمة ناقصة.
     const engines = [
+      'acorn.min.js',
       'engine_java.js', 'c_cpp_analyzer.js', 'analyzer.js', 'security_scanner.js',
       'secret_detector.js', 'taint_core.js', 'taint_js.js',
       'taint_py.js', 'taint_php.js', 'context_analyzer.js',
+      'deep_analyzer.js',
+      'typo_detector.js',
+      'accumulation_detector.js',
+      'pattern_detector.js',
+      'csharp_analyzer.js',
+      'dart_analyzer.js',
+      'smart_context.js',
+      'deep_flow.js',
+      'knowledge_base.js',
+      'cve_patterns.js',
+      'extended_patterns.js',
+      'crypto_scanner.js',
+      'typescript_analyzer.js',
+      'kotlin_analyzer.js',
+      'php_analyzer.js',
+      'advanced_analyzer.js',
+      'threat_detector.js',
+      'dependency_analyzer.js',
       'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
       'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'self_healing_engine.js',
       'repair_html.js', 'repair_advanced.js', 'fix_verifier.js',
-      'ghost_mode.js', 'learning_engine.js', 'fix_engine_pipeline.js',
+      'ghost_mode.js', 'learning_validation.js', 'learning_knowledge.js', 'learning_engine.js', 'fix_engine_pipeline.js',
     ];
 
     const engineLoadErrors = [];

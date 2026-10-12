@@ -25,7 +25,7 @@ const STRATEGY_LANGS = {
   CMD_INJECTION_PY: ['py'],
   NONE_COMPARE:     ['py'],
   NAMEERROR:        ['py'],
-  MISSING_AUTH:     [],
+  MISSING_AUTH:     ['js', 'ts'],
   RETURN_NULL:      [],
   NPE_CHAIN:        [],
 };
@@ -57,6 +57,13 @@ const STRATEGIES = {
   NPE_CHAIN:        { fn: null,                  autoFix: false, confidence: 0.15 },
 };
 
+// ─── Language variants for explicit strategies ───────
+// detector يضع مفتاحًا واحدًا (CMD_INJECTION)، واللغة تحدد الإصلاح الفعلي —
+// نفس تحويل الـtitle fallback (command → CMD_INJECTION_PY في Python).
+const STRATEGY_LANG_VARIANTS = {
+  CMD_INJECTION: { py: 'CMD_INJECTION_PY' },
+};
+
 // ─── detectExt — امتداد الملف فقط ───────────────────
 function detectExt(code, fileName) {
   if (!fileName) return 'unknown';
@@ -66,6 +73,50 @@ function detectExt(code, fileName) {
   // detectExt يحدد هوية الملف من الامتداد فقط.
   // دعم الإصلاحات تحدده STRATEGY_LANGS لاحقًا.
   return ext || 'unknown';
+}
+
+// ─── Python: import os آمن ────────────────────────────
+// إصلاح يكتب os.environ.get(...) بلا import os ينتج NameError وقت التشغيل —
+// إصلاح مزيّف يمر من الـverifier. يُضاف import os بعد shebang/encoding/
+// docstring/__future__ (قبل __future__ = SyntaxError). أي بنية غير مؤكدة ⇒ null
+// (لا إصلاح) بدل التخمين.
+function _pyBindsOs(code) {
+  return code.split('\n').some(l => {
+    const m = l.match(/^import[ \t]+([^#]+)/);
+    return !!m && m[1].split(',').some(item => /^os(\.\w+)*$/.test(item.trim()));
+  });
+}
+function _pyEnsureImportOs(code) {
+  if (_pyBindsOs(code)) return code;
+  const L = code.split('\n');
+  let i = 0;
+  if (L[0] !== undefined && L[0].startsWith('#!')) i = 1;
+  while (i < L.length && i < 2 && /^#.*coding[:=]/.test(L[i])) i++;
+  // تجاوز الأسطر الفارغة والتعليقات قبل أول جملة
+  let j = i;
+  while (j < L.length && /^\s*(#.*)?$/.test(L[j])) j++;
+  // module docstring
+  const doc = j < L.length && L[j].match(/^[rRuUbB]{0,2}("""|''')/);
+  if (doc) {
+    const q = doc[1];
+    const rest = L[j].slice(L[j].indexOf(q) + 3);
+    let end = rest.includes(q) ? j : -1;
+    for (let k = j + 1; end < 0 && k < L.length; k++) if (L[k].includes(q)) end = k;
+    if (end < 0) return null;                 // docstring غير مغلق ⇒ لا حكم
+    i = end + 1;
+  }
+  // from __future__ يجب أن يبقى أولًا
+  for (let k = i; k < L.length; k++) {
+    if (/^\s*(#.*)?$/.test(L[k])) continue;
+    if (/^from[ \t]+__future__[ \t]+import\b/.test(L[k])) {
+      if (L[k].includes('(') && !L[k].includes(')')) return null;   // متعدد الأسطر ⇒ لا حكم
+      i = k + 1;
+      continue;
+    }
+    break;
+  }
+  L.splice(i, 0, 'import os');
+  return L.join('\n');
 }
 
 // ─── Helper ───────────────────────────────────────────
@@ -157,7 +208,13 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   if (ext === 'py') {
     if (line.includes('os.environ')) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
-    if (fixed !== line && !code.includes('import os')) lines.unshift('import os');
+    // import os يُضاف بعد كتابة السطر: lines.unshift كان يزيح ln فيُكتب السطر في
+    // الموضع الخطأ ويبقى الـsecret الأصلي في الكود
+    if (fixed === line) return null;
+    lines[ln] = fixed;
+    const withOs = _pyEnsureImportOs(lines.join('\n'));
+    if (withOs === null) return null;
+    return { fixed: withOs, patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' };
   } else if (ext === 'js' || ext === 'ts') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   } else if (ext === 'java') {
@@ -177,31 +234,76 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── Command Injection JS/TS — splice لا string concat ─
-// [FIX] لا يفرّق exec( نصيًا فقط — RegExp.prototype.exec() لها نفس الاسم.
-// نرفض الإصلاح إذا كان الاستدعاء فعليًا RegExp.exec وليس child_process exec.
-function _isRegexExecCall(code, line, execIndex) {
+// [FIX] exec( ليست أمر shell بمجرد الاسم: RegExp.prototype.exec، db.exec،
+// stmt.exec، conn.exec، qb.exec و pattern.exec كلها APIs أخرى. تعقيم أمر
+// shell عليها يخرّب الكود (استعلام SQL يُجرَّد من ترقيمه، و.replace على كائن
+// params ينهار وقت التشغيل).
+// القاعدة: أمر shell فقط إذا أُثبت أنه exec الخاص بـchild_process — exec(
+// مباشر بلا نقطة، أو مستقبِل مربوط بـrequire/import من child_process.
+// المستقبِل المجهول يُرفض (fail-closed): لا إصلاح، وتُمرَّر المشكلة كما هي.
+//
+// حدود هذا الفحص: الربط يُستدلّ عليه نصيًا، فثلاث حالات تمرّ وهي ليست ربطًا.
+// الثلاث تشترط أن يحمل المستقبِل نفس معرّف الربط (name collision)، ولا يمكن
+// حسمها إلا بتحليل نطاق/تدفّق لا يقدر عليه regex، وكلها كانت تمرّ أيضًا قبل
+// وجود هذا الحارس — فهي حدّ معروف لا انحدار:
+//   1) require داخل نص حرفي: const s = "const cp = require('child_process')"
+//      (لا يمكن تجريد النصوص هنا لأن اسم الوحدة نفسه نصّ حرفي)
+//   2) معامل يُظلّل الربط في نطاق آخر: f(){const cp=require(...)} / g(cp){cp.exec()}
+//   3) إعادة إسناد بعد الربط: let cp=require(...); cp=getDb(); cp.exec()
+// لا تُحَل بالتخمين: أي تشديد نصيّ إضافي سيرفض روابط شرعية.
+function _isCommandExecCall(code, line, execIndex) {
   const before = line.slice(0, execIndex);
-  const dotMatch = before.match(/\.\s*$/);
-  if (!dotMatch) return false; // exec( بلا نقطة قبلها = نمط child_process الكلاسيكي (destructured exec)
+  if (!/\.\s*$/.test(before)) return true; // exec( بلا نقطة = نمط child_process الكلاسيكي (destructured exec)
+  if (/require\s*\(\s*['"](?:node:)?child_process['"]\s*\)\s*\.\s*$/.test(before)) return true;
 
-  const beforeDot = before.slice(0, dotMatch.index);
+  // مستقبِل غير معرّف بسيط (/re/.exec، ).exec، this.x.exec) لا يُثبت شيئًا
+  const recv = before.match(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\.\s*$/);
+  if (!recv) return false;
 
-  // 1) new RegExp(...) أو RegExp(...) مباشرة قبل .exec(
-  if (/(?:new\s+)?RegExp\s*\([^)]*\)\s*$/.test(beforeDot)) return true;
+  // الدليل يُقرأ من الكود وحده: تعليق يذكر child_process ليس ربطًا.
+  const scan = code.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
-  // 2) regex literal /pattern/flags مباشرة قبل .exec(
-  if (/\/(?:[^\/\\\n]|\\.)+\/[a-z]*\s*$/.test(beforeDot)) return true;
+  const esc = recv[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const CP = `['"](?:node:)?child_process['"]`;
+  // بين الاسم وfrom لا يصحّ إلا بند import حقيقي: `, { ... }` أو `, * as ns`
+  const CLAUSE = `(?:,\\s*(?:\\*\\s+as\\s+[A-Za-z_$][\\w$]*|\\{[^}]*\\}))?`;
 
-  // 3) معرّف بسيط — دوّر في الملف كامل عن تعريفه كـRegExp
-  const idMatch = beforeDot.match(/([A-Za-z_$][\w$]*)\s*$/);
-  if (idMatch) {
-    const name = idMatch[1];
-    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const assignRe = new RegExp(
-      '\\b' + esc + '\\s*=\\s*(?:new\\s+)?RegExp\\s*\\(|' +
-      '\\b(?:const|let|var)\\s+' + esc + '\\s*=\\s*/(?:[^/\\\\\\n]|\\\\.)+/[a-z]*'
-    );
-    if (assignRe.test(code)) return true;
+  // [FIX] دليل نصّي غامض لا يُثبت الربط، فيُرفض كالمستقبِل المجهول. حلّ الغموض
+  // يحتاج تحليل نطاق/تدفّق، لكن كشفه والرفض عنده لا يحتاجه.
+
+  // (أ) المعرّف يظهر معاملًا لدالة ⇒ قد يُظلّل الربط في نطاق آخر.
+  for (const pm of scan.matchAll(/\bfunction\b[^(]*\(([^()]*)\)|\(([^()]*)\)\s*=>/g)) {
+    const params = (pm[1] !== undefined ? pm[1] : pm[2]).split(',');
+    for (const p of params)
+      if (p.replace(/[=:].*$/, '').replace(/^\s*\.\.\./, '').trim() === recv[1]) return false;
+  }
+
+  // (ب) المعرّف يُسند من شيء غير require('child_process') ⇒ الربط قد يكون بائتًا.
+  const CP_RHS = new RegExp(`^\\s*require\\s*\\(\\s*${CP}\\s*\\)`);
+  // الطرف الأيمن قد يبدأ على السطر التالي (const cp =\n  require(...))، فيُقرأ
+  // حتى الفاصلة المنقوطة؛ والفحص مثبَّت على البداية فلا يضرّ طوله.
+  for (const am of scan.matchAll(new RegExp(`(?:^|[^\\w$.])${esc}\\s*=(?![=>])([^;]*)`, 'g')))
+    if (!CP_RHS.test(am[1])) return false;
+
+  // (ج) الدليل يجب أن يكون كودًا لا محتوى نصٍّ حرفي.
+  const binding = new RegExp(
+    // cp = require(...) تعريفًا أو إعادة إسناد — لكن ليس عضوًا مثل obj.cp
+    `(?:^|[^\\w$.])${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)` +
+    // import cp / import * as cp / import cp, { spawn } / import cp, * as ns
+    `|\\bimport\\s+(?:\\*\\s+as\\s+)?${esc}\\b\\s*${CLAUSE}\\s+from\\s+${CP}` +
+    // TypeScript: import cp = require('...')
+    `|\\bimport\\s+${esc}\\s*=\\s*require\\s*\\(\\s*${CP}\\s*\\)`, 'g');
+  // المطابقة تجري على الكود كاملًا (فالربط قد يمتد سطرين)، ثم يُعيَّن موضع
+  // بدايتها إلى سطره لفحص النصوص الحرفية عند ذلك العمود.
+  const srcLines = scan.split('\n');
+  const lineStart = [];
+  for (let i = 0, at = 0; i < srcLines.length; i++) { lineStart.push(at); at += srcLines[i].length + 1; }
+  for (const bm of scan.matchAll(binding)) {
+    let li = 0;
+    while (li + 1 < lineStart.length && lineStart[li + 1] <= bm.index) li++;
+    const col = bm.index - lineStart[li];
+    const lits = _lineLiterals(srcLines[li], 'js');
+    if (!lits.some(q => q.kind === 'string' && col > q.start && col < q.end - 1)) return true;
   }
   return false;
 }
@@ -216,8 +318,8 @@ function fixCommandInjection(code, issue, lines2, ext2, fileName) {
 
   const execMatch = /\bexec\s*\(/.exec(line);
   if (!execMatch) return null;
-  // [FIX] RegExp.exec() ليست command injection — لا نلمسها.
-  if (_isRegexExecCall(code, line, execMatch.index)) return null;
+  // [FIX] مستقبِل غير مُثبت أنه child_process ليس command injection — لا نلمسه.
+  if (!_isCommandExecCall(code, line, execMatch.index)) return null;
 
   const indent = ' '.repeat(line.search(/\S/));
   const execArg = line.match(/exec\s*\(([^)]+)\)/)?.[1] || 'command';
@@ -268,6 +370,55 @@ function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
   if (fixedLine === line) return null;
   lines[ln] = fixedLine;
   return { fixed: lines.join('\n'), patch: fixedLine.trim(), reason: 'Weak crypto MD5/SHA1 → SHA256' };
+}
+
+// ─── WEAK_CRYPTO: سياق credential ─────────────────────
+// يُرجع سبب منع إعادة الكتابة أو null. الأسماء هنا تُستخدم فقط لـ"منع" إصلاح
+// (أكثر تحفظًا)، لا لإثبات أمان أي شيء.
+const _CREDENTIAL_RE = /pass(?:word|wd|phrase)|pwd|credential/i;
+
+// توقيع الدالة المحيطة بالسطر (js/ts/php: بموازنة الأقواس، py: بالإزاحة)
+function _enclosingFunctionSig(lines, idx, ext) {
+  if (ext === 'py') {
+    const ind = (lines[idx].match(/^\s*/) || [''])[0].length;
+    for (let k = idx - 1; k >= 0; k--) {
+      const m = lines[k].match(/^(\s*)(?:async\s+)?def\s+\w+\s*\(([^)]*)\)/);
+      if (m && m[1].length < ind) return { line: lines[k], params: m[2] };
+      if (/^\S/.test(lines[k]) && !/^\s*(#|@)/.test(lines[k]) && lines[k].trim()) break;   // خرجنا لمستوى الـmodule
+    }
+    return null;
+  }
+  let depth = 0;
+  for (let k = idx - 1; k >= 0 && k >= idx - 200; k--) {
+    const l = lines[k];
+    depth += (l.split('}').length - 1) - (l.split('{').length - 1);
+    if (depth < 0) {
+      const m = l.match(/function\s*\w*\s*\(([^)]*)\)/) || l.match(/\(([^)]*)\)\s*(?::\s*[\w<>[\]| ]+)?\s*=>/) ||
+                l.match(/(\w+)\s*=>/) || l.match(/^\s*(?:async\s+)?\w+\s*\(([^)]*)\)\s*\{/);
+      if (m) return { line: l, params: m[1] || '' };
+      depth = 0;   // كتلة ليست دالة (if/for) — نكمل للأعلى
+    }
+  }
+  return null;
+}
+
+function weakCryptoCredentialProblem(code, issue, ext) {
+  const raw = [issue.cwe, issue.cAct, issue.title].filter(Boolean).join(' ');
+  if (/CWE-?(916|759|760)\b|password|كلمة\s*(ال)?مرور/i.test(raw)) return 'WEAK_CRYPTO_PASSWORD_HASH';
+  const lines = code.split('\n');
+  const idx = issue.line - 1;
+  const line = lines[idx] || '';
+  if (_CREDENTIAL_RE.test(line)) return 'WEAK_CRYPTO_CREDENTIAL_CONTEXT';
+  const fn = _enclosingFunctionSig(lines, idx, ext);
+  if (fn) {
+    if (_CREDENTIAL_RE.test(fn.line)) return 'WEAK_CRYPTO_CREDENTIAL_CONTEXT';
+    const params = fn.params.split(',')
+      .map(p => p.trim().replace(/^\.\.\./, '').split(/[\s=:]/)[0].replace(/^\$/, ''))
+      .filter(p => /^\w+$/.test(p) && p !== 'self');
+    const used = params.find(p => new RegExp('(^|[^\\w$])\\$?' + p + '\\b').test(line));
+    if (used) return 'WEAK_CRYPTO_INPUT_FROM_CALLER (' + used + ')';
+  }
+  return null;
 }
 
 // ─── NameError Fix — يستخدم issue.line أولاً ─────────
@@ -327,10 +478,28 @@ function fixXSS(code, issue, lines, ext) {
 }
 
 // ─── HTTP → HTTPS ─────────────────────────────────────
+// http:// يُعدَّل فقط في string هو نفسه URL: يبدأ بـhttp:// وليس فيه مسافة أو اقتباس أو
+// \n (نص كود/بيانات مثل 'fetch("http://x");\n' أو 'https:// بدل http://' لا يُلمس)،
+// وليس نمطًا يُبحث عنه أو يُقارن به (t.replace('http://', …) ، url === "http://…").
+// التعليقات والـregex والكود خارج النصوص لا تُلمس.
+const _HTTP_PATTERN_CALL = /\.(?:replace|replaceAll|includes|startsWith|endsWith|indexOf|lastIndexOf|match|matchAll|split|search|test)\s*\([^()]*$/;
+// URI اسم namespace (معرّف وليس اتصالًا): createElementNS("http://www.w3.org/2000/svg") يتعطل مع https
+const _HTTP_NAMESPACE_HOST = /^http:\/\/(?:www\.w3\.org|ns\.adobe\.com|purl\.org|schemas\.(?:xmlsoap\.org|microsoft\.com|openxmlformats\.org|android\.com)|xmlns\.com)\//i;
+const _HTTP_NAMESPACE_CONTEXT = /(?:xmlns|namespace|\bns)\w*['"]?\s*(?:[:=]|\()\s*(?:[\w$.]+\s*\|\|\s*)?$|\b(?:create(?:Element|Attribute)NS|[gs]etAttributeNS|(?:has|remove)AttributeNS|lookupPrefix|isDefaultNamespace)\s*\([^()]*$/i;
 function fixHTTP(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const fixed = line.replace(/http:\/\//g, 'https://');
+  const lits = _lineLiterals(line, ext === 'mjs' || ext === 'cjs' || ext === 'jsx' || ext === 'tsx' ? 'js' : ext);
+  let fixed = line;
+  for (const q of lits.reverse()) {
+    if (q.kind !== 'string') continue;
+    const body = line.slice(q.start + 1, q.end - 1);
+    if (!/^http:\/\/[^\s'"`\\]*$/.test(body) && !/^http:\/\/[^\s'"`\\]*\$\{[^}]*\}[^\s'"`\\]*$/.test(body)) continue;
+    const before = line.slice(0, q.start), after = line.slice(q.end);
+    if (_HTTP_PATTERN_CALL.test(before) || /[=!]==?\s*$/.test(before) || /^\s*[=!]==?(?!>)/.test(after)) continue;
+    if (_HTTP_NAMESPACE_HOST.test(body) || _HTTP_NAMESPACE_CONTEXT.test(before)) continue;
+    fixed = fixed.slice(0, q.start + 1) + 'https://' + fixed.slice(q.start + 1 + 'http://'.length);
+  }
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'HTTP → HTTPS' };
 }
@@ -359,21 +528,83 @@ function fixEquality(code, issue, lines, ext) {
 }
 
 // ─── Accumulation ─────────────────────────────────────
+// المتغير المقصود من عنوان المشكلة ("X = بدل +=" أو "X (counter) يستخدم = بدل +=").
+function accumulationTarget(issue) {
+  const m = String(issue.title || '').match(/([A-Za-z_$][\w$]*)\s*(?:\(counter\)\s*يستخدم\s*)?=\s*بدل\s*\+=/);
+  return m ? m[1] : null;
+}
+
+// قيمة ثابتة = إعادة تهيئة وليست تراكمًا (x += 0 / x += false لا معنى لها).
+const _ACC_LITERAL_RHS = /^(?:[-+]?(?:\d[\d_]*\.?\d*(?:e[-+]?\d+)?|\.\d+)|true|false|null|undefined|NaN|Infinity|None|True|False|(['"`])[^'"`]*\1|\[\s*\]|\{\s*\})$/i;
+
+// المتغير (escaped) يُستخدم كمؤشر/فهرس في الكود: ++/-- ، ±= 1 ، [x] ، slice(x ...
+function _accIsCursor(code, esc) {
+  return new RegExp(
+    '(?:\\+\\+|--)\\s*' + esc + '(?![\\w$])|(?:^|[^\\w$.])' + esc + '\\s*(?:\\+\\+|--|[-+]=\\s*1(?![\\w$.]))' +
+    '|\\[\\s*' + esc + '\\s*(?:[\\]+\\-])' +
+    '|\\b(?:slice|substring|substr|charAt|charCodeAt|codePointAt|indexOf|lastIndexOf|startsWith|splice)\\s*\\(\\s*' + esc + '(?![\\w$])'
+  ).test(code);
+}
+
 function fixAccumulation(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  if (/=>/.test(line)) {
-    const fm = line.match(/forEach\s*\(\s*\(?\w+\)?\s*=>\s*\{[^}]*(\w+)\s*=\s*(\w+\.\w+)/);
-    if (!fm) return null;
-    const fixed2 = line
-      .replace(`${fm[1]} = ${fm[2]}`, `${fm[1]} += ${fm[2]}`)
-      .replace(`${fm[1]}=${fm[2]}`, `${fm[1]} += ${fm[2]}`);
-    if (fixed2 === line) return null;
-    return { fixed: replaceLineInCode(code, issue.line, fixed2), patch: fixed2.trim(), reason: `${fm[1]} = → ${fm[1]} +=` };
+  const target = accumulationTarget(issue);
+  if (!target) return null;
+  const esc = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // إسناد عادي للمتغير نفسه فقط: ليس ==/=>، ولا خاصية obj.X، ولا تعريف let/const/var،
+  // ولا داخل رأس for(...)، ولا وسيط مسمّى في Python f(x=...).
+  const re = new RegExp('(^|[^\\w$.])' + esc + '\\s*=(?![=>])', 'g');
+  const hits = [...line.matchAll(re)].filter(m => {
+    const before = line.slice(0, m.index + m[1].length);
+    if (/\b(?:let|const|var)\s+(?:[\w$]+\s*=[^,;]*,\s*)*$/.test(before)) return false;
+    if (/\bfor\s*\([^)]*$/.test(before)) return false;
+    if (ext === 'py' && /[(,]\s*$/.test(before)) return false;
+    return true;
+  });
+  if (hits.length !== 1) return null;           // غائب أو مكرر في السطر → لا تخمين
+
+  const h = hits[0];
+  const start = h.index + h[1].length;
+  const end = h.index + h[0].length;
+  const rhs = line.slice(end).split(/;/)[0].replace(/\s*[)}\]]*\s*$/, '').trim();
+  if (!rhs || _ACC_LITERAL_RHS.test(rhs)) return null;
+  // ternary بين قيمتين ثابتتين (x = c ? 1 : 0) → إعادة تهيئة أيضًا.
+  const tern = rhs.match(/\?\s*([^:?]+?)\s*:\s*([^:?]+)$/);
+  if (tern && _ACC_LITERAL_RHS.test(tern[1].trim()) && _ACC_LITERAL_RHS.test(tern[2].trim())) return null;
+  // الطرف الأيمن يستخدم المتغير نفسه (h = f(h) ، x = max(0, x - 1)) → تحديث كامل أصلًا.
+  if (new RegExp('(?:^|[^\\w$.])' + esc + '(?![\\w$])').test(rhs)) return null;
+
+  // تتبّع max/min: أقرب if (…) بمقارنة تذكر المتغير أو متغيرًا يُسند في نفس الكتلة
+  //   if (cur > best) { best = cur; bestLine = i + 1; }
+  for (let k = issue.line - 1; k >= Math.max(0, issue.line - 4); k--) {
+    const cond = (lines[k] || '').match(/\bif\s*\((.*)\)/);
+    if (!cond) continue;
+    if (/[<>]/.test(cond[1].replace(/=>/g, ''))) {
+      const names = new Set([target]);
+      for (const l of lines.slice(k, issue.line))
+        for (const m of l.matchAll(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*=(?![=>])/g)) names.add(m[1]);
+      for (const n of names)
+        if (new RegExp('(?:^|[^\\w$.])' + n.replace(/\$/g, '\\$') + '(?![\\w$])').test(cond[1])) return null;
+    }
+    break;
   }
-  const fixed = line.replace(/(\w+)\s*=\s*/, '$1 += ');
+
+  // مؤشر/فهرس (i++ ، [i] ، slice(i ...) وليس مجمّعًا: i = stop قفزة وليست تراكمًا.
+  if (_accIsCursor(code, esc)) return null;
+  // موضع وليس قيمة: الطرف الأيمن مؤشر ± رقم (start = i + 1).
+  const pos = rhs.match(/^([A-Za-z_$][\w$]*)\s*(?:[-+]\s*\d+)?$/);
+  if (pos) {
+    const pe = pos[1].replace(/\$/g, '\\$');
+    if (_accIsCursor(code, pe) ||
+        new RegExp('\\bfor\\s*\\(\\s*(?:let|var)?\\s*' + pe + '\\s*=').test(code) ||
+        new RegExp('\\.forEach\\s*\\(\\s*\\(\\s*[\\w$]+\\s*,\\s*' + pe + '\\s*\\)').test(code)) return null;
+  }
+
+  const fixed = line.slice(0, start) + target + ' += ' + line.slice(end).replace(/^\s*/, '');
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: '= → +=' };
+  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: `${target} = → ${target} +=` };
 }
 
 // ─── Hardcoded Secret ─────────────────────────────────
@@ -413,7 +644,12 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   }
 
   if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Secret moved to env variable' };
+  let out = replaceLineInCode(code, issue.line, fixed);
+  if (ext === 'py') {
+    out = _pyEnsureImportOs(out);          // بلا import os ⇒ NameError (إصلاح مزيّف)
+    if (out === null) return null;
+  }
+  return { fixed: out, patch: fixed.trim(), reason: 'Secret moved to env variable' };
 }
 
 // ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
@@ -615,6 +851,23 @@ function detectStrategy(issue, lang) {
   // لغة غير معروفة أو غير مدعومة = لا إصلاح
   if (!lang || lang === 'unknown') return null;
 
+  // strategy صريح من الـdetector نفسه: يُستخدم قبل الـtitle، لأن الـtitle قد يحمل
+  // بيانات من كود المستخدم (اسم متغير، route path) فتُضلّل الكلمات المفتاحية.
+  // مفتاح غير معروف أو غير مدعوم للغة → نرجع لاستنتاج الـtitle كما كان.
+  // strategy: null صريح = الـdetector يعلن "لا strategy" (الـtitle يحمل بيانات مستخدم
+  // ولا يوجد إصلاح حتمي لهذا النوع) ⇒ لا استنتاج من الـtitle.
+  if (issue && issue.strategy === null) return null;
+  if (issue && typeof issue.strategy === 'string') {
+    const variant = STRATEGY_LANG_VARIANTS[issue.strategy];
+    const explicit = (variant && variant[lang]) || issue.strategy;
+    if (Object.prototype.hasOwnProperty.call(STRATEGIES, explicit)) {
+      // مفتاح معروف لكن غير مدعوم لهذه اللغة ⇒ لا إصلاح، بدل fallback للـtitle
+      // (الـtitle قد يحمل اسمًا يوجّه لإصلاح آخر مدعوم، مثل $sqlCmd في PHP).
+      return (STRATEGY_LANGS[explicit] && STRATEGY_LANGS[explicit].includes(lang)) ? explicit : null;
+    }
+    // مفتاح غير معروف ⇒ title fallback كما كان
+  }
+
   const t = (issue.title || '').toLowerCase();
   let stratKey = null;
 
@@ -641,6 +894,10 @@ function detectStrategy(issue, lang) {
   else if (t.includes('cwe-798') || t.includes('credential'))              stratKey = 'HARDCODED_SECRET';
 
   if (!stratKey) return null;
+
+  // MISSING_AUTH يأتي فقط من strategy صريح (Auth detector) — كلمة auth في الـtitle
+  // قد تكون اسم متغير/دالة من كود المستخدم (authZ, authToken...)، فلا تُعتمد.
+  if (stratKey === 'MISSING_AUTH') return null;
 
   // تحقق من allowlist اللغة — بدون fallback
   const allowed = STRATEGY_LANGS[stratKey];
@@ -872,8 +1129,8 @@ function cmdCandidateProblem(beforeCode, afterCode, lineNum, stratKey) {
 
   // [FIX] دفاع بالعمق: نفس الفحص المطبَّق داخل fixCommandInjection، هنا كحارس
   // مستقل يمنع أي مصدر candidate ثانٍ (مثل legacy fixer) من تمرير نفس الخطأ.
-  if (!isPy && _isRegexExecCall(beforeCode, line, calls[0].index)) {
-    return `CMD_NOT_COMMAND_EXEC — line ${lineNum}: this is RegExp.prototype.exec(), not a child_process exec() call`;
+  if (!isPy && !_isCommandExecCall(beforeCode, line, calls[0].index)) {
+    return `CMD_NOT_COMMAND_EXEC — line ${lineNum}: the exec() receiver is not a child_process binding (RegExp.prototype.exec, db/stmt/conn/qb.exec, ...), not a shell command`;
   }
 
   if (calls.length > 1) {
@@ -997,6 +1254,25 @@ const _CREDENTIAL_NAME = /secret|passw|pwd|pass$|token|api_?key|apikey|key$|priv
 const _CREDENTIAL_VALUE = /^(?=.*\d)(?=.*[A-Za-z])[\w\-+/=.]{16,}$/;
 // مفاتيح وسوم/بيانات وصفية معروفة — قيمتها نص عرض لا credential. غيرها لا يُحكم عليه.
 const _LABEL_NAME = /^(?:name|title|label|type|kind|category|description|desc|message|msg|text|caption|display|displayName|id|slug|tag|group|section|header|placeholder|tooltip|hint|icon|status|mode|role|lang|locale)$/i;
+// اسم credential بدون الإشارة الضعيفة key$ (STORAGE_KEY / _key / stratKey أسماء مفاتيح تخزين لا أسرار)
+const _STRONG_CREDENTIAL_NAME = /secret|passw|pwd|pass$|token|api_?key|apikey|private|credential|auth|jwt|salt|access|sk_|pk_|bearer|signing|hmac|cipher|encrypt/i;
+// بادئات مفاتيح معروفة
+const _SECRET_PREFIX = /^(?:[spr]k_(?:live|test)_|gh[pousr]_|xox[abprs]-|AKIA|AIza|eyJ)/;
+// اسم callee للاستدعاء المفتوح عند نهاية prefix (أو null إذا لم يكن داخل استدعاء في هذا السطر)
+function _enclosingCallee(prefix) {
+  let depth = 0;
+  for (let i = prefix.length - 1; i >= 0; i--) {
+    const c = prefix[i];
+    if (c === ')' || c === ']' || c === '}') depth++;
+    else if (c === '(' || c === '[' || c === '{') {
+      if (depth > 0) { depth--; continue; }
+      if (c !== '(') return null;
+      const m = prefix.slice(0, i).match(/([\w$.]+)\s*$/);
+      return m ? m[1] : null;
+    }
+  }
+  return null;
+}
 
 function semanticCandidateProblem(beforeCode, afterCode, lineNum, stratKey, ext) {
   const B = beforeCode.split('\n'), A = afterCode.split('\n');
@@ -1046,6 +1322,31 @@ function semanticCandidateProblem(beforeCode, afterCode, lineNum, stratKey, ext)
   }
   if (key && !_CREDENTIAL_NAME.test(key[1]) && !_CREDENTIAL_NAME.test(value) && !_CREDENTIAL_VALUE.test(value)) {
     return `SECRET_NOT_CREDENTIAL — line ${lineNum}: neither "${key[1]}" nor its value looks like a credential; the fixer picked the wrong literal`;
+  }
+  const looksSecret = _CREDENTIAL_VALUE.test(value) || _SECRET_PREFIX.test(value);
+  // literal مفتاحٌ في object ('a.py': ...) وليس قيمة
+  if (/(?:^|[{,])\s*$/.test(line.slice(0, p)) && /^\s*:(?!:)/.test(line.slice(removedEnd))) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: the replaced literal is an object key, not a value`;
+  }
+  if (!key) {
+    // ليس قيمة مُسندة: يُقبل فقط وسيطًا لاستدعاء credential (jwt.sign(…, "x")) أو قيمة تشبه مفتاحًا
+    const callee = _enclosingCallee(line.slice(0, p));
+    if (!looksSecret && !(callee && _STRONG_CREDENTIAL_NAME.test(callee))) {
+      return `SECRET_NOT_CREDENTIAL — line ${lineNum}: the replaced literal is an argument of ${callee || 'no call'}(), not an assigned secret`;
+    }
+    return null;
+  }
+  // ثابت enum/وسم كخاصية object فقط: SECRET: 'secret' ، HARDCODED_SECRET: 'SECRET'
+  // (الإسناد const SECRET = "secret" قد يكون سرًا فعليًا، فلا يُطبَّق عليه)
+  const norm = x => x.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const isProperty = /['"]?\s*:\s*$/.test(line.slice(0, p));
+  if (isProperty && !looksSecret && (norm(value) === norm(key[1]) || /^[A-Z][A-Z_]*$/.test(value))) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: "${key[1]}: '${value}'" is an enum/tag constant, not a credential`;
+  }
+  // اسم مفتاح تخزين (STORAGE_KEY = 're_learned_patterns_v2' ، _key: "sh_log")
+  if (_CREDENTIAL_NAME.test(key[1]) && !_STRONG_CREDENTIAL_NAME.test(key[1]) && !_SECRET_PREFIX.test(value) &&
+      /^[a-z][a-z0-9]*(?:[_.:-][a-z0-9]+)+$/.test(value)) {
+    return `SECRET_NOT_CREDENTIAL — line ${lineNum}: "${key[1]}" names a storage/lookup key; "${value}" is an identifier, not a credential`;
   }
   return null;
 }
@@ -1174,7 +1475,64 @@ function getLegacySQLFixer(fileName) {
 // السطر الذي يحقنه فرع الـroute في AuthRepair حرفيًا
 const AUTH_ROUTE_LINE = '  if (!req.user) return res.status(401).json({ error: "Unauthorized" });';
 
-function repairCode(code, issues, fileName) {
+// ═══════════════════════════════════════════════════════════════════════
+// [STEP-SALVAGE] الإصلاح ليس كلَّ شيءٍ أو لا شيء
+// ═══════════════════════════════════════════════════════════════════════
+//
+// كانت الإصلاحات تتراكم في مُرشَّحٍ واحد، ثم تحكم عليه بوابة Ghost حُكمًا
+// واحدًا. فعنصرٌ واحد لا تستطيع البوابة إثباته يُلغي **كل** إصلاحات الملف.
+// والمقيس على ملف حقيقي (GameServer.js، 15 بلاغًا):
+//     تِسعُ إصلاحات، كلٌّ منها مقبولٌ منفردًا بالبوابة  ·  وككتلة: 0 مقبول
+//     ⇒ decision = AI_SUGGESTION  ·  لا يصل العميلَ أي تغيير
+// وهذا سببُ «يصلح جزءًا فقط» — وفي الواقع: لا يصلح شيئًا.
+//
+// والعلاج: عند رفض الكتلة، يُعاد الإصلاح بتحقّقٍ لكل خطوة على حِدة، فتُحفَظ
+// الخطوات التي تُثبَت وتُسقَط وحدها التي لا تُثبَت. وكلُّ خطوة تُقاس ضد
+// **الكود الأصلي** لا ضد سابقتها، فالتراكم رتيبٌ: ما يُقبل يبقى الكل مقبولًا.
+//
+// ولماذا عند الرفض فقط لا دائمًا: نداءُ البوابة يُعيد التحليل مرّتين، وقيسَ
+// كلفتُه ‎22 ms‎ على ملفٍ من 59 سطرًا و‎538 ms‎ على ملفٍ من 1203 أسطر. فتحقّقُ
+// كل خطوة دائمًا يعني ثوانيَ على ملفٍ كبير بلا فائدة في الحالة الشائعة
+// (الكتلة تُقبل). فالمسار السريع يبقى كما كان، والإنقاذ لا يُستدعى إلا عند
+// الرفض الفعلي — مرّةً واحدة ولا تكرار.
+function repairCode(code, issues, fileName, _opts) {
+  const _o = _opts || {};
+  // وضعُ الإنقاذ: كل خطوة تمرّ بالبوابة قبل أن تتقدّم.
+  const verifyEachStep = _o.verifyEachStep === true;
+
+  // البوابة متوفّرة؟ بلا بوابةٍ لا يُستدعى الإنقاذ إطلاقًا — فإسقاطُ كل خطوة
+  // لتعذّر إثباتها يكون أسوأ من السلوك القائم، وGhost تبقى الحكمَ الأخير.
+  const _gateReady = () => {
+    try {
+      return typeof FixVerifier !== 'undefined' && FixVerifier &&
+             typeof FixVerifier.verifyFix === 'function' &&
+             typeof analyzeCode === 'function';
+    } catch (e) { return false; }
+  };
+  // الخطوة تُسقَط على الضرر/عدم الإثبات وحده — لا على «لا تحسّن قابل للقياس»
+  // ولا على تعذّرٍ بيئي. فالإنقاذ لا يجوز أن يكون أشدَّ من الحكم النهائي على
+  // الكتلة، وإلا أسقط إصلاحات كانت تُطبَّق. والتصنيف من البوابة نفسها.
+  // ومقيسٌ ما يحدث بلا هذا التمييز: ثمانية اختبارات قائمة تسقط، منها إصلاحُ
+  // ‎http://‎ على سطرٍ فيه عنوانان (أحدهما كودٌ داخل نصّ) — إصلاحٌ مقصود
+  // وصحيح يرفضه requireImprovement لأن البلاغ يُحسَب للسطر.
+  const _gateVerdict = candidate => {
+    try { return FixVerifier.verifyFix(code, candidate, fileName, analyzeCode); }
+    catch (e) { return null; }
+  };
+  // يُرجع حكمًا واحدًا بنداءٍ واحد: هل الرفض ضارّ؟ وهل هو على الهدف نفسه؟
+  // (نداءان منفصلان كانا يُشغّلان البوابة مرّتين على نفس المُرشَّح — و
+  //  كلفتُها قيست بـ‎538 ms‎ على ملفٍ من 1203 أسطر، فالتوفير ملموس.)
+  const _classify = candidate => {
+    const v = _gateVerdict(candidate);
+    if (!v || v.accepted === true) return { harmful: false, target: false };
+    const has = n => typeof FixVerifier[n] === 'function';
+    return {
+      harmful: has('isHarmfulRejection') ? FixVerifier.isHarmfulRejection(v.reason) : false,
+      target:  has('isTargetRejection')  ? FixVerifier.isTargetRejection(v.reason)  : false,
+    };
+  };
+  const _stepHarmful = candidate => _classify(candidate).harmful;
+
   let ext = 'unknown';
   try {
     ext = detectExt(code, fileName);
@@ -1345,6 +1703,22 @@ function repairCode(code, issues, fileName) {
         result = null;
       }
     }
+    // (بعد حارس الـliteral: target داخل نص يُرفض بسببه الأدق أولًا)
+    // WEAK_CRYPTO: md5/sha1 → sha256 ليس إصلاحًا لـhash كلمة مرور (يبقى قابلًا
+    // للكسر، والمحلل يتوقف عن الإبلاغ ⇒ SAFE_AUTO_FIX مزيّف). لا إعادة كتابة إذا
+    // كان السياق credential أو المدخل parameter لا نعرف مصدره (قد يكون ملفًا آخر).
+    if ((stratKey === 'WEAK_CRYPTO' || stratKey === 'MD5_USAGE' || stratKey === 'WEAK_HASH') &&
+        result && result.fixed !== repairedCode) {
+      const problem = weakCryptoCredentialProblem(repairedCode, issue, ext);
+      if (problem) {
+        rejected.push({ line: issue.line, strategy: stratKey, source: 'fixWeakCrypto', reason: problem });
+        aiNeeded.push({ line: issue.line, title: issue.title, strategy: stratKey,
+          reason: problem + ' — needs a password KDF (bcrypt/scrypt/Argon2) or proof the input is not a credential',
+          ev: issue.ev });
+        return;
+      }
+    }
+
 
     if (!result || result.fixed === repairedCode) {
       // SQL fallback: استخدم الـlegacy fixer فقط كمولّد candidate.
@@ -1420,6 +1794,17 @@ function repairCode(code, issues, fileName) {
       }
     }
 
+    // [STEP-SALVAGE] في وضع الإنقاذ: لا تتقدّم خطوةٌ لا تُثبتها البوابة.
+    // تُقاس ضد الكود الأصلي، فيبقى المُرشَّح المتراكم مقبولًا في كل حال.
+    if (verifyEachStep && _stepHarmful(result.fixed)) {
+      rejected.push({
+        line: issue.line, strategy: stratKey, source: 'step-salvage',
+        reason: 'GATE_REJECTED_STEP — البوابة ترفض هذه الخطوة رفضَ ضررٍ أو ' +
+                'عدمِ إثبات، فأُسقطت هي فقط وبقيت بقية إصلاحات الملف',
+      });
+      return;
+    }
+
     repairs.push({
       line: issue.line, title: issue.title, strategy: stratKey,
       before: issue.ev, after: result.patch,
@@ -1429,6 +1814,27 @@ function repairCode(code, issues, fileName) {
     trackFix(repairedCode, result.fixed, problemGroup(stratKey));
     repairedCode = result.fixed;
   });
+
+  // [STEP-SALVAGE] قرارُ الإنقاذ، مرّةً واحدة وقبل أن يحكم Ghost.
+  //
+  // إن كانت البوابة ترفض الكتلة رفضَ **ضرر**، فالعيبُ في بعض خطواتها لا في
+  // كلّها. فيُعاد الإصلاح بتحقّقٍ لكل خطوة، فتُسقَط الخطوة الضارّة وحدها
+  // ويبقى الباقي. وGhost تبقى الحكم الأخير على الناتج المُنقَذ.
+  //
+  // وهو هنا لا في فرع Ghost: Ghost غير محمَّلة في كل بيئة — وVM الخادم
+  // (server_repair_adapter) كانت بلا بوابةٍ إطلاقًا، فيُسلَّم المُرشَّح غير
+  // مُتحقَّقٍ منه ثم يرفضه المُنسّق كاملًا. وتعليقُ الإنقاذ على Ghost يُخرِج
+  // ذلك المسار من الحراسة أصلًا.
+  //
+  // والرفضُ غيرُ الضارّ (لا تحسّن قابل للقياس، أو تعذّرٌ بيئي) لا يُستدعى له
+  // إنقاذ: لا خطوةَ فيه ضارّة، فالإعادة تُنتج نفس الناتج وتُهدر نداءات بوابة.
+  if (!verifyEachStep && repairedCode !== code && _gateReady()) {
+    const cls = _classify(repairedCode);
+    if (cls.harmful && !cls.target) {
+      const salvaged = repairCode(code, issues, fileName, { verifyEachStep: true });
+      if (salvaged && typeof salvaged.repaired === 'string') return salvaged;
+    }
+  }
 
   // AuthRepair
   // يُفترض أنه يضيف أسطرًا فقط. حقن فرع الـroute (401 بلا أي فحص حساسية)
@@ -1459,10 +1865,34 @@ function repairCode(code, issues, fileName) {
   }
 
   // Ghost Mode
+  //
+  // [GHOST-PRUNE] رفضُ Ghost يُرجع الكود الأصلي حرفًا، فالإصلاحات المتراكمة
+  // في repairs لم تُطبَّق. وكانت repairs وsummary.fixed تبقى كما هي، فيُبلّغ
+  // التقرير عن إصلاحاتٍ على ملفٍ لم يتغيّر، وrejected خالٍ. والمقيس على ملف
+  // حقيقي من المستودع، public/jszip.min.js (يرفضه حارس الحِزَم المُصغَّرة):
+  //     repaired === original  ·  repairs 1  ·  summary.fixed 1  ·  score 33
+  //     ·  rejected 0
+  // أي تقريرٌ يدّعي إصلاحًا لم يحدث، ولا يسجّل سببَ عدم حدوثه. فالتهذيب هنا:
+  // ما لم يُطبَّق يُنقَل إلى rejected بسببه، وsummary يُحتسب بعده فيصدُق.
   if (typeof GhostMode !== 'undefined') {
     try {
       const ghost = GhostMode.fix(code, repairedCode, fileName,
         typeof analyzeCode !== 'undefined' ? analyzeCode : null);
+
+      if (repairedCode !== code && ghost.code === code) {
+        const why = [
+          ghost.reason,
+          ...(ghost.rejectedCandidates || []).map(r => r.reason),
+        ].filter(Boolean).map(String).join(' · ') || 'GHOST_REJECTED';
+        for (const r of repairs) {
+          rejected.push({
+            line: r.line, strategy: r.strategy, source: 'GhostMode',
+            reason: 'GHOST_DISCARDED_BATCH — ' + why,
+          });
+        }
+        repairs.length = 0;      // نفس المرجع المُعاد أدناه
+      }
+
       if (ghost.code !== repairedCode) repairedCode = ghost.code;
     } catch(e) {}
   }

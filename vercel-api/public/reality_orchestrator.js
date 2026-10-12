@@ -27,6 +27,9 @@
 //      patch is safe to apply", NOT "the file is now clean".
 //  11. Claude receives ALL remaining AI_REQUIRED issues, and every suggestion
 //      is verified individually. Claude still can never reach SAFE_AUTO_FIX.
+//  12. [P2] Security no-drop: every security finding still present in the
+//      final state is in aiNeeded, whatever its severity or strategy, and
+//      whether or not a repair engine reported it (see _ensureSecurityNoDrop).
 // ═══════════════════════════════════════════════════════
 
 "use strict";
@@ -264,6 +267,12 @@ var RealityOrchestrator = (() => {
   //               → runVerification() → decide() → conditional SAFE_AUTO_FIX
   //
   // Note: SAFE_AUTO_FIX from Claude source is blocked by Policy invariant.
+  // [A8] سجل داخلي للموافقات التي أصدرها makeApproval() نفسه، مع الـpatch الذي
+  // وافق عليه الإنسان حرفيًا. النتائج مجمّدة (_deepFreeze) فلا يتغير patch الكائن
+  // نفسه، وأي نسخة ({...approval, patch}) أو كائن مصنوع يدويًا ليس في السجل →
+  // APPROVAL_TAMPERED. بصمة داخل meta وحدها لا تكفي: من يزوّر الـpatch يزوّرها معه.
+  const _issuedApprovals = new WeakMap();
+
   function makeApproval(orchestratorResult, approvedBy) {
     if (!orchestratorResult ||
         orchestratorResult.decision !== Decision.AI_SUGGESTION) {
@@ -274,7 +283,7 @@ var RealityOrchestrator = (() => {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
         null, 'makeApproval: approvedBy must be a non-empty string');
     }
-    return _makeResult(_INTERNAL,
+    const approval = _makeResult(_INTERNAL,
       Decision.AI_SUGGESTION,        // still AI_SUGGESTION until verified
       orchestratorResult.source,
       orchestratorResult.patch,
@@ -285,6 +294,8 @@ var RealityOrchestrator = (() => {
         requiresVerification: true,   // approval alone is not enough
       })
     );
+    _issuedApprovals.set(approval, approval.patch);
+    return approval;
   }
 
   // ─── Apply approved Claude suggestion ──────────────────
@@ -325,6 +336,20 @@ var RealityOrchestrator = (() => {
         Source.ORCHESTRATOR,
         null,
         'applyApprovedSuggestion: explicit human approval is required'
+      );
+    }
+
+    // [A8] Approval integrity: الكائن نفسه يجب أن يكون صادرًا من makeApproval(),
+    // والـpatch المطبَّق مطابق حرفيًا لما وافق عليه الإنسان.
+    if (!_issuedApprovals.has(approvedResult) ||
+        _issuedApprovals.get(approvedResult) !== approvedResult.patch) {
+      return _makeResult(
+        _INTERNAL,
+        Decision.REJECTED,
+        Source.ORCHESTRATOR,
+        null,
+        'APPROVAL_TAMPERED — this approval was not issued by makeApproval() for this exact patch',
+        { approvedBy: approvedResult.meta.approvedBy, approvalIntegrity: false }
       );
     }
 
@@ -603,6 +628,82 @@ var RealityOrchestrator = (() => {
     return kept;
   }
 
+  // ─── [P2] Security finding no-drop guarantee ───────────
+  // repair engines only report the AI_REQUIRED entries they know about: a
+  // finding with no strategy, a strategy unsupported for the language, or a
+  // refused/failed deterministic fix produced no entry, so _stillUnresolved()
+  // had nothing to keep and the finding vanished from aiNeeded even though
+  // re-analysis still reported it. The final state now adds every security
+  // finding that is still present and not already covered.
+  //
+  // Classification uses only structural fields set by the detector (type,
+  // cwe, CWE-n in cAct, explicit strategy) — never the title, which carries
+  // user data. Non-security findings are never added here.
+  const _SECURITY_TYPES = new Set([
+    'SECURITY', 'SECRET', 'TAINT', 'CRYPTO', 'THREAT',
+    'XSS', 'DOM_XSS', 'SQL_INJECTION', 'SQLFLOW', 'NOSQL_INJECTION',
+    'CMD_INJECTION', 'CODE_INJECTION', 'PATH_TRAVERSAL', 'FILE_INCLUSION',
+    'OPEN_REDIRECT', 'SSRF', 'SSTI', 'XXE', 'DESERIAL', 'PROTO_POLLUTION',
+    'MASS_ASSIGN', 'REDOS', 'TIMING_ATTACK', 'HARDCODED_SECRET',
+    'SECRET_EXPOSURE', 'WEAK_SECRET', 'WEAK_CRYPTO', 'WEAK_RANDOM',
+    'DATA_EXPOSURE', 'UNSANITIZED_DB', 'INSECURE_HTTP', 'INSECURE_COOKIE',
+    'CORS', 'MISCONFIG', 'DEBUG_MODE', 'ELECTRON', 'BUFFER',
+    'MISSING_AUTH', 'AUTH_WEAKNESS', 'JWT_UNVERIFIED', 'JWT_NONE', 'JWT_EXPIRED',
+  ]);
+  // Explicit (detector-set) strategies that are security classes.
+  const _SECURITY_STRATEGIES = new Set([
+    'XSS_INNER_HTML', 'HTTP_USAGE', 'HARDCODED_SECRET', 'LOG_SECRET', 'API_KEY',
+    'SQL_INJECTION', 'EVAL_USAGE', 'WEAK_CRYPTO', 'MD5_USAGE', 'WEAK_HASH',
+    'HARDCODED_PASS', 'CMD_INJECTION', 'CMD_INJECTION_PY', 'MISSING_AUTH',
+  ]);
+  const _CWE_RE = /^CWE[-_]\d+/i;
+
+  function _isSecurityFinding(i) {
+    if (!i || typeof i !== 'object') return false;
+    const type = String(i.type || '').toUpperCase();
+    if (_SECURITY_TYPES.has(type) || _CWE_RE.test(type)) return true;
+    if (typeof i.cwe === 'string' && _CWE_RE.test(i.cwe.trim())) return true;
+    if (typeof i.cAct === 'string' && _CWE_RE.test(i.cAct.trim())) return true;
+    if (typeof i.strategy === 'string' && _SECURITY_STRATEGIES.has(i.strategy)) return true;
+    return false;
+  }
+
+  // An aiNeeded entry covers a finding when it names the same finding
+  // (title) at the same occurrence (evidence, or line). Each entry covers at
+  // most one finding, so N identical findings need N entries.
+  function _ensureSecurityNoDrop(aiNeeded, remaining) {
+    const out = Array.isArray(aiNeeded) ? aiNeeded.slice() : [];
+    if (!Array.isArray(remaining)) return out;
+    const used = new Set();
+    const covers = (e, f) =>
+      e && String(e.title || '') === String(f.title || '') &&
+      ((_issueEvidence(e) && _issueEvidence(e) === _issueEvidence(f)) ||
+       (e.line !== undefined && e.line === f.line));
+    remaining.forEach(f => {
+      if (!_isSecurityFinding(f)) return;
+      const idx = out.findIndex((e, k) => !used.has(k) && covers(e, f));
+      if (idx >= 0) { used.add(idx); return; }
+      used.add(out.length);
+      out.push({
+        line: f.line, title: f.title, ev: f.ev,
+        sev: f.sev, type: f.type, cwe: f.cwe,
+        strategy: typeof f.strategy === 'string' ? f.strategy : null,
+        reason: 'SECURITY_UNRESOLVED — security finding still present after ' +
+                'deterministic repair and re-analysis (no strategy, unsupported, ' +
+                'refused or failed fix)',
+        securityNoDrop: true,
+      });
+    });
+    return out;
+  }
+
+  // Public: the same final-state aiNeeded the pipelines compute, for callers
+  // that run their own repair loop (fix_engine_pipeline.js). `finalIssues`
+  // must be the re-analysis of the FINAL code.
+  function finalAiNeeded(aiNeeded, finalIssues) {
+    return _ensureSecurityNoDrop(_stillUnresolved(aiNeeded || [], finalIssues), finalIssues);
+  }
+
   // ─── Single REPAIR attempt (one engine) ───────────────
   function _tryRepair(engine, code, issues, fileName) {
     try {
@@ -726,7 +827,8 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must describe the FINAL state, not the pre-repair state.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _stillUnresolved(aiNeeded, finalRemaining);
+    const unresolvedAi   = _ensureSecurityNoDrop(
+      _stillUnresolved(aiNeeded, finalRemaining), finalRemaining);
 
     return _deepFreeze({
       phase: 'REPAIR', fileName, original: code,
@@ -832,6 +934,82 @@ var RealityOrchestrator = (() => {
   //   remainingIssues: [],
   //   claudeFallback: bool,
   // }
+  // ═══════════════════════════════════════════════════════════════════
+  // [CHAIN-SALVAGE] رُقعةُ محركٍ مرفوضة ليست بالضرورة رُقعةً كلّها معطوبة
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // كانت رُقعةُ كل محرك تُفحَص حُكمًا واحدًا: تجتاز فتُعتمد كاملةً، أو تسقط
+  // فتُطرَح كاملةً. فمحركٌ يُنتج إصلاحين — أحدهما صحيحٌ مُثبَت والآخر محوٌ
+  // شكلي — يخسر الصحيحَ مع الفاسد. والمقيس على GameServer.js:
+  //   SmartRepair يُنتج في رُقعةٍ واحدة:
+  //     (أ) ‎username=? AND password=?‎ + ‎db.execute(query,[username,password])‎
+  //         — إصلاحُ حقنِ SQL صحيحٌ وتُثبته البوابة.
+  //     (ب) ‎eval(cheatCode)‎ ⇒ ‎/* SECURITY: eval removed */‎
+  //         — محوٌ شكلي، ترفضه البوابة بحقّ (REJECTED_EVAL_FIX_UNPROVEN).
+  //   فتسقط الرُقعة كلها، ويُفقَد إصلاحُ SQL، ويبقى حقنُ SQL بلا إصلاح.
+  //
+  // فالإنقاذ: تُجزَّأ الرُقعة إلى hunks، وتُبنى تدريجيًّا بأكبر مجموعةٍ
+  // يُثبتها نفسُ المُتحقِّق. وكلُّ خطوة تُقاس ضد نفس الأساس، فالناتج النهائي
+  // مُتحقَّقٌ منه بالتعريف لا بالاستنتاج.
+  //
+  // ولا يُستدعى إلا عند السقوط، فكلفتُه صفرٌ في الحالة الشائعة. وله حدّان
+  // معلنان في البوابة: مصفوفةُ LCS محدودة بـ‎SALVAGE_MAX_CELLS‎، وعددُ
+  // الـhunks بـ‎SALVAGE_MAX_HUNKS‎ — فوقهما لا إنقاذ (نداءُ مُتحقِّقٍ لكل hunk، وقد
+  // قيس بـ‎538 ms‎ على ملفٍ من 1203 أسطر).
+  // والتجزئةُ نفسها في البوابة: FixVerifier.salvageVerifiedSubset. كانت
+  // نسخةً هنا، ونسخةٌ ثانية كانت ستُكتب في fix_engine_pipeline — وهو بذاته
+  // سببُ تكرار المشكلة: يُصلَح مسارٌ ويبقى الآخر. فالمنطقُ واحد ومالكُه
+  // البوابة، وكلُّ مسارٍ يُمرّر مُتحقِّقَه.
+  // البوابة تُلتمَس بلا اعتمادٍ صارم: المُنسّق يعمل في المتصفح (global) وفي
+  // Node (require)، وفي سياقٍ قد لا تكون فيه محمَّلة — فيعود الإنقاذ null
+  // ويبقى السلوك كما كان، لا انكسارٌ ولا ادّعاءُ قدرة.
+  function _fixVerifierModule() {
+    try {
+      if (typeof FixVerifier !== 'undefined' && FixVerifier) return FixVerifier;
+    } catch (e) { /* غير معرَّف في هذا السياق */ }
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.FixVerifier) return globalThis.FixVerifier;
+      if (typeof globalThis !== 'undefined' && globalThis.window && globalThis.window.FixVerifier) {
+        return globalThis.window.FixVerifier;
+      }
+    } catch (e) { /* لا global */ }
+    try {
+      if (typeof require === 'function') return require('./fix_verifier.js');
+    } catch (e) { /* لا وحدة */ }
+    return null;
+  }
+
+  function _salvageVerifiedSubset(base, candidate, fileName) {
+    const FV = _fixVerifierModule();
+    if (!FV || typeof FV.salvageVerifiedSubset !== 'function') return null;
+    const r = FV.salvageVerifiedSubset(base, candidate, (b, c) => {
+      const vr = runVerification(b, c, fileName);
+      return (vr.valid === true && vr.improved === true) ? vr : null;
+    });
+    if (!r) return null;
+    return { code: r.code, verifyResult: r.verdict, kept: r.kept, dropped: r.dropped };
+  }
+
+  // الإصلاحات المُعلَنة بعد الإنقاذ تُنقّى إلى ما طُبِّق فعلًا.
+  //
+  // بلا هذا يدّعي التقرير إصلاحًا أسقطه الإنقاذ. والمقيس على GameServer.js:
+  //     safeRepairs = 11  والأسطرُ المتغيّرة = 10
+  //     والزائد: «eval → safe alternative» (بلا line) وقد أُسقط فعلًا.
+  // وهي نفسُ عِلّة [GHOST-PRUNE] في repair_engine: ما لم يُطبَّق لا يُعلَن.
+  //
+  // والمقياس: نصُّ السطر الأصلي لم يبقَ في الناتج ⇒ طُبِّق. وما لا موضعَ له
+  // (‎line‎ غائب) لا يُدَّعى — تحفّظٌ مقصود: نقصُ الإعلان صادق، وزيادتُه ليست.
+  // ولا يُستدعى إلا عند الإنقاذ، فالمسار السليم يبقى كما كان حرفًا.
+  function _appliedRepairsOnly(repairs, from, to) {
+    const toLines = new Set(String(to).split('\n'));
+    const fromLines = String(from).split('\n');
+    return (repairs || []).filter(r => {
+      const n = Number(r && r.line);
+      if (!Number.isFinite(n) || n < 1 || n > fromLines.length) return false;
+      return !toLines.has(fromLines[n - 1]);
+    });
+  }
+
   function runFallbackChain(code, issues, fileName) {
     if (typeof code !== 'string' || !Array.isArray(issues) || !fileName) {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
@@ -875,13 +1053,34 @@ var RealityOrchestrator = (() => {
       }
 
       // Verify this engine's patch against the CURRENT verified base.
-      const vr = runVerification(base, attempt.repairedCode, fileName);
+      let vr = runVerification(base, attempt.repairedCode, fileName);
+      let acceptedCode = attempt.repairedCode;
+
+      // [CHAIN-SALVAGE] سقطت الرُقعة كاملةً ⇒ أكبر مجموعةٍ جزئية تُثبَت.
+      if (!(vr.valid === true && vr.improved === true)) {
+        const batchReason = String((vr && vr.reason) || 'batch rejected');
+        const salvage = _salvageVerifiedSubset(base, attempt.repairedCode, fileName);
+        if (salvage) {
+          acceptedCode = salvage.code;
+          vr = salvage.verifyResult;
+          stage.salvaged = _deepFreeze({
+            keptHunks: salvage.kept,
+            droppedHunks: salvage.dropped,
+            batchReason,              // سببُ رفض الرُقعة كاملةً، قبل التجزئة
+          });
+        }
+      }
+
       stage.verifyResult = vr;
 
       if (vr.valid === true && vr.improved === true) {
         stage.succeeded = true;
-        allSafeRepairs  = [...allSafeRepairs, ...attempt.safeRepairs];
-        base            = attempt.repairedCode;   // advance the verified base
+        // بعد الإنقاذ: ما طُبِّق فعلًا وحده يُعلَن (انظر _appliedRepairsOnly)
+        const claimed = stage.salvaged
+          ? _appliedRepairsOnly(attempt.safeRepairs, base, acceptedCode)
+          : attempt.safeRepairs;
+        allSafeRepairs  = [...allSafeRepairs, ...claimed];
+        base            = acceptedCode;           // advance the verified base
         verifiedCode    = base;
         verifyResult    = vr;
 
@@ -907,7 +1106,8 @@ var RealityOrchestrator = (() => {
 
     // aiNeeded must reflect the FINAL verified state, not the original scan.
     const finalRemaining = Array.isArray(remaining) ? remaining : issues;
-    const unresolvedAi   = _stillUnresolved(allAiNeeded, finalRemaining);
+    const unresolvedAi   = _ensureSecurityNoDrop(
+      _stillUnresolved(allAiNeeded, finalRemaining), finalRemaining);
 
     return _deepFreeze({
       phase: 'FALLBACK', fileName, stages,
@@ -1010,7 +1210,35 @@ var RealityOrchestrator = (() => {
   }
 
   // ─── DECIDE phase (Policy gated) ─────────────────────
+  // [P2] reanalysisFailed gate: when re-analysis failed after a verified patch
+  // there is no proof the patch fixed the final state (remainingIssues is
+  // stale), so SAFE_AUTO_FIX is withheld from every path and downgraded to
+  // NEEDS_VERIFY — the existing "patch present, verification incomplete"
+  // decision. The patch, aiNeeded and all meta are kept; the file is never
+  // reported as fully resolved.
   function decide(repairOrFallback, verifyPhase, aiPhase) {
+    const d = _decideCore(repairOrFallback, verifyPhase, aiPhase);
+    if (repairOrFallback && repairOrFallback.reanalysisFailed === true &&
+        d.decision === Decision.SAFE_AUTO_FIX) {
+      return _makeResult(_INTERNAL,
+        Decision.NEEDS_VERIFY,
+        d.source,
+        d.patch,
+        'Re-analysis failed after verified patch — final state unproven, ' +
+        'SAFE_AUTO_FIX withheld (Fail-Closed)',
+        Object.assign({}, d.meta, {
+          reanalysisFailed: true,
+          remainingIssuesStale: true,
+          fileFullyResolved: false,
+          safeAutoFixWithheld: true,
+          withheldReason: d.reason,
+        })
+      );
+    }
+    return d;
+  }
+
+  function _decideCore(repairOrFallback, verifyPhase, aiPhase) {
     const phase = repairOrFallback && repairOrFallback.phase;
     if (phase !== 'REPAIR' && phase !== 'FALLBACK') {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
@@ -1510,6 +1738,8 @@ var RealityOrchestrator = (() => {
     // Public approval factory (replaces makeResult)
     makeApproval,
     applyApprovedSuggestion,
+    // Final-state aiNeeded for external repair loops
+    finalAiNeeded,
     // Full pipeline
     runPipeline,
     runPipelineAsync,

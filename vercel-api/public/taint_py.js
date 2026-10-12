@@ -24,13 +24,13 @@ function analyzeTaintPY(code, fileName) {
       type: 'SQL_INJECTION', sev: 'c', sink: 'cursor.execute',
       fix: (v) => `cursor.execute(query, (${v},)) # parameterized` },
     { re: /os\.system\s*\(([^)]+)\)/g,
-      type: 'CMD_INJECTION', sev: 'c', sink: 'os.system',
+      type: 'CMD_INJECTION', sev: 'c', sink: 'os.system', strategy: 'CMD_INJECTION',
       fix: (v) => `subprocess.run(shlex.split(${v}), check=True)` },
     { re: /subprocess\.(?:call|run|Popen)\s*\([^)]*shell\s*=\s*True[^)]*\)/g,
-      type: 'CMD_INJECTION', sev: 'c', sink: 'subprocess shell=True',
+      type: 'CMD_INJECTION', sev: 'c', sink: 'subprocess shell=True', strategy: 'CMD_INJECTION',
       fix: (v) => `subprocess.run(${v}, shell=False)` },
     { re: /eval\s*\(([^)]+)\)/g,
-      type: 'CODE_INJECTION', sev: 'c', sink: 'eval',
+      type: 'CODE_INJECTION', sev: 'c', sink: 'eval', strategy: 'EVAL_USAGE',
       fix: (v) => `ast.literal_eval(${v}) # safe alternative` },
     { re: /exec\s*\(([^)]+)\)/g,
       type: 'CODE_INJECTION', sev: 'c', sink: 'exec',
@@ -85,7 +85,7 @@ function analyzeTaintPY(code, fileName) {
     if (t.startsWith('#')) return;
     const ln = i + 1;
 
-    SINKS.forEach(({ re, type, sev, sink, fix }) => {
+    SINKS.forEach(({ re, type, sev, sink, fix, strategy }) => {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(line)) !== null) {
@@ -98,6 +98,7 @@ function analyzeTaintPY(code, fileName) {
             issues.push({
               type: 'taint', sev, line: ln, ev: t,
               title: `🔴 ${type}: ${v} من ${engine.tainted.get(v).source} → ${sink}`,
+              strategy,
               fix: fix(v),
               conf: 88, cIcon: '🔴', cAct: type,
               cEv: [`${v} مصدره: ${engine.tainted.get(v).source}`, `يصل لـ ${sink} بدون sanitization`]

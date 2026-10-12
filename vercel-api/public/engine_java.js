@@ -10,7 +10,7 @@ function analyzeJava(code, fileName) {
     if (emptyMethod.test(line)) {
       const name = line.match(/\s+(\w+)\s*\(/)?.[1];
       if (name && !['main','toString','hashCode','equals'].includes(name))
-        issues.push({type:'stub', sev:'m', title:'دالة فارغة: '+name+'()', line:i+1, ev:line.trim(), fix:null});
+        issues.push({type:'stub', sev:'m', title:'دالة فارغة: '+name+'()', strategy:null, line:i+1, ev:line.trim(), fix:null});
     }
   });
 
@@ -25,7 +25,7 @@ function analyzeJava(code, fileName) {
     if (inMethod) {
       braceCount += (line.match(/\{/g)||[]).length - (line.match(/\}/g)||[]).length;
       if (t === 'return null;' && braceCount <= 1)
-        issues.push({type:'stub', sev:'m', title:'return null بدون منطق: '+methodName+'()', line:i+1, ev:t, fix:'// أكمل المنطق هنا'});
+        issues.push({type:'stub', sev:'m', title:'return null بدون منطق: '+methodName+'()', strategy:null, line:i+1, ev:t, fix:'// أكمل المنطق هنا'});
       if (braceCount <= 0 && t.includes('}')) inMethod = false;
     }
   });
@@ -72,6 +72,28 @@ function analyzeJava(code, fileName) {
     }
   });
 
+  // 8. MessageDigest ضعيف (MD5/SHA-1/MD2) — كشف فقط، بلا إعادة كتابة آلية
+  // (strategy: null): MD5 → SHA-256 ليس إصلاحًا لـhash كلمة مرور، والقرار للـAI.
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (t.startsWith('//')) return;
+    if (!/MessageDigest\s*\.\s*getInstance\s*\(\s*"(MD5|MD2|SHA-?1)"\s*\)/i.test(line)) return;
+    let sig = '';
+    for (let k = i; k >= 0 && k >= i - 60; k--) {
+      // توقيع method (بمعدِّل أو بدونه)، لا if/for/while/switch/catch
+      if (/^\s*(?:[\w<>\[\],@]+\s+)+(\w+)\s*\([^)]*\)\s*(?:throws[^{]*)?\{?\s*$/.test(lines[k]) &&
+          !/^\s*(?:if|for|while|switch|catch|return|new|else)\b/.test(lines[k])) { sig = lines[k]; break; }
+    }
+    const credential = /pass(?:word|wd|phrase)|pwd|credential/i.test(line + ' ' + sig);
+    issues.push({
+      type: 'WEAK_CRYPTO', sev: credential ? 'c' : 'h', line: i + 1, ev: t,
+      title: credential ? '🔴 MessageDigest ضعيف لكلمة مرور — استخدم bcrypt/Argon2'
+                        : '🟠 MessageDigest ضعيف (MD5/SHA-1)',
+      cwe: credential ? 'CWE-916' : 'CWE-327', cAct: credential ? 'CWE-916' : 'CWE-327',
+      strategy: null, conf: 90, fix: null,
+    });
+  });
+
   // Java String == detection
   lines.forEach((line, i) => {
     const t = line.trim();
@@ -114,6 +136,7 @@ function analyzeJava(code, fileName) {
         if (_rdup) return;
         issues.push({type:'stub', sev:'m',
           title:'return null بدون منطق: ' + _methodName + '()',
+          strategy:null,
           line:_i+1, ev:_t, fix:'// أكمل المنطق هنا',
           conf:75, cIcon:'🟡', cAct:'دالة ناقصة', cEv:['الدالة ترجع null دائماً']});
       }
@@ -160,6 +183,7 @@ function analyzeJava(code, fileName) {
             const _dup = issues.some(_x => Math.abs(_x.line - (_i+1)) <= 1);
             if (!_dup) issues.push({type:'bug', sev:'c',
               title: 'خطأ تراكم Java: ' + _v + ' = بدل +=',
+              strategy: 'ACCUMULATION',
               line: _i+1, ev: _t,
               fix: _t.replace(new RegExp('(' + _v + ')\\s*=(?!=)'), '$1 +=')});
           }

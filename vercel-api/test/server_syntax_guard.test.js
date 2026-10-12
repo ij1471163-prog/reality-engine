@@ -17,7 +17,7 @@ const fs     = require('node:fs');
 const path   = require('node:path');
 
 delete process.env.ANTHROPIC_API_KEY;
-const { RealityOrchestrator: O } = require('../public/server_engine_registration.js');
+const { RealityOrchestrator: O, FixVerifier: FV } = require('../public/server_engine_registration.js');
 
 const ROOT = path.join(__dirname, '..');
 const pipeline = (code, file, opts) => O.runPipelineAsync(code, file, Object.assign({ useFallbackChain: true }, opts || {}));
@@ -88,8 +88,16 @@ for (const [file, code] of Object.entries(DET_BROKEN)) {
     assert.notStrictEqual(r.decision.decision, 'SAFE_AUTO_FIX');
     // يُرفض إما في repairCode نفسه (حارس السر، فلا patch يصل) أو في الـverifier بـSYNTAX_BROKEN
     assert.ok(r.phases.fallback.stages.every(s => !s.succeeded), 'no deterministic patch was accepted');
+    // كان التأكيد على السبب النحوي وحده — يصحّ لمحرك إصلاحٍ واحد في السلسلة.
+    // وقد صار فيها ثانٍ (server-smart-repair) بأسبابِ رفضٍ مشروعة أخرى، منها
+    // REJECTED_SECRET_FIX_UNPROVEN على هذه العيّنات (سرٌّ داخل نصٍّ حرفي، فلا
+    // يُثبَت إصلاحه). فالمطلوب أن يكون كلُّ سقوطٍ رفضَ ضررٍ أو عدمِ إثبات من
+    // البوابة، بتصنيف البوابة نفسها لا بنسخةٍ هنا.
     for (const s of r.phases.fallback.stages) {
-      if (s.verifyResult && s.verifyResult.valid === false) assert.match(s.verifyResult.reason, /^REJECTED_SYNTAX_BROKEN/);
+      if (s.verifyResult && s.verifyResult.valid === false) {
+        assert.ok(FV.isHarmfulRejection(s.verifyResult.reason),
+          `${s.engineId}: سقوطٌ بسببٍ ليس رفضَ ضرر — ${s.verifyResult.reason}`);
+      }
     }
   });
 }

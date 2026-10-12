@@ -60,7 +60,6 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/acorn.min.js"></script>
 <script src="/deep_analyzer.js"></script>
 <script src="/ast-engine.js"></script>
-<script src="/sleep_manager.js"></script>
 <script src="/repair_impact.js"></script>
 <script src="/typo_detector.js"></script>
 <script src="/accumulation_detector.js"></script>
@@ -78,6 +77,8 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/knowledge_base.js"></script>
 <script src="/cve_patterns.js"></script>
 <script src="/extended_patterns.js"></script>
+<script src="/learning_validation.js"></script>
+<script src="/learning_knowledge.js"></script>
 <script src="/learning_engine.js"></script>
 <script src="/taint_core.js"></script>
 <script src="/taint_js.js"></script>
@@ -111,7 +112,6 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 <script src="/dependency_analyzer.js"></script>
 <script src="/code_converter.js"></script>
 <script src="/test_generator.js"></script>
-<script src="/engine_ast.js"></script>
 <!-- ═══ المعمارية المركزية ═══
      FixVerifier = بوابة التحقق الوحيدة، RealityOrchestrator = المدير المركزي.
      يُحمَّلان قبل السكربت المضمَّن حتى تكون الدوال متاحة عند أول استخدام. -->
@@ -168,13 +168,66 @@ body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',Arial,sans-serif}
 // ═══════════════════════════════════════════════════════
 
 const F = {}; // filename → content
-window._sessionToken = null;
 
-// جيب session عند تحميل الصفحة
-fetch('/api/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
-  .then(r => r.json())
-  .then(d => { if (d.token) window._sessionToken = d.token; })
-  .catch(() => {});
+// ═══ [SESSION] مصدرٌ واحد للرمز، بصلاحيةٍ وتجديد ═══════════
+//
+// كان ثَمّ مصدران لا يعرف أحدهما الآخر:
+//   1. ‎window._sessionToken‎ يُجلَب مرّةً عند التحميل، ويُستعمل **كشرطٍ
+//      منطقي فقط** في analyzeAll، ولا يُرسَل إلى أي طلب.
+//   2. ‎getToken()‎ يجلب رمزًا **جديدًا من الخادم في كل نداء** AI، متجاهلًا
+//      الأول تمامًا.
+// فالنتيجة: إن فشل طلبُ التحميل بقي ‎_sessionToken = null‎ فيُحجب التحليل
+// برسالة «جلسة منتهية» وإن كان الخادم سليمًا. وفي المقابل ‎/api/session‎
+// محدودٌ بعشرة طلبات للساعة لكل IP، فعاشرُ رسالةِ AI تُقفل الجلسة ساعةً.
+//
+// ─── و‎?t=‎ ليس رمزَ API، وهذا مقروءٌ من الخادم لا مُفترَض ──────────
+//   ‎/api/session‎  : HMAC على ‎'web_' + نافذةِ 10 دقائق‎، hex كاملة
+//   ‎/api/webtoken‎ : HMAC على ‎'web_' + التاريخ‎، **مقطوعٌ إلى 16 حرفًا**
+//   ‎/api/chat‎     : يقبل نافذةَ العشر دقائق الكاملة وحدها (w ∈ {0,1})
+// فرمزُ ‎?t=‎ لا يُطابق المتوقَّع أبدًا — لا مادةً ولا طولًا. واستعمالُه
+// ترخيصًا يعني 401 على كل نداء AI. فهو وسمُ دخولٍ للصفحة لا اعتمادُ API،
+// ولا يُقرأ هنا بحال.
+//
+// فالرمز واحد: يُجلَب عند الحاجة، يُشارَك طلبُه، ويُعَدّ منتهيًا قبل نهاية
+// نافذته بهامش. ولا يُغيَّر أيُّ تحقّقٍ على الخادم.
+window._sessionToken = null;
+let _sessionExpiry = 0;
+let _sessionInFlight = null;
+
+// نافذةُ الخادم 10 دقائق ويقبل السابقة، والهامشُ دقيقة قبل انقضائها
+const _SESSION_TTL_MS = 9 * 60 * 1000;
+
+function _invalidateSession() { window._sessionToken = null; _sessionExpiry = 0; }
+
+// طلبٌ واحدٌ في الطيران: بلا هذا يقع سباقٌ مقيس — طلبُ التحميل لم يُجب بعدُ
+// فيرى ‎getToken()‎ الرمزَ فارغًا فيُطلق طلبًا ثانيًا، فيُستهلك حدُّ الخادم
+// مرّتين على فتحةٍ واحدة. فالطلبُ يُشارَك، والمنتظرون يأخذون نتيجته.
+function _fetchSessionToken() {
+  if (_sessionInFlight) return _sessionInFlight;
+  _sessionInFlight = (async () => {
+    const sr = await fetch('/api/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    if (!sr.ok) throw new Error(sr.status === 429
+      ? 'تجاوزت الحد — انتظر ساعة' : 'تعذّر بدء الجلسة (' + sr.status + ')');
+    const d = await sr.json();
+    if (!d || !d.token) throw new Error('الخادم لم يُصدر رمز جلسة');
+    return d;
+  })();
+  // الفشل لا يُجمَّد: المحاولة التالية تبدأ طلبًا جديدًا
+  _sessionInFlight.then(
+    d => {
+      window._sessionToken = d.token;
+      const ttl = (typeof d.expiresIn === 'number' ? d.expiresIn * 1000 : _SESSION_TTL_MS);
+      _sessionExpiry = Date.now() + Math.min(ttl, _SESSION_TTL_MS);
+      _sessionInFlight = null;
+    },
+    () => { _sessionInFlight = null; }
+  );
+  return _sessionInFlight;
+}
+
+_fetchSessionToken().catch(() => {});
 // Debug - show on page
 setTimeout(() => {
   const d = document.createElement('div');
@@ -223,28 +276,41 @@ function _safeEngineMissing() {
  *
  * @returns {{applied:boolean, reason:string, verify:object|null}}
  */
-function _gateApply(fn, candidate, label) {
+// [مراجعة] التحقّق مفصولٌ عن الكتابة.
+//
+// ‎_gateVerify‎ يحكم ولا يكتب — فمن أراد أن يعرض اقتراحًا قبل اعتماده
+// (مثل fixAllWithAI) يستدعيه ويحتفظ بالمُرشَّح. و‎_gateApply‎ يحكم **ثم**
+// يكتب، وهو المسار الوحيد الذي يلمس F وR. فلا نسختين من منطق التحقّق:
+// الثانية تستدعي الأولى.
+function _gateVerify(fn, candidate, label) {
     if (!_hasVerifier()) {
-        return { applied: false, reason: 'VERIFIER_UNAVAILABLE', verify: null };
+        return { ok: false, reason: 'VERIFIER_UNAVAILABLE', verify: null };
     }
     const current = F[fn];
     if (typeof candidate !== 'string' || candidate === current) {
-        return { applied: false, reason: 'NO_CHANGE', verify: null };
+        return { ok: false, reason: 'NO_CHANGE', verify: null };
     }
     const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
     let v;
     try {
         v = FixVerifier.verifyFix(current, candidate, fn, analyzer, {});
     } catch (e) {
-        return { applied: false, reason: 'VERIFIER_THREW: ' + (e && e.message), verify: null };
+        return { ok: false, reason: 'VERIFIER_THREW: ' + (e && e.message), verify: null };
     }
     if (!v || v.accepted !== true) {
-        return { applied: false, reason: (v && v.reason) || 'REJECTED', verify: v || null };
+        return { ok: false, reason: (v && v.reason) || 'REJECTED', verify: v || null };
     }
+    return { ok: true, reason: v.reason || 'ACCEPTED', verify: v, analyzer };
+}
+
+function _gateApply(fn, candidate, label) {
+    const g = _gateVerify(fn, candidate, label);
+    if (!g.ok) return { applied: false, reason: g.reason, verify: g.verify };
+    const v = g.verify;
     // ✅ مقبول — الكتابة الوحيدة المسموح بها
     F[fn] = candidate;
-    R[fn] = { code: candidate, issues: v.afterIssues || (analyzer ? analyzer(candidate, fn) : []) };
-    return { applied: true, reason: v.reason || 'ACCEPTED', verify: v };
+    R[fn] = { code: candidate, issues: v.afterIssues || (g.analyzer ? g.analyzer(candidate, fn) : []) };
+    return { applied: true, reason: g.reason, verify: v };
 }
 
 /**
@@ -275,7 +341,10 @@ function _registerEngines() {
     if (typeof repairCode === 'function') {
         reg('repair-engine', RO.EngineType.REPAIR, (code, issues, fileName) => {
             const r = repairCode(code, issues, fileName);
-            return { repaired: r && r.repaired, repairs: (r && r.repairs) || [], aiNeeded: [] };
+            // aiNeeded يُمرَّر كما هو: المنسّق يفلتره على الحالة النهائية (_stillUnresolved)،
+            // ورميه هنا كان يُسقط ما يحتاج AI من غير الـsecurity (مثل CALLBACK_HELL).
+            return { repaired: r && r.repaired, repairs: (r && r.repairs) || [],
+                     aiNeeded: (r && Array.isArray(r.aiNeeded)) ? r.aiNeeded : [] };
         }, ['*'], { priority: 40 });
     }
     if (typeof AdvancedRepair !== 'undefined' && AdvancedRepair && typeof AdvancedRepair.fix === 'function') {
@@ -330,26 +399,69 @@ document.getElementById('inp-zip').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
     toast('⏳ جاري فك الضغط...');
-    const form = new FormData();
+    // [ZIP] حدودٌ ومسارات.
+    //   • المفتاح كان ‎path.split('/').pop()‎ — أي اسمُ الملف وحده. فمشروعٌ فيه
+    //     ‎src/index.js‎ و‎test/index.js‎ يُفقَد أحدهما صامتًا، والمسارُ يضيع
+    //     فلا يُعرَف أيُّ ملفٍ صُلِّح.
+    //   • ولم يكن ثَمّ حدٌّ لحجم الأرشيف ولا لحجم الملف **بعد** الفكّ، فأرشيفٌ
+    //     صغيرٌ يتمدّد إلى مئات الميغابايت يُجمّد الصفحة (zip bomb).
+    //   • ولا حارسَ لمسارٍ خارجٍ عن الجذر (‎../‎) أو مسارٍ مطلق.
     const ALLOWED = ['.py','.js','.ts','.java','.html','.jsx','.tsx','.kt','.php'];
+    const MAX_ARCHIVE   = 10 * 1024 * 1024;   // الأرشيف نفسه
+    const MAX_PER_FILE  = 512 * 1024;         // بعد الفكّ — نفس حدّ loadFiles
+    const MAX_TOTAL     = 20 * 1024 * 1024;   // مجموع ما يُفكّ
+    const MAX_ENTRIES   = 20;
+
+    if (file.size > MAX_ARCHIVE) {
+        toast('❌ الأرشيف يتجاوز ' + fileSize(MAX_ARCHIVE), 'e');
+        e.target.value = ''; return;
+    }
     try {
         const zip = await JSZip.loadAsync(file);
-        const promises = [];
-        let count = 0;
+        const picked = [];
+        const skipped = { ext: 0, unsafe: 0, overLimit: 0, dup: 0, capped: 0 };
         zip.forEach((path, entry) => {
-            if (entry.dir || count >= 20) return;
+            if (entry.dir) return;
+            if (picked.length >= MAX_ENTRIES) { skipped.capped++; return; }
             const ext = '.' + path.split('.').pop().toLowerCase();
-            if (!ALLOWED.includes(ext)) return;
-            count++;
-            const name = path.split('/').pop();
-            promises.push(entry.async('string').then(c => { F[name] = c; }));
+            if (!ALLOWED.includes(ext)) { skipped.ext++; return; }
+            // مسارٌ آمن: لا جذرَ مطلق، ولا صعودَ خارج الأرشيف، ولا أقراصَ ويندوز
+            const norm = String(path).replace(/\\/g, '/').replace(/^\/+/, '');
+            if (!norm || /(^|\/)\.\.(\/|$)/.test(norm) || /^[A-Za-z]:/.test(norm)) {
+                skipped.unsafe++; return;
+            }
+            picked.push({ norm, entry });
         });
-        await Promise.all(promises);
+
+        let total = 0;
+        for (const { norm, entry } of picked) {
+            // الحجمُ المُعلَن في الفهرس يُفحَص قبل الفكّ، والفعليُّ بعده
+            const declared = entry._data && entry._data.uncompressedSize;
+            if (typeof declared === 'number' && declared > MAX_PER_FILE) { skipped.overLimit++; continue; }
+            if (total >= MAX_TOTAL) { skipped.overLimit++; continue; }
+            const c = await entry.async('string');
+            const bytes = new Blob([c]).size;
+            if (bytes > MAX_PER_FILE) { skipped.overLimit++; continue; }
+            if (total + bytes > MAX_TOTAL) { skipped.overLimit++; continue; }
+            total += bytes;
+            // ✅ المسار الكامل هو المفتاح — لا استبدالَ لملفَّين بنفس الاسم
+            let key = norm;
+            if (Object.prototype.hasOwnProperty.call(F, key)) { skipped.dup++; continue; }
+            F[key] = c;
+        }
+
         _fromZip = true;
         document.getElementById('btn-fixall').style.display = 'inline-block';
         document.getElementById('btn-aiall').style.display = 'inline-block';
         renderFiles();
-        toast('✅ ' + count + ' ملف من ZIP');
+        const n = Object.keys(F).length;
+        const why = [];
+        if (skipped.capped)    why.push(skipped.capped + ' فوق حدّ ' + MAX_ENTRIES);
+        if (skipped.overLimit) why.push(skipped.overLimit + ' تجاوزت الحجم');
+        if (skipped.unsafe)    why.push(skipped.unsafe + ' مسارًا غير آمن');
+        if (skipped.dup)       why.push(skipped.dup + ' مكرّرًا');
+        toast('✅ ' + n + ' ملف' + (why.length ? ' • تُخطّي: ' + why.join('، ') : ''),
+              why.length ? 'w' : 's');
     } catch(err) {
         toast('❌ ' + err.message, 'e');
     }
@@ -395,12 +507,24 @@ function goBack() {
 // Analyze
 // ═══════════════════════════════════════════════════════
 
+// [SESSION-GATE] التحليلُ لا يحتاج خادمًا، فلا يُحجب برمزِ جلسةٍ منه.
+//
+// كان أول ما تفعله هذه الدالة: ‎if (!window._sessionToken) return;‎ مع
+// رسالة «جلسة منتهية». وكلُّ ما بعده ‎analyzeCode‎ — تحليلٌ يجري داخل
+// المتصفح ولا يُرسِل بايتًا واحدًا. فالشرطُ كان يربط قدرةً محليّة بنجاح
+// طلبٍ شبكي لا تحتاجه.
+//
+// والمقيس في متصفحٍ حقيقي على ‎/api/session‎ تُرجع 500 (و‎MASTER_SECRET‎
+// غيرُ مضبوط): رفعُ خمسة ملفات ⇒ ‎analyzeAll()‎ تخرج فورًا ⇒ صفرُ بلاغات
+// وصفرُ نتائج على الشاشة، والمستخدم يرى «جلسة منتهية» ولا يفهم السبب.
+// وفي الوقت نفسه ‎reCheck()‎ و‎fixAllEngineUI()‎ تُحلّلان بلا هذا الشرط —
+// فالحجبُ لم يكن سياسةً بل تناقضًا: نفسُ التحليل مسموحٌ من زرٍّ ومحجوبٌ
+// من زرّ.
+//
+// ⚠️ ولا يُمَسّ بهذا أيُّ حمايةٍ: رمزُ الجلسة شرطٌ لنداءات الذكاء وحدها،
+// ويُفرَض في موضعيه — ‎getToken()/chatAPI()‎ في الواجهة، وتحقّقُ HMAC في
+// ‎/api/chat‎ على الخادم. وهذا الأخير هو الحمايةُ الفعلية، ولم يتغيّر.
 function analyzeAll() {
-  // تحقق من session
-  if (!window._sessionToken) {
-    toast('⚠️ جلسة منتهية — أعد فتح التطبيق', 'e');
-    return;
-  }
     Object.keys(R).forEach(k => delete R[k]);
     let tot = 0, st = 0, bg = 0;
     Object.entries(F).forEach(([n, c]) => {
@@ -491,27 +615,60 @@ function renderResults(tot, st, bg) {
 // Apply Fix — المرشّح يُبنى هنا، لكن الاعتماد عبر FixVerifier فقط
 // ═══════════════════════════════════════════════════════
 
+// [LANG-SAFE] الموضع يُحسَب على سطر البلاغ، وقاعدةُ «أكمل جسم الدالة»
+// مقصورةٌ على بايثون وعلى دالةٍ تُحيط بالسطر فعلًا.
+//
+// الخلل المقيس في النسخة السابقة:
+//   • البحث كان عن ‎/^def\s+/‎ وحدها — وهي بايثون. ففي js/java/php لا
+//     يُعثر على شيء، فيبقى ‎defLine === li‎، ثم:
+//       ‎lines.splice(defLine, endLine-defLine, lines[defLine], ...fixLines)‎
+//     يُعيد ‎lines[defLine]‎ — أي **يُبقي السطر المعيب نفسه** ويُلحق الإصلاح
+//     بعده. فالثغرة باقية والكود مُضاعَف.
+//   • و‎#‎ تُعَدّ تعليقًا في كل اللغات، وهي في js/java تعليقٌ غير موجود،
+//     فقد يبتلع الحدُّ أسطرًا ليست من الجسم.
+//   • والبحث ثلاثةَ أسطر لأعلى قد يلتقط ‎def‎ **دالةٍ أخرى** مجاورة، فيُستبدل
+//     جسمُها بدل الموضع المقصود.
+//   • والإزاحة كانت تُؤخَذ من سطر البلاغ حتى حين يكون الهدف جسمَ دالةٍ فوقه.
+const _PY_EXT = ['py'];
+function _extOf(fn) { return String(fn).split('.').pop().toLowerCase(); }
+
 function applyFix(fn, li, oldLine, newLine, idx) {
     if (!_hasVerifier()) { _safeEngineMissing(); return; }
 
     const lines = F[fn].split('\n');
     if (li < 0 || li >= lines.length) return;
-    const ind = lines[li].match(/^(\s*)/)[1];
 
-    // ابحث عن def وحذف الجسم (من الأسفل)
-    let defLine = li;
-    for (let i = li; i >= Math.max(0, li - 3); i--) {
-        if (/^def\s+/.test(lines[i].trim())) { defLine = i; break; }
+    const isPy = _PY_EXT.includes(_extOf(fn));
+    let start = li, end = li + 1;                      // الافتراض: سطرُ البلاغ وحده
+    let ind = (lines[li].match(/^(\s*)/) || ['', ''])[1];
+
+    if (isPy) {
+        // ‎def‎ تُحيط بالسطر: إمّا السطر نفسه، أو أعلاه بإزاحةٍ أقلّ منه
+        const liInd = ind.length;
+        for (let i = li; i >= Math.max(0, li - 3); i--) {
+            const t = lines[i].trim();
+            if (!/^(?:async\s+)?def\s+\w+\s*\(/.test(t)) continue;
+            const dInd = (lines[i].match(/^(\s*)/) || ['', ''])[1].length;
+            if (i !== li && dInd >= liInd) break;       // دالةٌ مجاورة لا مُحيطة
+            // جسمُها: أسطرٌ فارغة أو pass أو تعليق — وهي بايثون فـ‎#‎ صحيحة هنا
+            let e = i + 1;
+            while (e < lines.length) {
+                const b = lines[e].trim();
+                if (b === '' || b === 'pass' || b === '...' || b.startsWith('#')) { e++; continue; }
+                break;
+            }
+            if (e > i + 1 || li === i) {                 // جسمٌ فارغ فعلًا
+                start = i + 1; end = e;
+                ind = ' '.repeat(dInd + 4);
+            }
+            break;
+        }
     }
-    let endLine = defLine + 1;
-    while (endLine < lines.length
-        && (lines[endLine].trim() === ''
-            || lines[endLine].trim() === 'pass'
-            || lines[endLine].trim().startsWith('#'))) endLine++;
 
-    const fixLines = newLine.split('\n').map(l => ind + l.trimStart());
-    // ✅ يُبنى المرشّح على نسخة — لا كتابة على F قبل التحقق
-    lines.splice(defLine, endLine - defLine, lines[defLine], ...fixLines);
+    const fixLines = String(newLine).split('\n').map(l => (l.trim() ? ind + l.trimStart() : ''));
+    // ✅ يُبنى المرشّح على نسخة — لا كتابة على F قبل التحقق.
+    // والسطرُ المستهدَف يُستبدَل، لا يُحتفَظ به ثم يُلحَق الإصلاح بعده.
+    lines.splice(start, Math.max(0, end - start), ...fixLines);
     const candidate = lines.join('\n');
 
     // ⛔ analyzeCode وحده ليس بوابة تحقق — القرار لـFixVerifier حصرًا
@@ -559,6 +716,133 @@ AFTER:
 }
 
 // ═══════════════════════════════════════════════════════
+// [PENDING-REVIEW] اقتراحات تنتظر اعتمادًا صريحًا
+// ═══════════════════════════════════════════════════════
+//
+// اجتيازُ البوابة شرطٌ لازم لا كافٍ: البوابة تُثبت أن التعديل لا يُفسد ولا
+// يدّعي إصلاحًا بلا دليل، لكنها لا تعرف **نيّة المالك**. فاقتراحُ نموذجٍ
+// لغوي على ملفات المشروع يُعرَض ويُعتمد بقرار، لا يُكتب لمجرد أنه مقبول.
+//
+// والاعتماد يمرّ بـ‎_gateApply‎ من جديد — لا يُكتب المُرشَّح المحفوظ كما هو:
+// فقد يكون الملف تغيّر بعد التحقّق (إصلاحٌ آخر اعتُمد بينهما)، فيُعاد
+// قياسُه على الحالة الراهنة. وإن تغيّر الأصل يُعلَن ذلك ولا يُكتَب صامتًا.
+const _pending = {};   // filename → { candidate, reason, source, before, at }
+
+function _pendingCount() { return Object.keys(_pending).length; }
+
+function _renderPending() {
+    let box = document.getElementById('pending-review');
+    const names = Object.keys(_pending);
+    if (!names.length) { if (box) box.remove(); return; }
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'pending-review';
+        box.style.cssText = 'position:fixed;inset:auto 8px 8px 8px;max-height:60vh;overflow:auto;' +
+            'background:#161b22;border:1px solid #30363d;border-radius:12px;padding:14px;z-index:9998;' +
+            'color:#e6edf3;font-size:13px;box-shadow:0 8px 32px #000a';
+        document.body.appendChild(box);
+    }
+    box.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+          '<b style="color:#d29922">🕓 بانتظار مراجعتك: ' + names.length + ' ملف</b>' +
+          '<span>' +
+            '<button class="btn btn-ok btn-sm" onclick="approveAllPending()">اعتماد الكل</button> ' +
+            '<button class="btn btn-sm" onclick="rejectAllPending()">رفض الكل</button>' +
+          '</span></div>' +
+        names.map(fn => {
+            const p = _pending[fn];
+            const d = _diffSummary(p.before, p.candidate);
+            return '<div style="border-top:1px solid #30363d;padding:8px 0">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+                  '<span>📄 ' + esc(fn) + ' <span style="color:#8b949e">(' + d + ')</span></span>' +
+                  '<span style="white-space:nowrap">' +
+                    '<button class="btn btn-ok btn-sm" onclick="approvePending(' + JSON.stringify(fn) + ')">✅ اعتماد</button> ' +
+                    '<button class="btn btn-sm" onclick="rejectPending(' + JSON.stringify(fn) + ')">✖ رفض</button> ' +
+                    '<button class="btn btn-sm" onclick="togglePendingDiff(' + JSON.stringify(fn) + ')">👁 التعديلات</button>' +
+                  '</span></div>' +
+                '<pre id="pd-' + encodeURIComponent(fn) + '" style="display:none;white-space:pre-wrap;' +
+                  'background:#0d1117;border-radius:8px;padding:8px;margin-top:8px;max-height:220px;overflow:auto;' +
+                  'font-size:11px;line-height:1.5">' + esc(_diffText(p.before, p.candidate)) + '</pre>' +
+              '</div>';
+        }).join('');
+}
+
+// مُفارِقٌ سطريٌّ بسيط — للعرض فقط، لا يُستعمل في أي قرار
+function _diffLines(before, after) {
+    const A = String(before).split('\n'), B = String(after).split('\n');
+    const bSet = new Set(B), aSet = new Set(A);
+    const removed = A.filter(l => !bSet.has(l) && l.trim());
+    const added   = B.filter(l => !aSet.has(l) && l.trim());
+    return { removed, added };
+}
+function _diffSummary(before, after) {
+    const d = _diffLines(before, after);
+    return '+' + d.added.length + ' / −' + d.removed.length + ' سطر';
+}
+function _diffText(before, after) {
+    const d = _diffLines(before, after);
+    return d.removed.map(l => '- ' + l).concat(d.added.map(l => '+ ' + l)).join('\n') || '(بلا فرقٍ سطري)';
+}
+
+function togglePendingDiff(fn) {
+    const el = document.getElementById('pd-' + encodeURIComponent(fn));
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function approvePending(fn) {
+    const p = _pending[fn];
+    if (!p) return { applied: false, reason: 'NO_PENDING' };
+
+    // [STALE] اقتراحٌ بُني على نصٍّ لم يَعُد قائمًا **لا يُطبَّق**.
+    //
+    // اجتيازُ البوابة لا يكفي هنا: المُرشَّح نصُّ الملف **كاملًا** كما كان
+    // لحظةَ الاقتراح، فلو اعتُمد إصلاحٌ آخر بينهما لابتلعه المُرشَّح القديم
+    // وعاد الملف إلى ما قبله — وقد تقبله البوابة لأنه يُزيل بلاغات، فلا
+    // يظهر الفقد. والتنبيه وحده لا يمنع، فالرفض هو الحكم.
+    if (F[fn] !== p.before) {
+        delete _pending[fn];
+        _renderPending();
+        toast('⛔ ' + fn + ': تغيّر الملف بعد الاقتراح — أُسقط الاقتراح، أعد التوليد', 'e');
+        return { applied: false, reason: 'STALE_BASE' };
+    }
+
+    const res = _gateApply(fn, p.candidate, (p.source || 'pending') + '-approved');
+    delete _pending[fn];
+    _renderPending();
+    if (res.applied) {
+        toast('✅ اعتُمد ' + fn, 's');
+        refreshStats();
+        document.getElementById('btn-dl').style.display = 'inline-block';
+    } else {
+        toast('❌ رُفض عند الاعتماد: ' + res.reason, 'e');
+    }
+    return res;
+}
+
+function rejectPending(fn) {
+    if (!_pending[fn]) return;
+    delete _pending[fn];
+    _renderPending();
+    toast('✖ أُهمل اقتراح ' + fn);
+}
+
+function approveAllPending() {
+    let ok = 0, no = 0;
+    for (const fn of Object.keys(_pending)) {
+        const r = approvePending(fn);
+        if (r && r.applied) ok++; else no++;
+    }
+    toast('اعتُمد ' + ok + (no ? ' • تعذّر ' + no : ''), ok ? 's' : 'w');
+}
+
+function rejectAllPending() {
+    const n = _pendingCount();
+    Object.keys(_pending).forEach(fn => delete _pending[fn]);
+    _renderPending();
+    toast('✖ أُهملت ' + n + ' اقتراحًا');
+}
+
+// ═══════════════════════════════════════════════════════
 // Fix All with AI — Claude مصدر اقتراح فقط
 // ═══════════════════════════════════════════════════════
 
@@ -575,7 +859,7 @@ async function fixAllWithAI() {
     const btn = document.getElementById('btn-aiall');
     btn.innerHTML = '⏳ جاري...'; btn.disabled = true;
 
-    let applied = 0, rejected = 0;
+    let pending = 0, rejected = 0, noOutput = 0;
     try {
         const token = await getToken();
         // ✅ انتظر كل ملف بشكل متسلسل — مو داخل forEach
@@ -615,19 +899,25 @@ ${F[fn]}
 \`\`\``;
             const result = await chatAPI(token, prompt);
             const fixed  = result.match(/```(?:\w+)?\n([\s\S]*?)```/)?.[1]?.trim();
-            if (!fixed) continue;
+            if (!fixed) { noOutput++; continue; }   // يُحتسَب: لا ملفَ يختفي من الجرد
 
-            // ⛔ ممنوع: F[fn] = fixed مباشرة.
-            // كل candidate يُقاس ضد الكود الموثوق الحالي لهذا الملف، وحده،
-            // ولا يتراكم على candidate آخر لم يُعتمد.
-            const res = _gateApply(fn, fixed, 'claude-fixAll');
-            if (res.applied) applied++; else rejected++;
+            // ⛔ ممنوع: F[fn] = fixed مباشرة — ولا حتى بعد اجتياز البوابة.
+            // اقتراحُ Claude يُعرَض ويُعتمد بقرارٍ صريح، فيُتحقَّق منه هنا
+            // ويُحفَظ PENDING_REVIEW. والكتابة تأتي من approvePending وحدها.
+            const g = _gateVerify(fn, fixed, 'claude-fixAll');
+            if (g.ok) {
+                _pending[fn] = { candidate: fixed, reason: g.reason, source: 'claude-fixAll',
+                                 before: F[fn], at: Date.now() };
+                pending++;
+            } else {
+                rejected++;
+            }
         }
-        refreshStats();
-        document.getElementById('btn-dl').style.display = 'inline-block';
-        let msg = '✅ اعتُمد ' + applied + ' ملف بعد التحقق';
+        _renderPending();
+        let msg = '🕓 ' + pending + ' ملف بانتظار مراجعتك';
         if (rejected) msg += ' • رُفض ' + rejected + ' (لم يجتز التحقق)';
-        toast(msg, rejected && !applied ? 'w' : 's');
+        if (noOutput) msg += ' • ' + noOutput + ' بلا ناتج من AI';
+        toast(msg, pending ? 's' : 'w');
     } catch (e) {
         toast('❌ ' + e.message, 'e');
     } finally {
@@ -652,35 +942,51 @@ function fixAllEngineUI() {
     }
 
     const RO = RealityOrchestrator;
-    let applied = 0, rejected = 0, aiNeeded = 0;
+    // [COUNT] الخانات حصرية وشاملة، والإصلاحاتُ تُعَدّ بالبلاغات لا بالملفات.
+    //   • كان قرارٌ لا يطابق أيًّا من الفروع (NO_ACTION مثلًا) يسقط بلا عدّ،
+    //     فمجموعُ الخانات أقلُّ من عدد الملفات ولا يظهر ذلك.
+    //   • و«اعتُمد N ملف» لا يقول كم مشكلةً زالت فعلًا: ملفٌ أُصلح فيه بلاغٌ
+    //     واحد من عشرة يُحسَب كملفٍ «مُصلَح» تمامًا كملفٍ زالت كل بلاغاته.
+    // فالقياس على الفرق المحسوب من R قبل/بعد — وهو ما تُقرّه البوابة فعلًا.
+    let appliedFiles = 0, rejected = 0, aiNeeded = 0, other = 0;
+    let issuesBefore = 0, issuesAfter = 0;
 
     Object.keys(F).forEach(fn => {
+        const before = (R[fn] && R[fn].issues) ? R[fn].issues.length : 0;
+        issuesBefore += before;
         let out;
         try {
             out = RO.runPipeline(F[fn], fn, { useFallbackChain: true });
         } catch (e) {
-            rejected++; return;
+            rejected++; issuesAfter += before; return;
         }
         const d = out && out.decision;
-        if (!d) { rejected++; return; }
+        if (!d) { rejected++; issuesAfter += before; return; }
 
         if (d.decision === RO.Decision.SAFE_AUTO_FIX && typeof d.patch === 'string') {
             // المنسّق تحقق أصلًا، والبوابة تتحقق مرة أخيرة قبل الكتابة (حزام إضافي)
             const res = _gateApply(fn, d.patch, 'orchestrator');
-            if (res.applied) applied++; else rejected++;
+            if (res.applied) appliedFiles++; else rejected++;
             if (d.meta && d.meta.aiRequiredCount) aiNeeded += d.meta.aiRequiredCount;
         } else if (d.decision === RO.Decision.AI_SUGGESTION) {
             // Claude مصدر اقتراح — لا يُطبَّق من هنا إطلاقًا
             aiNeeded += (d.meta && d.meta.aiNeeded ? d.meta.aiNeeded.length : 1);
         } else if (d.decision === RO.Decision.REJECTED || d.decision === RO.Decision.PENDING_REVIEW) {
             rejected++;
+        } else {
+            other++;   // لا يسقط قرارٌ من الجرد
         }
+        // بعد أي كتابة محتملة، الحالةُ الراهنة هي المرجع
+        issuesAfter += (R[fn] && R[fn].issues) ? R[fn].issues.length : 0;
     });
 
-    let msg = '✅ اعتُمد ' + applied + ' ملف';
+    const fixedIssues = Math.max(0, issuesBefore - issuesAfter);
+    let msg = '✅ أُصلحت ' + fixedIssues + ' مشكلة من ' + issuesBefore +
+              ' (' + appliedFiles + ' ملف)';
     if (rejected) msg += ' • رُفض ' + rejected;
     if (aiNeeded) msg += ' • ' + aiNeeded + ' تحتاج AI';
-    toast(msg, applied ? 's' : 'w');
+    if (other)    msg += ' • ' + other + ' بلا إجراء';
+    toast(msg, fixedIssues ? 's' : 'w');
     refreshStats();
     document.getElementById('btn-dl').style.display = 'inline-block';
 }
@@ -813,20 +1119,30 @@ function dlAll() {
 // API Helpers
 // ═══════════════════════════════════════════════════════
 
+// نفسُ الرمز الذي تحمله الصفحة ما دام صالحًا — لا رمزٌ جديد لكل نداء،
+// ولا رمزٌ منتهٍ يُعاد استعماله. انظر [SESSION].
 async function getToken() {
-    const sr = await fetch('/api/session', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
-    if (!sr.ok) throw new Error('تجاوزت الحد — انتظر ساعة');
-    const { token } = await sr.json();
-    return token;
+    if (window._sessionToken && Date.now() < _sessionExpiry) return window._sessionToken;
+    const d = await _fetchSessionToken();
+    return d.token;
 }
 
-async function chatAPI(token, prompt) {
+// انتهاءُ الصلاحية يُعالَج حيث يظهر: الخادم يردّ 401 على رمزٍ خرجت نافذتُه،
+// فيُبطَل المخزون ويُعاد النداء **مرّةً واحدة** برمزٍ جديد. وبلا ذلك يبقى
+// رمزٌ ميت في الذاكرة فيفشل كلُّ نداءٍ بعده حتى يُعاد تحميل الصفحة.
+// و401 الثانية خطأٌ حقيقي لا انتهاءُ صلاحية، فتُرفَع.
+async function chatAPI(token, prompt, _retried) {
     const cr = await fetch('/api/chat', {
         method:'POST',
         headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
         body: JSON.stringify({ prompt })
     });
-    const crData = await cr.json();
+    let crData = {};
+    try { crData = await cr.json(); } catch (e) { /* ردٌّ بلا JSON */ }
+    if (cr.status === 401 && !_retried) {
+        _invalidateSession();
+        return chatAPI(await getToken(), prompt, true);
+    }
     if (!cr.ok) throw new Error('خطأ في AI: ' + (crData.error || cr.status));
     return crData.result;
 }
@@ -1058,13 +1374,23 @@ function toast(msg, t = 's') {
 </div>
 
 <script>
+// عيبُ ‎display‎ المكرَّر مُصلَحٌ أعلاه. والباقي أن ‎localStorage‎ يرمي في
+// بعض السياقات (تصفّحٌ خاص، تخزينٌ محجوب)، فكان الرمي يُسقط بقية الكتلة:
+// ‎closeWelcome‎ يرمي **بعد** الإخفاء فلا يُحفَظ الإقرار وتعود النافذة في كل
+// فتحة، وفحصُ الإظهار يرمي فلا تظهر أصلًا. فكلٌّ منهما مُحاطٌ بحارسه.
+function _welcomeSeen() {
+  try { return localStorage.getItem('re_welcomed') === '1'; }
+  catch (e) { return false; }
+}
 function closeWelcome() {
-  document.getElementById('welcome-modal').style.display = 'none';
-  localStorage.setItem('re_welcomed', '1');
+  const m = document.getElementById('welcome-modal');
+  if (m) m.style.display = 'none';
+  try { localStorage.setItem('re_welcomed', '1'); } catch (e) { /* تخزينٌ غير متاح */ }
 }
 // أظهر مرة واحدة فقط
-if (!localStorage.getItem('re_welcomed')) {
-  document.getElementById('welcome-modal').style.display = 'flex';
+if (!_welcomeSeen()) {
+  const m = document.getElementById('welcome-modal');
+  if (m) m.style.display = 'flex';
 }
 </script>
 <!-- fix_verifier.js و reality_orchestrator.js محمَّلان في <head> قبل السكربت
@@ -1079,20 +1405,6 @@ if (!localStorage.getItem('re_welcomed')) {
 <script src="/ghost_mode.js"></script>
 <script src="/learned_fixer.js"></script>
 
-<script>
-window.addEventListener('load', function() {
-  var ua = navigator.userAgent || '';
-  var isApp = ua.includes('RealityEngine') || ua.includes('reality-engine');
-  var isDev = location.hostname === 'localhost' || location.search.includes('dev=1');
-  if (!isApp && !isDev) {
-    document.body.style.display = 'none';
-    var div = document.createElement('div');
-    div.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#0d1117;color:#e6edf3;font-family:Arial;text-align:center;padding:24px';
-    div.innerHTML = '<div style="font-size:48px">⚡</div><div style="font-size:24px;color:#a371f7;margin:16px 0">Reality Engine</div><div style="color:#8b949e;margin-bottom:24px">محلل المشاريع البرمجية الذكي</div><div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:360px">🔒 هذا الموقع مخصص لمستخدمي التطبيق<br><br><a href="https://play.google.com/store/apps/details?id=com.naif.realityengine" style="display:block;background:#6e40c9;color:#fff;padding:14px;border-radius:8px;text-decoration:none;margin-top:16px">📱 تحميل التطبيق</a></div>';
-    document.body.parentNode.replaceChild(div, document.body);
-  }
-});
-</script>
 </body>
 </html>
 

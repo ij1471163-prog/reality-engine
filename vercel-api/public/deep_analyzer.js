@@ -170,6 +170,7 @@ class DataFlowAnalyzer {
         this.issues.push({
             type: 'dataflow', sev: 'h', line: ln, ev: line,
             title: `🟠 Data Flow: ${varName} = ${obj}.${prop} داخل loop — يجب +=`,
+            strategy: 'ACCUMULATION',
             fix:   `${varName} += ${obj}.${prop};`,
             conf:  isNumericProp ? 95 : 82,
             cIcon: '🟠', cAct: 'Accumulation Error (Data Flow)',
@@ -203,6 +204,7 @@ class DataFlowAnalyzer {
             this.issues.push({
                 type: 'dataflow', sev: 'm', line: ln, ev: line,
                 title: `🟡 Type Error: ${varName} هو number لكن يستخدم string method .${method}()`,
+                strategy: null,
                 fix:   `// تحقق من نوع ${varName} أو حوّله: String(${varName}).${method}()`,
                 conf:  88, cIcon: '🟡', cAct: 'Type Violation',
                 cEv:   [`${varName} معرّف كـ number في السطر ${type.line}`],
@@ -213,6 +215,7 @@ class DataFlowAnalyzer {
             this.issues.push({
                 type: 'dataflow', sev: 'm', line: ln, ev: line,
                 title: `🟡 Type Error: ${varName} هو string لكن يستخدم array method .${method}()`,
+                strategy: null,
                 fix:   `// حوّل ${varName} لـ array أولاً`,
                 conf:  85, cIcon: '🟡', cAct: 'Type Violation',
                 cEv:   [`${varName} معرّف كـ string في السطر ${type.line}`],
@@ -235,6 +238,7 @@ class DataFlowAnalyzer {
             this.issues.push({
                 type: 'dataflow', sev: 'l', line: ln, ev: line,
                 title: `🔵 Dead Assignment: ${varName} معرّف لكن لا يُستخدم`,
+                strategy: null,
                 fix:   `// احذف ${varName} إذا لم تكن تحتاجه`,
                 conf:  72, cIcon: '🔵', cAct: 'Dead Code',
                 cEv:   [`${varName} لا يُستخدم بعد السطر ${ln}`],
@@ -271,7 +275,12 @@ class CallGraphAnalyzer {
 
     _extractFunction(line, ln, lines, idx) {
         let m = line.match(/function\s+(\w+)\s*\(([^)]*)\)/);
-        if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/);
+        // [^()]* لا [^)]*: الأخيرة تبلع "(" الداخلية، فيُسجَّل module IIFE
+        // (const X = (() => {) دالةً اسمها X، فيبلّغ _detectUnusedFunctions
+        // "X() لا تُستدعى" — والاستدعاءات كلها X.method(. والأسوأ أن الفرع
+        // يطابق const/let ولا يطابق var، فتحويل var → let يضيف مشكلة جديدة
+        // فيرى FixVerifier ISSUES_WORSENED ويُلغي كل إصلاحات الملف.
+        if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^()]*)\)\s*=>/);
         if (!m) m = line.match(/(?:const|let)\s+(\w+)\s*=\s*function\s*\(([^)]*)\)/);
         if (!m) return;
 
@@ -297,6 +306,7 @@ class CallGraphAnalyzer {
                 this.issues.push({
                     type: 'callgraph', sev: 'l', line: info.line, ev: funcName,
                     title: `🔵 Call Graph: ${funcName}() recursive — تأكد من base case`,
+                    strategy: null,
                     fix:   `// تأكد إن فيه حالة إيقاف لتجنب stack overflow`,
                     conf:  78, cIcon: '🔵', cAct: 'Recursion Check',
                     cEv:   [`${funcName} تستدعي نفسها`],
@@ -316,6 +326,7 @@ class CallGraphAnalyzer {
                 this.issues.push({
                     type: 'callgraph', sev: 'l', line: info.line, ev: funcName,
                     title: `🔵 Call Graph: ${funcName}() معرّفة لكن لا تُستدعى`,
+                    strategy: null,
                     fix:   `// احذف ${funcName}() أو استدعِها`,
                     conf:  65, cIcon: '🔵', cAct: 'Dead Code',
                     cEv:   [`${funcName} لا تُستدعى في أي مكان`],
@@ -330,6 +341,7 @@ class CallGraphAnalyzer {
                 this.issues.push({
                     type: 'callgraph', sev: 'm', line: info.line, ev: funcName,
                     title: `🟡 Call Graph: ${funcName}() لها ${info.params.length} parameters — كثير`,
+                    strategy: null,
                     fix:   `// استخدم object parameter: function ${funcName}({${info.params.slice(0,3).join(', ')}, ...}) {}`,
                     conf:  80, cIcon: '🟡', cAct: 'Code Quality',
                     cEv:   [`${info.params.length} parameters أكثر من المعتاد (max 4)`],
@@ -387,6 +399,7 @@ class ScopeAnalyzer {
                     this.issues.push({
                         type: 'scope', sev: 'm', line: ln, ev: t,
                         title: `🟡 Scope: var ${varMatch[1]} — استخدم let أو const`,
+                        strategy: 'VAR_USAGE',
                         fix:   t.replace(/^var\s+/, 'let '),
                         conf:  90, cIcon: '🟡', cAct: 'Scope Issue',
                         cEv:   [`var يتجاوز block scope — استخدم let/const`],

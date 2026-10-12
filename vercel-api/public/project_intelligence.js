@@ -5,43 +5,112 @@
 // ═══════════════════════════════════════════════════════
 
 // ─── Framework Signatures ─────────────────────────────
+//
+// [FW-EVIDENCE] كانت كل بصمة قائمةَ patterns واحدة، وdetectFramework يُصدر
+// حكمًا على **مطابقة واحدة** منها (confidence = matches/total، و1/3 = 0.33
+// تكفي). ومن ضمن أنماط react كان ‎/jsx/i‎ — نصٌّ حرفي بلا حدّ كلمة ولا سياق.
+// والنتيجة المقيسة على هذا المستودع:
+//   vercel-api  ⇒ «React»  (6 ملفات، منها unzip.js لأن فيه '.jsx' في مصفوفة
+//                 امتدادات، وanalyzer.js و5 غيرها)
+//   android     ⇒ «React»  (3 ملفات **جافا**)
+//   py fixtures ⇒ «Flask»  (ملف توليد حالات صياغة)
+// أي أن أول حكم يُصدره المحرك عن أي مشروع حقيقي كان خاطئًا، وكل ما يُبنى
+// عليه — mapAPIEndpoints وcontextPack — مبنيٌّ على خطأ.
+//
+// فصلنا الأدلة إلى صنفين:
+//   anchors — دليل حاسم: استيراد/طلب المكتبة بالاسم، أو تعليق إطارٍ لا يوجد
+//             إلا فيه. واحدٌ منها يكفي للحكم.
+//   signals — دليل ثانوي: استعمالٌ شائع في الإطار وقد يوجد خارجه
+//             (‎app.get(‎ ليست حكرًا على Express). لا تُصدر حكمًا وحدها،
+//             ويلزم اثنان منها على الأقل في غياب أي مرساة.
+// وlang صار حاجزًا فعليًا: fileName كان يُمرَّر ويُهمَل تمامًا.
 const FRAMEWORK_SIGNATURES = {
   express: {
-    patterns: [/require\(['"]express['"]\)/, /app\.(get|post|put|delete|use)\s*\(/],
+    anchors: [/require\(\s*['"]express['"]\s*\)/, /from\s+['"]express['"]/],
+    signals: [/\bapp\.(get|post|put|delete|use)\s*\(/, /\bexpress\s*\(\s*\)/],
     name: 'Express.js', lang: 'js', type: 'backend',
   },
   fastapi: {
-    patterns: [/from\s+fastapi\s+import/, /@app\.(get|post|put|delete)\s*\(/],
+    anchors: [/from\s+fastapi\s+import/, /^\s*import\s+fastapi\b/m],
+    signals: [/@app\.(get|post|put|delete)\s*\(/, /\bFastAPI\s*\(/],
     name: 'FastAPI', lang: 'py', type: 'backend',
   },
   flask: {
-    patterns: [/from\s+flask\s+import/, /@app\.route\s*\(/],
+    anchors: [/from\s+flask\s+import/, /^\s*import\s+flask\b/m],
+    signals: [/@app\.route\s*\(/, /\bFlask\s*\(\s*__name__/],
     name: 'Flask', lang: 'py', type: 'backend',
   },
   django: {
-    patterns: [/from\s+django\b/, /urlpatterns\s*=\s*\[/],
+    anchors: [/from\s+django\b/, /^\s*import\s+django\b/m],
+    signals: [/\burlpatterns\s*=\s*\[/, /\bDJANGO_SETTINGS_MODULE\b/],
     name: 'Django', lang: 'py', type: 'backend',
   },
   spring: {
-    patterns: [/@RestController/, /@RequestMapping/, /@SpringBootApplication/],
+    anchors: [/@SpringBootApplication\b/, /@RestController\b/,
+              /\bimport\s+org\.springframework\./],
+    signals: [/@RequestMapping\b/, /@(Get|Post|Put|Delete)Mapping\b/],
     name: 'Spring Boot', lang: 'java', type: 'backend',
   },
   react: {
-    patterns: [/from\s+['"]react['"]/, /import\s+React/, /jsx/i],
+    // ‎/jsx/i‎ أُزيلت: كانت تطابق '.jsx' في مصفوفة امتدادات وكلمة jsx في
+    // تعليق أو نصّ. بديلها استعمالٌ لا يكون إلا في React فعلًا.
+    anchors: [/from\s+['"]react['"]/, /require\(\s*['"]react['"]\s*\)/, /\bimport\s+React\b/],
+    signals: [/\buse(State|Effect|Memo|Callback|Ref|Context|Reducer)\s*\(/,
+              /\breact\/jsx-runtime\b/],
     name: 'React', lang: 'js', type: 'frontend',
   },
   nextjs: {
-    patterns: [/from\s+['"]next\//, /export\s+default\s+function\s+\w+Page/],
+    anchors: [/from\s+['"]next\//, /require\(\s*['"]next[/'"]/],
+    signals: [/export\s+default\s+function\s+\w+Page\b/,
+              /\bget(ServerSideProps|StaticProps|StaticPaths)\b/],
     name: 'Next.js', lang: 'js', type: 'fullstack',
   },
   vue: {
-    patterns: [/from\s+['"]vue['"]/, /createApp\s*\(/],
+    anchors: [/from\s+['"]vue['"]/, /require\(\s*['"]vue['"]\s*\)/],
+    signals: [/\bcreateApp\s*\(/, /\bdefineComponent\s*\(/],
     name: 'Vue.js', lang: 'js', type: 'frontend',
   },
   laravel: {
-    patterns: [/use\s+Illuminate\\/, /Route::(get|post|put|delete)\s*\(/],
+    anchors: [/use\s+Illuminate\\/],
+    signals: [/\bRoute::(get|post|put|delete)\s*\(/, /\bArtisan::/],
     name: 'Laravel', lang: 'php', type: 'backend',
   },
+  // [VERCEL-ROUTE] دالةٌ بلا سطر تسجيل.
+  //
+  // كل بصمة أعلاه تبحث عن سطرٍ يسجّل المسار (‎app.get('/u')‎، ‎@app.route‎،
+  // ‎@GetMapping‎). والدالة عديمة الخادم لا تملك واحدًا: مسارها **موضع ملفها**،
+  // وطرائقها ما يفحصه المعالج في ‎req.method‎. فكان مشروع vercel-api كله
+  // «Unknown» بعد تشديد الأدلة — وهو حكمٌ صادق، لكنه يعني صفر نقاط نهاية على
+  // سبع دوال هي نقاط نهاية فعلًا (مقيس).
+  //
+  // والاسم «Vercel/Serverless» لا «Vercel» وحدها بقرار: ما تُثبته المراسي هو
+  // معالج HTTP عديم الخادم (Vercel أو Netlify أو مشابه)، لا المنصّة بعينها.
+  // ودليل المنصّة نفسه يأتي من بيان البناء — vercel.json — في detectEnvironment.
+  serverless: {
+    anchors: [
+      /@vercel\/node\b/,
+      /export\s+default\s+(?:async\s+)?function\s+handler\s*\(\s*req\b/,
+      /export\s+default\s+(?:async\s+)?\(\s*req\s*,\s*res\s*\)\s*=>/,
+      /module\.exports\s*=\s*(?:async\s+)?\(\s*req\s*,\s*res\s*\)\s*=>/,
+      /module\.exports\s*=\s*(?:async\s+)?function\s*\(\s*req\s*,\s*res\b/,
+    ],
+    signals: [
+      /\breq\.method\b/,
+      /\bres\.status\s*\(\s*\d+\s*\)\s*\.\s*(json|end|send)\s*\(/,
+    ],
+    name: 'Vercel/Serverless Function', lang: 'js', type: 'backend',
+  },
+};
+
+// [FW-EVIDENCE] عائلة اللغة من الامتداد. لا يُعلن إطار JS عن ملف جافا.
+// وبلا اسم ملف لا دليل على اللغة ⇒ لا حجب (fail-open على الحجب وحده،
+// لأن شرط الأدلة أعلاه يبقى قائمًا ويمنع الحكم الضعيف).
+const FW_LANG_OF_EXT = {
+  js: 'js', mjs: 'js', cjs: 'js', jsx: 'js', ts: 'js', tsx: 'js',
+  html: 'js', htm: 'js',
+  py: 'py',
+  java: 'java', kt: 'java', kts: 'java',
+  php: 'php',
 };
 
 // ─── API Patterns ──────────────────────────────────────
@@ -187,15 +256,70 @@ function parseParams(paramStr) {
 // 2. Framework Detector
 // ═══════════════════════════════════════════════════════
 
+// [FW-EVIDENCE] يحذف التعليقات ويُبقي النصوص.
+//
+// التفريق مقصود ولازم: المراسي تعتمد على النصوص الحرفية — اسم المكتبة في
+// ‎require('express')‎ و‎from 'react'‎ نصٌّ — فقناعُ النصوص يُعطِّل الاكتشاف
+// كلّه. والتعليقات لا تحمل استيرادًا حقيقيًا أبدًا، فحذفها يُزيل دليلًا زائفًا
+// بلا أن يُزيل دليلًا صحيحًا. (مقيس: ‎# from flask import Flask (مثال)‎ كان
+// يُنتج حكم Flask.)
+//
+// والماسح يتخطّى النصوص كي لا يُقرأ ‎"http://x"‎ كبداية تعليق، ويُبقيها كما هي.
+// و‎#‎ تعليقٌ في بايثون وPHP وحدهما — وفي JS هي حقل خاص (‎this.#x‎)، وفي PHP
+// ‎#[‎ سمةٌ لا تعليق (نفس قاعدة structuralSyntax في fix_verifier.js).
+function fwStripComments(src, lang) {
+  const hash = (lang === 'py' || lang === 'php');
+  const out = [];
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c; out.push(c); i++;
+      while (i < n) {
+        if (src[i] === '\\') { out.push(src[i], src[i + 1] || ''); i += 2; continue; }
+        if (src[i] === q) { out.push(q); i++; break; }
+        if (src[i] === '\n' && q !== '`') { out.push('\n'); i++; break; }
+        out.push(src[i]); i++;
+      }
+      continue;
+    }
+    if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') i++; continue; }
+    if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); i = (e < 0) ? n : e + 2; continue; }
+    if (hash && c === '#' && d !== '[') { while (i < n && src[i] !== '\n') i++; continue; }
+    out.push(c); i++;
+  }
+  return out.join('');
+}
+
 function detectFramework(code, fileName) {
+  const raw = String(code == null ? '' : code);
+  const ext = String(fileName || '').split('.').pop().toLowerCase();
+  const fileLang = FW_LANG_OF_EXT[ext] || null;
+  const src = fwStripComments(raw, fileLang);
+
   const results = [];
   Object.entries(FRAMEWORK_SIGNATURES).forEach(([key, fw]) => {
-    const matches = fw.patterns.filter(p => p.test(code)).length;
-    if (matches > 0) {
-      results.push({ key, name: fw.name, lang: fw.lang, type: fw.type, confidence: matches / fw.patterns.length });
-    }
+    // [FW-EVIDENCE] حاجز اللغة
+    if (fileLang && fw.lang !== fileLang) return;
+
+    const anchors = fw.anchors.filter(p => p.test(src)).length;
+    const signals = fw.signals.filter(p => p.test(src)).length;
+
+    // [FW-EVIDENCE] شرط الأدلة: مرساةٌ واحدة، أو إشارتان ثانويتان.
+    // دليلٌ ثانويّ واحد ⇒ لا حكم. وهذا ما كان يُنتج «React» و«Flask» زورًا.
+    if (anchors === 0 && signals < 2) return;
+
+    const total = fw.anchors.length + fw.signals.length;
+    results.push({
+      key, name: fw.name, lang: fw.lang, type: fw.type,
+      anchored: anchors > 0, anchors, signals,
+      confidence: (anchors + signals) / total,
+    });
   });
-  results.sort((a, b) => b.confidence - a.confidence);
+
+  // المُرسى يسبق غير المُرسى دائمًا، ثم الأعلى ثقةً
+  results.sort((a, b) => (Number(b.anchored) - Number(a.anchored)) || (b.confidence - a.confidence));
   return results[0] || null;
 }
 
@@ -203,9 +327,58 @@ function detectFramework(code, fileName) {
 // 3. API Endpoint Mapper
 // ═══════════════════════════════════════════════════════
 
-function mapAPIEndpoints(code, framework) {
+// [VERCEL-ROUTE] المسار من موضع الملف.
+// اصطلاح Vercel: كل ملف تحت ‎api/‎ نقطةُ نهاية على مساره. و‎index‎ يعني الدليل
+// نفسه. وبلا مقطع ‎api/‎ لا دليل على مسار ⇒ null، ولا اختراع.
+function serverlessRoute(fileName) {
+  const p = String(fileName || '').replace(/\\/g, '/');
+  if (!p) return null;
+  const segs = p.split('/');
+  const i = segs.lastIndexOf('api');
+  if (i < 0 || i === segs.length - 1) return null;
+  const tail = segs.slice(i).join('/').replace(/\.(js|mjs|cjs|ts|tsx|jsx)$/i, '');
+  const route = '/' + tail.replace(/\/index$/i, '');
+  return route === '/' ? null : route;
+}
+
+// [VERCEL-ROUTE] الطرائق من فحوص المعالج نفسه.
+//   ‎req.method !== 'POST'‎ ⇒ كل ما عدا POST مرفوض ⇒ المسموح POST
+//   ‎req.method === 'OPTIONS'‎ ⇒ OPTIONS مُعالَجة
+//   ‎['GET','POST'].includes(req.method)‎ ⇒ الاثنان
+// ولا فحص إطلاقًا ⇒ ANY: المعالج يقبل أي طريقة، وهذا ما يُقال لا ما يُخمَّن.
+function serverlessMethods(code) {
+  const src = String(code || '');
+  const set = new Set();
+  let m;
+  const EQ = /\breq\.method\s*(===?|!==?)\s*['"]([A-Za-z]+)['"]/g;
+  while ((m = EQ.exec(src)) !== null) set.add(m[2].toUpperCase());
+  const REV = /['"]([A-Za-z]+)['"]\s*(===?|!==?)\s*\breq\.method\b/g;
+  while ((m = REV.exec(src)) !== null) set.add(m[1].toUpperCase());
+  const LIST = /\[([^\]]*)\]\s*\.\s*(?:includes|indexOf)\s*\(\s*req\.method/g;
+  while ((m = LIST.exec(src)) !== null) {
+    const inner = m[1].match(/['"]([A-Za-z]+)['"]/g) || [];
+    inner.forEach(s => set.add(s.replace(/['"]/g, '').toUpperCase()));
+  }
+  return set.size ? [...set].sort() : ['ANY'];
+}
+
+function mapAPIEndpoints(code, framework, fileName) {
   const endpoints = [];
   if (!framework) return endpoints;
+
+  // [VERCEL-ROUTE] فرعٌ خاص: لا regex على الكود يُعطي المسار هنا
+  if (framework.key === 'serverless') {
+    const route = serverlessRoute(fileName);
+    if (!route) return endpoints;              // بلا اسم ملف لا مسار
+    const line = (() => {
+      const i = String(code || '').search(/export\s+default|module\.exports\s*=/);
+      return i < 0 ? 1 : String(code).slice(0, i).split('\n').length;
+    })();
+    for (const method of serverlessMethods(code)) {
+      endpoints.push({ method, path: route, line, source: 'file-route' });
+    }
+    return endpoints;
+  }
 
   const patterns = API_PATTERNS[framework.key] || [];
 
@@ -311,7 +484,7 @@ function buildContextPack(code, fileName, taintIssues, fileInfo, framework, endp
   // لو استُدعيت مستقلة — احسب القيم
   if (!fileInfo)  fileInfo  = parseFile(code, fileName);
   if (!framework) framework = detectFramework(code, fileName);
-  if (!endpoints) endpoints = mapAPIEndpoints(code, framework);
+  if (!endpoints) endpoints = mapAPIEndpoints(code, framework, fileName);
   if (!callGraph) callGraph = buildCallGraph(fileInfo);
 
   const evidence = buildEvidenceChain(taintIssues || [], callGraph, fileInfo, framework, endpoints);
@@ -369,7 +542,7 @@ function buildAIPrompt(evidence, framework, endpoints) {
 function analyzeProject(code, fileName, taintIssues) {
   const fileInfo    = parseFile(code, fileName);
   const framework   = detectFramework(code, fileName);
-  const endpoints   = mapAPIEndpoints(code, framework);
+  const endpoints   = mapAPIEndpoints(code, framework, fileName);
   const callGraph   = buildCallGraph(fileInfo);
   // ✅ مرر fileInfo مباشرة — بدل ما تُعاد الحسبة داخل buildContextPack
   const contextPack = buildContextPack(code, fileName, taintIssues || [], fileInfo, framework, endpoints, callGraph);
@@ -394,7 +567,9 @@ function analyzeProject(code, fileName, taintIssues) {
 // Multi-File Analysis — Cross-file Intelligence
 // ═══════════════════════════════════════════════════════
 
-function analyzeMultipleFiles(files) {
+// [ENV-LINK] env اختياري: ناتج detectEnvironment/readEnvironment.
+// بلا env يبقى السلوك كما كان بالحرف (لا منادي قائم يمرّره).
+function analyzeMultipleFiles(files, env) {
   if (!files || files.length === 0) return null;
 
   const fileResults = [];
@@ -473,9 +648,48 @@ function analyzeMultipleFiles(files) {
     } : null,
   };
 
+  // ─── 7. بيئة التشغيل والاعتماديات ────────────────────
+  // [ENV-LINK] هنا يُربط المورِّد بالمستهلك: packageJson الذي قرأناه من بيان
+  // البناء يُمرَّر إلى analyzeDependencies — وسيطه الثالث الذي كان بلا مصدر.
+  // ولا يُنادى المحلل إلا إذا وُجد بيان npm فعلًا: بيئة gradle لا تُفحَص
+  // بقائمة ثغرات npm، وذلك يُعلَن لا يُسكَت عنه.
+  let environment = null;
+  if (env && typeof env === 'object' && env.verdict) {
+    const depIssues = [];
+    let depsAnalyzed = false;
+    if (env.packageJson && typeof analyzeDependencies === 'function') {
+      depsAnalyzed = true;
+      files.forEach(file => {
+        try {
+          const d = analyzeDependencies(file.code, file.name, env.packageJson);
+          (d.issues || []).forEach(i => depIssues.push({ ...i, sourceFile: file.name }));
+          (d.pkgIssues || []).forEach(i => {
+            if (!depIssues.some(x => x.package === i.package)) depIssues.push(i);
+          });
+        } catch (_) { /* ملف واحد لا يُسقط التحليل */ }
+      });
+    }
+    environment = {
+      verdict:           env.verdict,
+      ecosystems:        env.ecosystems || [],
+      manifests:         (env.manifests || []).map(m => ({
+                           manifest: m.manifest, ecosystem: m.ecosystem,
+                           name: m.name, count: m.count, runtime: m.runtime })),
+      unsupported:       env.unsupported || [],
+      totalDependencies: env.totalDependencies || 0,
+      dependencyIssues:  depIssues,
+      dependenciesAnalyzed: depsAnalyzed,
+      note: depsAnalyzed ? env.note
+        : (env.verdict === 'unknown'
+            ? env.note
+            : 'لا فحص اعتماديات: المحلل الحالي قائمةُ ثغرات npm، ولا بيان npm هنا'),
+    };
+  }
+
   return {
     files:          fileResults.length,
     framework:      topFramework || 'Unknown',
+    environment,
     totalEndpoints: allEndpoints.length,
     endpoints:      allEndpoints,
     crossFileIssues,
@@ -492,6 +706,50 @@ function analyzeMultipleFiles(files) {
   };
 }
 
+// [GRAPH-RESOLVE] حلّ مُحدِّد الاستيراد إلى ملف في المجموعة المُحلَّلة.
+//
+// المطابقة السابقة كانت نصًّا جزئيًا:
+//     r.file.includes(imp) || imp.includes(r.file.replace(/\.\w+$/, ''))
+// وأثرها المقيس على 30 ملفًا حقيقيًا من هذا المستودع: **صفر حافة صحيحة**
+// و**حافة واحدة وهمية**.
+//   • الخمس استيرادات النسبية كلها فُقدت: ‎'vercel-api/public/x.js'.includes('./x.js')‎
+//     كاذبة بسبب بادئة ‎./‎، والشرط الثاني يقتضي أن يحوي المُحدِّد المسارَ
+//     المشروعيّ كاملًا — ولا يحدث عمليًا.
+//   • والحافة الوحيدة ‎analyze.js → crypto_scanner.js‎ جاءت من ‎require('crypto')‎
+//     لأن ‎'…/crypto_scanner.js'.includes('crypto')‎ صادقة. فكل مكتبة مدمجة أو
+//     خارجية كانت مصنعًا لحِواف وهمية.
+//
+// والحلّ هنا يعمل على **مجموعة الملفات المُعطاة** لا على القرص: نفس الدالة
+// تعمل في المتصفح على ملفات ZIP كما تعمل في Node. وقواعده:
+//   1. المُحدِّد غير النسبي (‎fs‎، ‎express‎، ‎@scope/pkg‎) لا يُنتج حافة أبدًا —
+//      ليس ملفًا في المشروع. وهذا وحده يُلغي صنف الحِواف الوهمية كله.
+//   2. النسبي يُحَل مقابل دليل الملف المُستورِد، مع ‎.‎ و‎..‎.
+//   3. الامتداد يُستنتَج عند الاقتضاء، و‎dir/‎ تُحَل إلى ‎dir/index.*‎.
+//   4. ما لا يوجد في المجموعة لا يُنتج حافة — ويُسجَّل في unresolved بدل أن
+//      يُختلَق له هدف.
+const GRAPH_EXTS = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
+
+function resolveImport(fromFile, spec, nameSet) {
+  const s = String(spec || '');
+  if (!/^\.\.?(?:\/|$)/.test(s)) return null;          // غير نسبي ⇒ خارج المشروع
+
+  const dir = String(fromFile || '').replace(/\\/g, '/').split('/');
+  dir.pop();                                           // اطرح اسم الملف
+  const out = dir;
+  for (const part of s.replace(/\\/g, '/').split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { if (!out.length) return null; out.pop(); continue; }
+    out.push(part);
+  }
+  const base = out.join('/');
+  if (!base) return null;
+
+  if (nameSet.has(base)) return base;                  // مسار كامل بامتداده
+  for (const e of GRAPH_EXTS) if (nameSet.has(base + e)) return base + e;
+  for (const e of GRAPH_EXTS) if (nameSet.has(base + '/index' + e)) return base + '/index' + e;
+  return null;
+}
+
 function buildProjectGraph(fileResults, importMap) {
   const graph = {};
 
@@ -504,19 +762,234 @@ function buildProjectGraph(fileResults, importMap) {
     };
   });
 
-  // ابنِ edges بين الملفات
+  const nameSet = new Set(fileResults.map(r => String(r.file).replace(/\\/g, '/')));
   const edges = [];
+  const unresolved = [];
+  const seen = new Set();
+
   Object.entries(graph).forEach(([file, info]) => {
     info.imports.forEach(imp => {
-      const target = fileResults.find(r =>
-        r.file.includes(imp) || imp.includes(r.file.replace(/\.\w+$/, ''))
-      );
-      if (target) {
-        edges.push({ from: file, to: target.file, type: 'import' });
+      const spec = String(imp);
+      const to = resolveImport(file, spec, nameSet);
+      if (!to) {
+        // النسبي الذي لم يُحَل جديرٌ بالذكر: هدفه خارج المجموعة أو غير موجود.
+        // وغير النسبي ليس نقصًا — فلا يُسجَّل ضجيجًا.
+        if (/^\.\.?(?:\/|$)/.test(spec)) unresolved.push({ from: file, spec });
+        return;
       }
+      if (to === file) return;                         // استيراد ذاتي لا حافة
+      const key = file + '\u0000' + to;
+      if (seen.has(key)) return;                       // لا تكرار
+      seen.add(key);
+      edges.push({ from: file, to, spec, type: 'import' });
     });
   });
 
-  return { nodes: graph, edges };
+  return { nodes: graph, edges, unresolved };
+}
+
+// ═══════════════════════════════════════════════════════
+// 7. Runtime Environment — بيانات البناء الموجودة فعلًا
+// ═══════════════════════════════════════════════════════
+//
+// [ENV-LINK] المورِّد المفقود.
+// ‎analyzeDependencies(code, fileName, packageJson)‎ في dependency_analyzer.js
+// يقبل وسيطًا ثالثًا يفحص اعتماديات المشروع — ولا مورِّد له في المستودع كلّه
+// (صفر منادي). فالوسيط موجود، والمستهلك موجود، ولا شيء يقرأ بيان البناء.
+//
+// وما يُدعَم هنا محدودٌ بما يستطيع المحرك قراءته وتحليله فعلًا، ومُجرَّبٌ على
+// بيانات حقيقية في هذا المستودع:
+//   package.json   → JSON.parse، اعتماديات باسم ونسخة. وهو ما يُغذّي
+//                    analyzeDependencies مباشرة.
+//   build.gradle   → أسطر ‎implementation 'group:artifact:version'‎ وما
+//                    يجاورها من compileSdk/minSdk/namespace/applicationId.
+// ولا يُدَّعى غير ذلك: pom.xml وrequirements.txt وcomposer.json تُرصَد
+// كـ«موجودة وغير محلَّلة» لا كبيئة مكتشَفة، لأنه لا عيّنة حقيقية هنا
+// لاختبارها — وبيانٌ لم يُجرَّب ليس دعمًا.
+// وغياب كل بيان ⇒ verdict:'unknown' مع ذكر السبب، لا تخمين.
+
+const ENV_SUPPORTED   = ['package.json', 'build.gradle', 'build.gradle.kts', 'vercel.json'];
+const ENV_UNSUPPORTED = ['pom.xml', 'requirements.txt', 'composer.json',
+                         'Pipfile', 'go.mod', 'Cargo.toml', 'pyproject.toml'];
+
+function parsePackageJson(text) {
+  let pkg;
+  try { pkg = JSON.parse(String(text)); }
+  catch (e) { return { ok: false, error: 'JSON غير صالح: ' + e.message }; }
+  if (!pkg || typeof pkg !== 'object') return { ok: false, error: 'ليس كائنًا' };
+  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  return {
+    ok: true, ecosystem: 'npm', raw: pkg,
+    name: typeof pkg.name === 'string' ? pkg.name : null,
+    dependencies: deps,
+    count: Object.keys(deps).length,
+    // runtime: ما يُعلنه المشروع عن بيئة تشغيله، إن أعلن
+    runtime: (pkg.engines && typeof pkg.engines === 'object') ? pkg.engines : null,
+  };
+}
+
+function parseGradle(text) {
+  const src = String(text).replace(/\r\n?/g, '\n');
+  const deps = {};
+  // ‎implementation 'g:a:v'‎ / api("g:a:v") — الشكل الذي يمكن قراءته بثقة.
+  // أسطر التعليق تُستثنى، والمتغيّرات ($var) لا تُفَكّ: تُرصَد بلا نسخة.
+  const RX = /^\s*(?:implementation|api|compileOnly|runtimeOnly|testImplementation|androidTestImplementation|kapt|annotationProcessor)\s*[\s(]\s*(['"])([^'"]+)\1/gm;
+  let m;
+  while ((m = RX.exec(src)) !== null) {
+    const coord = m[2];
+    if (coord.indexOf('$') >= 0) { deps[coord] = null; continue; }
+    const parts = coord.split(':');
+    if (parts.length >= 3) deps[parts[0] + ':' + parts[1]] = parts[2];
+    else deps[coord] = null;
+  }
+  const pick = (rx) => { const x = rx.exec(src); return x ? x[1] : null; };
+  return {
+    ok: true, ecosystem: 'gradle',
+    name: pick(/^\s*namespace\s+['"]([^'"]+)['"]/m) ||
+          pick(/^\s*applicationId\s+['"]([^'"]+)['"]/m),
+    dependencies: deps,
+    count: Object.keys(deps).length,
+    runtime: (() => {
+      const r = {};
+      const c = pick(/^\s*compileSdk(?:Version)?\s+(\d+)/m);
+      const mi = pick(/^\s*minSdk(?:Version)?\s+(\d+)/m);
+      const t = pick(/^\s*targetSdk(?:Version)?\s+(\d+)/m);
+      if (c) r.compileSdk = c;
+      if (mi) r.minSdk = mi;
+      if (t) r.targetSdk = t;
+      return Object.keys(r).length ? r : null;
+    })(),
+  };
+}
+
+// [VERCEL-ROUTE] vercel.json دليل المنصّة نفسها — لا اعتمادياتٍ فيه، بل
+// تهيئةُ نشرٍ ومسارات. فيُعَدّ `platform` لا `ecosystem`: لا يُحسَب بيئةَ
+// اعتماديات، ولا يُنادى به محلل اعتماديات، ويُعلن ما فيه فقط.
+function parseVercelJson(text) {
+  let cfg;
+  try { cfg = JSON.parse(String(text)); }
+  catch (e) { return { ok: false, error: 'JSON غير صالح: ' + e.message }; }
+  if (!cfg || typeof cfg !== 'object') return { ok: false, error: 'ليس كائنًا' };
+  return {
+    ok: true, ecosystem: null, platform: 'vercel', raw: cfg,
+    name: null, dependencies: {}, count: 0,
+    runtime: {
+      version: cfg.version != null ? String(cfg.version) : null,
+      routes: Array.isArray(cfg.routes) ? cfg.routes.length : 0,
+      functions: (cfg.functions && typeof cfg.functions === 'object')
+        ? Object.keys(cfg.functions) : [],
+    },
+  };
+}
+
+const ENV_PARSERS = {
+  'package.json':     parsePackageJson,
+  'build.gradle':     parseGradle,
+  'build.gradle.kts': parseGradle,
+  'vercel.json':      parseVercelJson,
+};
+
+/**
+ * [ENV-LINK] دالة خالصة: تتلقّى ما قرأه المنادي ولا تلمس قرصًا.
+ * manifests = { 'package.json': '<نص>', 'android/app/build.gradle': '<نص>', … }
+ * المفتاح قد يكون مسارًا؛ يُطابَق باسم الملف الأخير منه.
+ */
+function detectEnvironment(manifests) {
+  const found = [], unsupported = [], errors = [];
+  const platforms = [];
+  let packageJson = null;
+
+  Object.keys(manifests || {}).forEach(key => {
+    const base = String(key).split(/[\\/]/).pop();
+    if (ENV_UNSUPPORTED.indexOf(base) >= 0) {
+      unsupported.push({ manifest: key,
+        reason: 'موجود وغير محلَّل — لا دعم مُجرَّب لهذا البيان' });
+      return;
+    }
+    const parse = ENV_PARSERS[base];
+    if (!parse) return;
+    const r = parse(manifests[key]);
+    if (!r.ok) { errors.push({ manifest: key, error: r.error }); return; }
+    // [VERCEL-ROUTE] المنصّة ليست بيئةَ اعتماديات: تُعلَن ولا تُحسَب ecosystem
+    if (r.platform) {
+      platforms.push({ manifest: key, platform: r.platform, runtime: r.runtime });
+      return;
+    }
+    found.push({ manifest: key, ecosystem: r.ecosystem, name: r.name,
+                 dependencies: r.dependencies, count: r.count, runtime: r.runtime });
+    if (r.ecosystem === 'npm' && !packageJson) packageJson = r.raw;
+  });
+
+  const ecos = [...new Set(found.map(f => f.ecosystem))];
+  const verdict = ecos.length === 0 ? 'unknown' : (ecos.length === 1 ? ecos[0] : 'mixed');
+
+  return {
+    verdict,
+    ecosystems: ecos,
+    platforms,
+    manifests: found,
+    unsupported,
+    errors,
+    // ← هذا ما يُمرَّر إلى analyzeDependencies: المورِّد الذي كان مفقودًا
+    packageJson,
+    totalDependencies: found.reduce((a, f) => a + f.count, 0),
+    note: verdict === 'unknown'
+      ? (platforms.length
+          ? 'منصّة معروفة (' + platforms.map(p => p.platform).join(', ') + ') بلا بيان اعتماديات — لا فحص اعتماديات'
+          : unsupported.length
+          ? 'بيانات بناء موجودة لكنها غير مدعومة — البيئة غير معروفة، ولا استنتاج'
+          : 'لا بيان بناء — البيئة غير معروفة، ولا استنتاج')
+      : null,
+  };
+}
+
+/**
+ * [ENV-LINK] قارئ القرص — Node فقط، وبحدود صريحة.
+ * يبحث عن البيانات المدعومة حتى عمق maxDepth ولا يتجاوز maxFiles.
+ * في المتصفح: يُعيد null بصراحة (المنادي يمرّر النصوص إلى detectEnvironment).
+ */
+function readEnvironment(dir, opts) {
+  if (typeof require !== 'function') return null;
+  let fs, path;
+  try { fs = require('fs'); path = require('path'); } catch (_) { return null; }
+  if (!dir) return null;
+
+  const o = opts || {};
+  const maxDepth = Number.isFinite(o.maxDepth) ? o.maxDepth : 3;
+  const maxFiles = Number.isFinite(o.maxFiles) ? o.maxFiles : 12;
+  const SKIP = new Set(['node_modules', '.git', 'build', '.gradle', 'dist', '.next', 'vendor']);
+  const WANT = new Set(ENV_SUPPORTED.concat(ENV_UNSUPPORTED));
+
+  const manifests = {};
+  let n = 0;
+  (function rec(d, depth) {
+    if (depth > maxDepth || n >= maxFiles) return;
+    let ents;
+    try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
+    for (const e of ents) {
+      if (n >= maxFiles) return;
+      if (SKIP.has(e.name)) continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) { rec(p, depth + 1); continue; }
+      if (!WANT.has(e.name)) continue;
+      try { manifests[path.relative(dir, p) || e.name] = fs.readFileSync(p, 'utf8'); n++; }
+      catch (_) {}
+    }
+  })(dir, 0);
+
+  return detectEnvironment(manifests);
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.detectEnvironment = detectEnvironment;
+  globalThis.readEnvironment   = readEnvironment;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { detectFramework, fwStripComments, detectEnvironment, readEnvironment,
+                     resolveImport, buildProjectGraph,
+                     parsePackageJson, parseGradle, parseVercelJson,
+                     mapAPIEndpoints, serverlessRoute, serverlessMethods,
+                     analyzeProject, analyzeMultipleFiles,
+                     FRAMEWORK_SIGNATURES, API_PATTERNS, ENV_SUPPORTED, ENV_UNSUPPORTED };
 }
 

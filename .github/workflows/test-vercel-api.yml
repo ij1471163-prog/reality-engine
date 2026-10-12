@@ -1,0 +1,59 @@
+name: Test vercel-api
+
+# اكتشاف التراجعات تلقائيًا بدل انتظار تشغيل يدوي.
+# قبل هذا الملف لم يكن أي workflow يغطّي vercel-api:
+#   • build.yml            → workflow_dispatch فقط (بناء APK يدويًا).
+#   • test-project-repair  → push بمرشّح 'tools/project-repair/**' فقط.
+# فإيداعات vercel-api لم تكن تُشغّل أي فحص، والمجموعة (1,358 اختبارًا)
+# لا تعمل إلا حين يشغّلها أحد بيده.
+
+on:
+  push:
+    branches:
+      - master
+      - 'ccr-*'
+    paths:
+      - 'vercel-api/**'
+      - '.github/workflows/test-vercel-api.yml'
+  pull_request:
+    paths:
+      - 'vercel-api/**'
+      - '.github/workflows/test-vercel-api.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          # بلا cache: 'npm' — لا يوجد package-lock.json، والتخزين المؤقت يفشل بلا قفل.
+
+      # ملاحظة مقصودة: لا npm install ولا npm ci.
+      #   • لا package-lock.json في المستودع ⇒ npm ci يفشل.
+      #   • تبعيتا package.json (adm-zip, formidable) يحتاجهما api/unzip.js وحده،
+      #     ولا اختبار واحد يستوردهما (مقيس: البحث في test/ لا يُرجع شيئًا)،
+      #     والمجموعة تمرّ كاملة بلا node_modules (مقيس: 1,358 اختبارًا، exit=0).
+      #   • إضافة خطوة تثبيت لاحقًا تحتاج توليد قفل أولًا، وهو تغيير إنتاجي.
+
+      - name: Guard — اكتشاف ملفات الاختبار
+        working-directory: vercel-api
+        run: |
+          count=$(ls test/*.test.js 2>/dev/null | wc -l)
+          echo "ملفات الاختبار المكتشفة: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::لم يُكتشف أي ملف اختبار. node --test يخرج بـ0 على نمط لا يطابق شيئًا (مقيس)، فيصير الأخضر بلا معنى."
+            exit 1
+          fi
+
+      - name: Run test suite
+        working-directory: vercel-api
+        # النمط ضروري: 'node --test test/' يفشل بـMODULE_NOT_FOUND على Node 22
+        # (مقيس: exit=1)، و'node --test test/*.test.js' هو الأمر المعتمد (exit=0).
+        # رمز الخروج هو الحكم: اختبار واحد فاشل ⇒ exit=1 (مقيس) ⇒ يفشل الـworkflow.
+        # ولا إصلاح تلقائي ولا نشر في هذا المسار — فحصٌ فقط.
+        run: node --test test/*.test.js

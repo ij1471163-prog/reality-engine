@@ -25,7 +25,7 @@ function analyzeTaintPHP(code, fileName) {
       type: 'XSS', sev: 'c', sink: 'echo',
       fix: (v) => `echo htmlspecialchars(${v}, ENT_QUOTES, 'UTF-8');` },
     { re: /(?:exec|shell_exec|system|passthru|popen)\s*\(([^)]+)\)/g,
-      type: 'CMD_INJECTION', sev: 'c', sink: 'exec',
+      type: 'CMD_INJECTION', sev: 'c', sink: 'exec', strategy: 'CMD_INJECTION',
       fix: (v) => `exec(escapeshellarg(${v}))` },
     { re: /eval\s*\(([^)]+)\)/g,
       type: 'CODE_INJECTION', sev: 'c', sink: 'eval',
@@ -72,7 +72,7 @@ function analyzeTaintPHP(code, fileName) {
     if (t.startsWith('//') || t.startsWith('#')) return;
     const ln = i + 1;
 
-    SINKS.forEach(({ re, type, sev, sink, fix }) => {
+    SINKS.forEach(({ re, type, sev, sink, fix, strategy }) => {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(line)) !== null) {
@@ -88,6 +88,7 @@ function analyzeTaintPHP(code, fileName) {
           issues.push({
             type: 'taint', sev, line: ln, ev: t,
             title: `🔴 ${type}: ${v} → ${sink}`,
+            strategy,
             fix: fix(v),
             conf: 90, cIcon: '🔴', cAct: type,
             cEv: [`${v} مصدره user input`, `يصل لـ ${sink} بدون sanitization`]

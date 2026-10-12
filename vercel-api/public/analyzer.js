@@ -229,7 +229,25 @@ function dedupeIssues(issues) {
         if (!issue || typeof issue !== 'object') return;
         const key      = (issue.line || 0) + ':' + vulnClass(issue);
         const existing = byKey.get(key);
-        if (!existing || (issue.conf || 0) > (existing.conf || 0)) byKey.set(key, issue);
+        if (!existing) { byKey.set(key, issue); return; }
+
+        // [MERGE-KEEP] الدمج يُبقي الأعلى ثقةً، وكان **يُسقط ما يحمله الآخر**.
+        // وaiRequired قرارُ توجيهٍ لا وصفٌ: إن كان أحد التقريرين يقول «هذا لا
+        // يُصلَح حتميًّا فليذهب إلى AI» فإسقاطُه يُفقد المشكلةَ مسارَها.
+        // والمقيس: ‎res.send("Hello " + req.query.name)‎
+        //   بلا knowledge_base: 🔴 XSS في res.send — aiRequired=true
+        //   معه             : 🔴 XSS — user input في output — aiRequired=false
+        // فالأعلى ثقةً غلب، ومعه ضاع aiRequired، فلم يبقَ للثغرة مسارٌ.
+        // ويُدمَج aiRequired **وحده**. وكانت أول صياغة تنقل strategy وfix من
+        // الخاسر أيضًا، فأسقطت ADV-5 (ثابتُ «نفس البلاغ ⇒ نفس الاستراتيجية
+        // أيًّا كان المعرّف المحقون): بعضُ البلاغات تحمل ‎strategy: null‎ قيمةً
+        // صريحة، و‎!== undefined‎ ينقلها فيطمس استراتيجيةً كان detectStrategy
+        // يستنبطها من العنوان. وأيُّ كاشفٍ يكون الخاسر يتوقف على المعرّف،
+        // فصار التوجيه يعتمد على الاسم. فلا يُنقَل إلا ما قيس فقدانُه.
+        const winner = (issue.conf || 0) > (existing.conf || 0) ? issue : existing;
+        const loser   = winner === issue ? existing : issue;
+        if (loser.aiRequired === true) winner.aiRequired = true;
+        byKey.set(key, winner);
     });
     return Array.from(byKey.values());
 }
@@ -474,6 +492,7 @@ function analyzeCode(code, fileName) {
                     const _dup = issues.some(_x=>_x.line===(_i+1) && /تراكم/.test(String(_x.title)));
                     if (!_dup) issues.push({type:'bug',sev:'c',
                         title:'خطأ تراكم: '+_v+' = بدل +=',
+                        strategy:'ACCUMULATION',
                         line:_i+1,ev:_t,
                         fix:_t.replace(new RegExp('('+_esc+')\\s*=(?!=)'),'$1 +='),
                         conf:90,cIcon:'🟢',cAct:'خطأ تراكم مؤكد',
@@ -656,7 +675,14 @@ function analyzeCode(code, fileName) {
             // تتبع query = "SELECT...?"
             const qM = line.match(/\b(\w+)\s*=\s*["']([^"']*)["']\s*$/);
             if (qM && /(?:SELECT|INSERT|UPDATE|DELETE)/i.test(qM[2])) {
-                const qCount = (qM[2].match(/\?/g) || []).length;
+                // [PY-PLACEHOLDER] ‎?‎ ليس الشكلَ الوحيد: DB-API يُعرّف
+                // paramstyle، وpsycopg2/MySQLdb يستخدمان ‎%s‎، وoracledb
+                // وsqlite يقبلان ‎:name‎. فعدُّ ‎?‎ وحده يجعل
+                //     q = "SELECT * FROM t WHERE id=%s"
+                //     cursor.execute(q, (u,))
+                // «عدم تطابق: 0 ? مقابل معامل واحد» — وهو الشكلُ الصحيح
+                // نفسه. والبلاغ الزائف يمنع قبول إصلاحٍ سليم في البوابة.
+                const qCount = (qM[2].match(/\?|%[sdf]\b|%\(\w+\)s|:\w+/g) || []).length;
                 lastQuery = { varName: qM[1], count: qCount, line: i };
             }
             // تحقق cursor.execute(query, (params,))
@@ -802,6 +828,7 @@ function analyzePythonSecurity(code, issues) {
         if (/^[A-Z_]+(KEY|SECRET|TOKEN|PASSWORD|PASS|PWD)\s*=\s*["'][^"']{6,}["']/i.test(t)) {
             issues.push({ type:'py', sev:'c', line:ln, ev:t,
                 title:'🔐 ' + (t.match(/^(\w+)/)?.[1] || 'Secret') + ' مكشوف في الكود',
+                strategy:'HARDCODED_SECRET',
                 fix: t.replace(/["'][^"']+["']/, "os.environ.get('" + (t.match(/^(\w+)/)?.[1] || 'SECRET') + "', '')"),
                 fixHint: 'يتطلب import os في الملف — محرك الإصلاح يضيفه، والتطبيق اليدوي يجب أن يضيفه.',
                 conf:92, cIcon:'🔐', cAct:'CWE-798' });
@@ -835,6 +862,7 @@ function analyzePythonSecurity(code, issues) {
                 if (m) {
                     issues.push({ type:'py', sev:'h', line:ln, ev:t,
                         title:'🟠 خطأ تراكم: ' + m[1] + ' = بدل +=',
+                        strategy:'ACCUMULATION',
                         fix: line.replace(/(\w+)\s*=\s*/, '$1 += '),
                         conf:85, cIcon:'🟠', cAct:'Accumulation Error' });
                 }

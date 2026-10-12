@@ -80,6 +80,7 @@ function detectPatterns(code, fileName) {
           issues.push({
             type: 'bug', sev: 'l',
             title: `قسمة على ${divisor} — تحقق من الصفر`,
+            strategy: null,
             line: i + 1, ev: t,
             fix: t.replace(
               new RegExp(`/\\s*${divisor}`),
@@ -132,6 +133,7 @@ function detectPatterns(code, fileName) {
         issues.push({
           type: 'stub', sev: 'h',
           title: `دالة ناقصة: ${funcName}()`,
+          strategy: 'EMPTY_FUNCTION',
           line: i + 1, ev: t,
           fix: null,
           conf: 90, cIcon: '🔴',

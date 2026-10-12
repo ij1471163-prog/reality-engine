@@ -143,25 +143,212 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
         hasVerifier: !!_fv,
         candidateChanged: candidate !== before
     });
-    const v = _fv.verifyFix(before, candidate, fn, analyzer, {});
+    let v = _fv.verifyFix(before, candidate, fn, analyzer, {});
+    let committed = candidate;
+    let salvaged = null;
+
+    // [SUBSET-SALVAGE] رُقعةُ محركٍ مرفوضة ليست رُقعةً كلّها معطوبة.
+    //
+    // كان الحكم واحدًا على الرُقعة كاملة، فمحركٌ يُنتج إصلاحًا صحيحًا ومحوًا
+    // شكليًّا في رُقعةٍ واحدة يخسر الصحيحَ مع الفاسد. والمقيس على ملف حقيقي
+    // في مسار الواجهة هذا تحديدًا:
+    //     SmartMoveRepair ⇒ REJECTED_EVAL_FIX_UNPROVEN
+    //     فسقط معه إصلاحُ ‎username=? AND password=?‎، وبقي حقنُ SQL
+    //     غير مُصلَح في الناتج النهائي — بينما مسارُ الخادم يُصلحه.
+    // أي أن الخللَ نفسه بقي في هذا الملف بعد إصلاحه في المُنسّق — وهذا
+    // بالضبط معنى «يُصلَح جزءٌ ويُترك المرتبط به».
+    //
+    // والتجزئة من البوابة نفسها (FixVerifier.salvageVerifiedSubset)، لا نسخةً
+    // ثالثة هنا. ولا تُستدعى إلا على رفضِ **ضرر**: الرفضُ غير الضارّ (لا
+    // تحسّنَ قابلًا للقياس) لا خطوةَ فيه ضارّة فالإعادة تُنتج نفس الناتج،
+    // ورفضُ الهدف (حِزمةٌ مُصغَّرة) لا تمرّ منه خطوةٌ بحال.
+    if (!v.accepted &&
+        typeof _fv.salvageVerifiedSubset === 'function' &&
+        typeof _fv.isHarmfulRejection === 'function' &&
+        _fv.isHarmfulRejection(v.reason) &&
+        !(typeof _fv.isTargetRejection === 'function' && _fv.isTargetRejection(v.reason))) {
+        const batchReason = v.reason;
+        const r = _fv.salvageVerifiedSubset(before, candidate, (b, c) => {
+            const vv = _fv.verifyFix(b, c, fn, analyzer, {});
+            return vv.accepted === true ? vv : null;
+        });
+        if (r) {
+            committed = r.code;
+            v = r.verdict;
+            salvaged = { keptHunks: r.kept, droppedHunks: r.dropped, batchReason };
+            // ما أُسقط يُسجَّل صراحةً: التقرير يقول ما لم يُطبَّق ولماذا
+            report.rejected.push({
+                file: fn, source,
+                reason: 'PARTIAL_SALVAGE — أُسقط ' + r.dropped + ' تغييرًا لم تُثبته البوابة (' +
+                        batchReason + ')، وطُبِّق ' + r.kept,
+            });
+        }
+    }
 
     if (!v.accepted) {
         report.rejected.push({ file: fn, source, reason: v.reason, syntaxStatus: v.syntaxStatus });
         return false;
     }
 
-    F[fn] = candidate;
-    R[fn] = { code: candidate, issues: v.afterIssues };
+    F[fn] = committed;
+    R[fn] = { code: committed, issues: v.afterIssues };
     report.accepted.push({
         file: fn, source,
         removedIssues: v.removedCount,
         claimedCount: claimedCount != null ? claimedCount : null,
         syntaxStatus: v.syntaxStatus,
-        reason: v.reason
+        reason: v.reason,
+        salvaged: salvaged || undefined
     });
     // العدّاد يزيد بما أزالته البوابة فعليًا، لا بما ادّعاه المحرك
     report.totalFixed += (v.removedCount || 0);
     return true;
+}
+
+// ═══ [P2] نسبة نتيجة الإصلاح المتعلَّم إلى أنماطه ═══════════════════════
+// أربعة أحكام، ولا واحد منها يغيّر عدّادات الأنماط في هذه المرحلة:
+//   PASS          قُبل التعديل، وهذا النمط أسهم فيه
+//   FAIL          رُفض، وعُزل هذا النمط بعينه مسؤولًا
+//   INCONCLUSIVE  رُفض ولم يُعزل مسؤول — أو سبب الرفض خارج النمط
+//   SKIPPED       لا تعديل أصلاً فلا حكم
+// القيد: لا verify() ولا مسّ لـverified/failures/confidence/approved.
+const LEARNED_OUTCOME = {
+    PASS: 'PASS', FAIL: 'FAIL', INCONCLUSIVE: 'INCONCLUSIVE', SKIPPED: 'SKIPPED'
+};
+
+// حدّ محاولات التنصيف. ما لم يُحسم داخله يبقى INCONCLUSIVE — لا يُخمَّن مسؤول.
+const BISECT_MAX_ATTEMPTS = 8;
+
+// [P3] أي رفض يُعدّ ضرراً من النمط نفسه، وأيّه لا؟ الفرق ليس تجميلياً:
+// الأول يستحق تسجيل فشل على النمط (وثلاثةٌ منه تحظره)، والثاني لا.
+//
+//   ضارّ      — التعديل أسوأ من الأصل أو مكسور أو يدّعي إصلاحاً لا يثبته.
+//   غير ضارّ  — «بلا تحسّن مقيس»: التعديل سليم ولم يُقِس المحلل تحسناً.
+//               وقد يكون السبب عمى في المحلل لا عيباً في النمط (مقيس على
+//               الاستيراد المُستعار: hashlib as hl ⇒ hl.sha256، تحقّق منه
+//               مفسّر Python فعلاً ورفضه Ghost بـno_improvement).
+//   بيئي      — لا بوابة، لا فاحص نحوي للغة، لا محلل، أو تحليل متعذّر.
+//               هذه أحكام على البيئة لا على النمط، فتسجيلها فشلاً يحظر
+//               خبرة سليمة لأن ملفاً نُشر بلا فاحص لغته.
+//   مجهول     — يُعدّ غير ضارّ. فشلٌ مبنيّ على سبب لا نعرفه تخمين.
+//
+// ⚠️ والقاعدة بالبناء: الضرر يحتاج إثباتاً صريحاً، والافتراضُ عدمُ العقوبة.
+// (كانت الصيغة الأولى تعدّ «كل ما تبقّى» رفضَ بوابةٍ ضارًّا، وهو خطأ مقيس
+//  على ستة أسباب منشورة من البوابة نفسها — منها REJECTED_NO_IMPROVEMENT
+//  وREJECTED_VERIFIER_UNAVAILABLE وREJECTED_NO_SYNTAX_CHECKER — فكانت
+//  تعاقب النمط على «لا تحسّن» وعلى غياب أدوات التحقق.)
+const HARMFUL_GHOST_REASONS = new Set([
+    'structural_invalid', 'syntax_broken', 'analysis_failed', 'verification_unavailable',
+]);
+const BENIGN_GHOST_REASONS = new Set(['no_change', 'no_improvement']);
+
+// أسباب بوابة FixVerifier التي تُعدّ دليل ضرر. المطابقة ببادئة النص لأن
+// البوابة تُلحق بالسبب تفصيلاً (اللغة، العدد، أسماء الفحوص).
+const HARMFUL_GATE_PREFIXES = [
+    'REJECTED_EMPTY_OUTPUT',            // الناتج فارغ
+    'REJECTED_QUICKCHECK',              // فحوص بنيوية سريعة سقطت
+    'REJECTED_SYNTAX_BROKEN',           // الفاحص متاح وحكم بالكسر
+    'REJECTED_ISSUES_WORSENED',         // أضاف بلاغات
+    'REJECTED_SQL_NOT_PARAMETERIZED',   // ادّعى إصلاح SQL ولا يثبته
+    'REJECTED_PY_UNREACHABLE_CODE',     // أدخل نصًّا ميتًا
+];
+// ملاحظة على REJECTED_ANALYZER_THREW: البوابة تحلّل الأصل والمرشّح في نفس
+// المحاولة، فالسبب لا يميّز أيّهما أسقط المحلل. عقوبةٌ على انهيارٍ قد يكون
+// من الأصل تخمين، فيبقى غير ضارّ — ويبقى الرفض قائماً فلا يُكتب شيء.
+
+function _isHarmfulRejection(rejectReason, ghostReason) {
+    if (!rejectReason) return false;
+    if (rejectReason === 'LEARNED_SYNTAX_BROKEN') return true;
+    if (rejectReason === 'GHOST_' + 'regression') return true;
+    if (rejectReason === 'GHOST_fail') {
+        if (BENIGN_GHOST_REASONS.has(ghostReason)) return false;
+        if (HARMFUL_GHOST_REASONS.has(ghostReason)) return true;
+        return false;                       // سبب مجهول ⇒ لا عقوبة
+    }
+    const r = String(rejectReason);
+    return HARMFUL_GATE_PREFIXES.some(p => r.indexOf(p) === 0);
+}
+
+// منع التعلّم الدائري: لا يُتعلَّم من تعديل مصدره applyLearned، وإلا عزّز
+// المحرك أنماطه بأدلة من نفسه. الشرط مكتوب صراحةً هنا حتى لا يسقط بصمت لو
+// نُقل موضع learn() إلى البوابة لاحقًا.
+const LEARN_EXCLUDED_SOURCES = ['applyLearned'];
+function _learnableSource(source) {
+    const s = String(source || '');
+    return !LEARN_EXCLUDED_SOURCES.some(ex => s.indexOf(ex) !== -1);
+}
+
+/**
+ * تقييم جاف لمرشّح متعلَّم: نفس الفحوص الثلاثة التي يعبرها المسار الحقيقي
+ * (Ghost ثم نحوي ثم FixVerifier)، وبلا أي كتابة على F أو R.
+ */
+function _dryCheckLearned(beforeCode, candidate, fn) {
+    if (typeof candidate !== 'string' || candidate === beforeCode) {
+        return { ok: true, reason: 'NO_CHANGE' };
+    }
+    if (typeof GhostMode !== 'undefined') {
+        const lv = GhostMode.verdict(beforeCode, candidate, fn, analyzeCode);
+        if (lv.verdict === GhostMode.VERDICT.FAIL || lv.verdict === GhostMode.VERDICT.REGRESSION) {
+            return { ok: false, reason: 'GHOST_' + lv.verdict };
+        }
+    }
+    if (!learnedSyntaxOk(fn, beforeCode, candidate)) {
+        return { ok: false, reason: 'LEARNED_SYNTAX_BROKEN' };
+    }
+    const _fv = _getFixVerifier();
+    if (!_fv) return { ok: false, reason: 'REJECTED_VERIFIER_UNAVAILABLE' };
+    const analyzer = (typeof analyzeCode === 'function') ? analyzeCode : null;
+    const v = _fv.verifyFix(beforeCode, candidate, fn, analyzer, {});
+    return { ok: !!v.accepted, reason: v.reason };
+}
+
+/**
+ * تنصيف: يعزل أصغر مجموعة أنماط ترفضها البوابة. كل تقييم جاف محاولة واحدة،
+ * والحدّ BISECT_MAX_ATTEMPTS. culprits فارغة ⇒ لم يُحسم مسؤول، فالجميع
+ * INCONCLUSIVE. ولا تُخمَّن مسؤولية: كل نصف مقبول وحده ⇒ الرفض من التجميع.
+ */
+function _bisectLearned(beforeCode, fn, ids) {
+    let attempts = 0;
+    const evalSet = set => {
+        attempts++;
+        const r = LearningEngine.applyLearned(beforeCode, fn, { onlyIds: set });
+        if (!r.applied || r.fixed === beforeCode) return { ok: true, reason: 'NO_CHANGE' };
+        return _dryCheckLearned(beforeCode, r.fixed, fn);
+    };
+    const search = set => {
+        if (attempts >= BISECT_MAX_ATTEMPTS) return null;
+        if (set.length === 1) return evalSet(set).ok ? [] : set.slice();
+        const mid = Math.floor(set.length / 2);
+        const left = set.slice(0, mid), right = set.slice(mid);
+        if (!evalSet(left).ok) return search(left);
+        if (attempts >= BISECT_MAX_ATTEMPTS) return null;
+        if (!evalSet(right).ok) return search(right);
+        return [];
+    };
+    const culprits = search(ids.slice());
+    return {
+        culprits: culprits || [],
+        attempts,
+        exhausted: culprits === null || attempts >= BISECT_MAX_ATTEMPTS
+    };
+}
+
+/** يسجّل حكمًا واحدًا لكل نمط مُسهم. تسجيلٌ محض: لا عدّاد ولا حالة اعتماد. */
+function _recordLearnedOutcomes(report, fn, uses, outcomeOf, extra) {
+    if (!Array.isArray(report.learnedOutcomes)) report.learnedOutcomes = [];
+    const seen = new Set();
+    for (const u of uses) {
+        if (seen.has(u.patternId)) continue;
+        seen.add(u.patternId);
+        report.learnedOutcomes.push(Object.assign({
+            file: fn,
+            patternId: u.patternId,
+            via: u.via,
+            lineIndex: u.lineIndex,
+            source: 'applyLearned',
+            outcome: outcomeOf(u.patternId)
+        }, extra || {}));
+    }
 }
 
 /**
@@ -193,29 +380,80 @@ function _runIsolatedEngine(F, R, runner, source, report) {
 
     const claimed = (out && typeof out.totalFixed === 'number') ? out.totalFixed : null;
 
-    Object.keys(tmpF).forEach(fn => {
-        if (tmpF[fn] !== F[fn]) {
-            _gateAndCommit(F, R, fn, tmpF[fn], source, report, claimed);
-        }
+    // [P4] المحرك يُرجع مجموعًا على كل الملفات، وكان يُسجَّل كما هو في سجل
+    // **كل** ملف تغيّر، فيقرأ التقرير ادّعاءً مضاعفًا. المقيس: Emergency على
+    // ملفَّي py ادّعى 2، فسُجِّل claimedCount=2 لكل ملف — أي 4 ادّعاءً لمحرك
+    // ادّعى 2. ولا يُخمَّن توزيع المجموع على الملفات: يُنسب العدد حين يتغيّر
+    // ملف واحد فقط، وإلا null أي «غير معروف لهذا الملف». وremovedIssues من
+    // البوابة يبقى الرقم الموثوق في الحالتين.
+    const changedFiles = Object.keys(tmpF).filter(fn => tmpF[fn] !== F[fn]);
+    const perFileClaim = (changedFiles.length === 1) ? claimed : null;
+
+    changedFiles.forEach(fn => {
+        _gateAndCommit(F, R, fn, tmpF[fn], source, report, perFileClaim);
     });
     // الملفات التي لم تتغيّر: لا شيء. والنسخة المؤقتة تُرمى بالكامل.
+}
+
+/**
+ * aiNeeded النهائي لكل ملف — بعد كل المحركات (repairCode، RepairSQL، SmartRepair،
+ * Fallback، Emergency) لا بعد repairCode وحده. يُعاد تحليل الكود النهائي ثم:
+ * ما زال قائمًا من aiNeeded الخاص بـrepairCode + كل security finding باقية
+ * (ضمان P2 نفسه عبر RealityOrchestrator.finalAiNeeded).
+ * فشل إعادة التحليل ⇒ آخر issues معروفة (staleIssues) وتحذير، بلا ادّعاء نظافة.
+ */
+function _collectFinalAiNeeded(F, aiByFile, report) {
+    const RO = (typeof RealityOrchestrator !== 'undefined') ? RealityOrchestrator : null;
+    const hasFinal = RO && typeof RO.finalAiNeeded === 'function';
+    if (!hasFinal) report.warnings.push({ file: '*', reason: 'FINAL_AI_NEEDED_UNAVAILABLE — RealityOrchestrator غير محمّل' });
+
+    Object.keys(F).forEach(fn => {
+        let finalIssues = null;
+        try {
+            if (typeof analyzeCode === 'function') finalIssues = analyzeCode(F[fn], fn);
+        } catch (e) {
+            report.warnings.push({ file: fn, reason: 'ANALYZER_THREW_ON_FINAL: ' + (e && e.message) });
+        }
+        const stale = !Array.isArray(finalIssues);
+        if (stale) {
+            finalIssues = (typeof R !== 'undefined' && R[fn] && Array.isArray(R[fn].issues)) ? R[fn].issues : [];
+            report.warnings.push({ file: fn, reason: 'FINAL_REANALYSIS_FAILED — aiNeeded من آخر issues معروفة' });
+        }
+        const collected = aiByFile[fn] || [];
+        // بلا الـhelper: نُبقي كل ما جُمع (محافظ) بدل فلترة تخمينية
+        const entries = hasFinal ? RO.finalAiNeeded(collected, finalIssues) : collected;
+        entries.forEach(e => report.aiNeeded.push(Object.assign({}, e, { file: fn, staleIssues: stale || undefined })));
+    });
 }
 
 function fixAllEnginePipeline() {
     const origF = {};
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
 
-    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [] };
+    // [P2] learnedOutcomes: حكم لكل نمط أسهم في إصلاح متعلَّم — تسجيل لا حكم.
+    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [], learnedOutcomes: [] };
+    const aiByFile = {};   // aiNeeded من repairCode لكل ملف — يُفلتر على الحالة النهائية في الآخر
 
     if (typeof detectDangerousTypos !== 'undefined') {
         const hasRisk = Object.values(F).some(code => detectDangerousTypos(code).length > 0);
         if (hasRisk) toast('⚠️ الكود يحتوي APIs خطرة — ستُفحص الإصلاحات قبل اعتمادها');
     }
 
-    Object.keys(R).forEach(fn => {
-        if (typeof repairCode !== 'function') return;
-
-        for (let pass = 0; pass < 2; pass++) {
+    // [P4] الحلقة تدور على F لا على R. كانت Object.keys(R)، فملفٌ موجود في F
+    // وغائب عن R — تحليلُه لم يُنتج مدخلًا، أو رمى المحلل وقت بناء R — لا يراه
+    // repairCode ولا applyLearned ولا مزامنة R، بصمت وبلا تحذير. ثم تلمسه
+    // محركات ما بعد الحلقة لأنها تدور على F، فيختلف مسار معالجته.
+    // المقيس: ملفان متطابقان حرفيًا وأحدهما وحده في R ⇒ الأول أصلحه
+    // repairCode+Ghost:pass والثاني Emergency وحده، وخَرجاهما مختلفان،
+    // وwarnings فارغة. والحلقة لا تحتاج R أصلًا: issues تُحسب داخلها، و
+    // _safeSync يتحمّل غياب المدخل السابق.
+    Object.keys(F).forEach(fn => {
+        // [P4] غياب repairCode كان يُسقط جسم الملف كله (return)، فيسقط معه
+        // مسار التعلّم ومزامنة R، وهما لا يعتمدان عليه. المقيس: بلا repairCode
+        // صارت الأحكام المتعلَّمة 0 ولم يُكتب الإصلاح المتعلَّم، ومعه 1 وكُتب.
+        // فالشرط صار على مراحل الإصلاح وحدها: شرطُ الحلقة يمنع تكرارها بلا
+        // إعادة إزاحة جسمها (تغييرٌ أقل خطرًا من إعادة لفّ ‎88‎ سطرًا).
+        for (let pass = 0; typeof repairCode === 'function' && pass < 2; pass++) {
             const beforeCode = F[fn];
             let issues;
             try {
@@ -233,6 +471,9 @@ function fixAllEnginePipeline() {
                 result = { repaired: hr.fixed, repairs: hr.repairs || [] };
             } else {
                 result = repairCode(beforeCode, issues, fn);
+                if (result && Array.isArray(result.aiNeeded)) {
+                    aiByFile[fn] = (aiByFile[fn] || []).concat(result.aiNeeded);
+                }
                 if (typeof AdvancedRepair !== 'undefined') {
                     const ar = AdvancedRepair.fix(result.repaired || beforeCode, fn);
                     if (ar.changed) {
@@ -268,8 +509,9 @@ function fixAllEnginePipeline() {
             }
 
             // ─── البوابة الإلزامية: هنا فقط تحدث الكتابة ───
+            const _src = 'repairCode' + (ghostVerdict ? '+Ghost:' + ghostVerdict : '');
             const committed = _gateAndCommit(
-                F, R, fn, candidate, 'repairCode' + (ghostVerdict ? '+Ghost:' + ghostVerdict : ''),
+                F, R, fn, candidate, _src,
                 report, (result.repairs || []).length
             );
 
@@ -289,7 +531,10 @@ function fixAllEnginePipeline() {
             // `if (!committed) break;` أعلاه)، أي أن FixVerifier قبل التعديل
             // وكُتب فعلاً. Ghost يبقى مرحلة تحقق سابقة لا تمنح قبولاً.
             // ⚠️ رفض FixVerifier ⇒ لا learn() ولا verify() — الكود لا يصل هنا.
-            if (typeof LearningEngine !== 'undefined') {
+            // [P2] ومصدر التعديل يجب أن يكون قابلاً للتعلّم: لا تعلّم دائري من
+            // applyLearned. الشرط لا يغيّر شيئًا اليوم (المصدر هنا repairCode)،
+            // لكنه يمنع الدائرية بالبناء لو نُقل التعلّم إلى البوابة لاحقًا.
+            if (typeof LearningEngine !== 'undefined' && _learnableSource(_src)) {
                 // F[fn] هنا هو الكود المعتمد من البوابة حصرًا
                 const patternIds = LearningEngine.learn(beforeCode, F[fn], issues, fn);
                 if (Array.isArray(patternIds) && patternIds.length > 0) {
@@ -302,25 +547,96 @@ function fixAllEnginePipeline() {
         if (typeof LearningEngine !== 'undefined') {
             const beforeLearned = F[fn];
             const lr = LearningEngine.applyLearned(beforeLearned, fn);
-            if (lr.applied > 0 && lr.fixed !== beforeLearned) {
-                let preApproved = true;
+            const uses = Array.isArray(lr.uses) ? lr.uses : [];
+            const changed = lr.applied > 0 && lr.fixed !== beforeLearned;
+
+            if (!changed) {
+                // [P2] لا تعديل ⇒ لا حكم على أي نمط.
+                if (uses.length) {
+                    _recordLearnedOutcomes(report, fn, uses, () => LEARNED_OUTCOME.SKIPPED);
+                }
+            } else {
+                let rejectReason = null;
+                // سبب Ghost الفرعي يُحفظ منفصلاً عن reason المنشور، لأن
+                // التمييز بين «ضارّ» و«بلا تحسّن» يحتاجه — ولا يُغيَّر نصّ
+                // reason حتى لا يتغيّر عقدٌ تعتمده اختبارات قائمة.
+                let ghostReason = null;
 
                 if (typeof GhostMode !== 'undefined') {
                     const lv = GhostMode.verdict(beforeLearned, lr.fixed, fn, analyzeCode);
-                    preApproved = lv.verdict !== GhostMode.VERDICT.FAIL &&
-                                  lv.verdict !== GhostMode.VERDICT.REGRESSION;
-                    if (!preApproved) {
-                        report.rejected.push({ file: fn, source: 'applyLearned', reason: 'GHOST_' + lv.verdict });
+                    if (lv.verdict === GhostMode.VERDICT.FAIL ||
+                        lv.verdict === GhostMode.VERDICT.REGRESSION) {
+                        rejectReason = 'GHOST_' + lv.verdict;
+                        ghostReason = lv.reason || null;
+                        report.rejected.push({ file: fn, source: 'applyLearned', reason: rejectReason });
                     }
                 }
 
-                if (preApproved && !learnedSyntaxOk(fn, beforeLearned, lr.fixed)) {
-                    preApproved = false;
-                    report.rejected.push({ file: fn, source: 'applyLearned', reason: 'LEARNED_SYNTAX_BROKEN' });
+                if (!rejectReason && !learnedSyntaxOk(fn, beforeLearned, lr.fixed)) {
+                    rejectReason = 'LEARNED_SYNTAX_BROKEN';
+                    report.rejected.push({ file: fn, source: 'applyLearned', reason: rejectReason });
                 }
 
-                if (preApproved) {
-                    _gateAndCommit(F, R, fn, lr.fixed, 'applyLearned', report, lr.applied);
+                let committed = false;
+                if (!rejectReason) {
+                    committed = _gateAndCommit(F, R, fn, lr.fixed, 'applyLearned', report, lr.applied);
+                    if (!committed) {
+                        const last = report.rejected[report.rejected.length - 1];
+                        rejectReason = (last && last.reason) || 'GATE_REJECTED';
+                    }
+                }
+
+                if (committed) {
+                    // [P2] الدفتر بعد قرار البوابة حصرًا، ولا عدّاد يُلمَس.
+                    if (typeof LearningEngine.markUsed === 'function') {
+                        LearningEngine.markUsed(uses.map(u => u.patternId));
+                    }
+                    _recordLearnedOutcomes(report, fn, uses, () => LEARNED_OUTCOME.PASS);
+                } else {
+                    // [P2] رُفض: مُسهم واحد ⇒ مسؤول بالضرورة. أكثر من واحد ⇒
+                    // تنصيف لعزل المسؤول، وما لم يُحسم يبقى INCONCLUSIVE.
+                    const ids = Array.from(new Set(uses.map(u => u.patternId)));
+                    let culprits = [];
+                    let bis = null;
+                    if (ids.length === 1) {
+                        culprits = ids.slice();
+                    } else if (ids.length > 1) {
+                        bis = _bisectLearned(beforeLearned, fn, ids);
+                        culprits = bis.culprits;
+                    }
+                    const cul = new Set(culprits);
+                    const harmful = _isHarmfulRejection(rejectReason, ghostReason);
+                    _recordLearnedOutcomes(report, fn, uses,
+                        id => (cul.has(id) ? LEARNED_OUTCOME.FAIL : LEARNED_OUTCOME.INCONCLUSIVE),
+                        {
+                            gateReason: rejectReason,
+                            ghostReason: ghostReason,
+                            harmful: harmful,
+                            bisectAttempts: bis ? bis.attempts : 0,
+                            bisectExhausted: bis ? bis.exhausted : false
+                        });
+
+                    // ─── [P3] إغلاق حلقة التغذية الراجعة ───
+                    // كان الحكم يُسجَّل في التقرير ويُفقد بنهاية التشغيل: لا
+                    // شيء في الإنتاج ينادي verify(id, false)، فحقل failures
+                    // يبقى صفرًا دائمًا، وفرع الفشل في verify والحظر عند
+                    // failures ≥ 3 وsuccessRate في calcConfidence كلها كود
+                    // غير قابل للوصول. فالمحرك يكرّر النمط المرفوض بلا حدّ.
+                    //
+                    // ويُسجَّل الفشل على المسؤول المعزول بالتنصيف حصراً، ولا
+                    // يُسجَّل على INCONCLUSIVE — فالتخمين أسوأ من الصمت.
+                    //
+                    // ⚠️ والأهم: لا يُسجَّل إلا على الرفض **الضارّ**.
+                    // المقيس: قالب صحيح (hashlib as hl ⇒ sha256، تحقّق منه
+                    // مفسّر Python فعلاً) يرفضه Ghost بسبب no_improvement
+                    // لأن المحلل لا يرى الاستيراد المُستعار أصلاً. فتسجيل
+                    // ذلك فشلاً يعاقب خبرة صحيحة ويسير بها نحو الحظر.
+                    // «بلا تحسّن مقيس» ليس «ضرراً»، والتمييز بينهما شرط
+                    // لأن تكون الحلقة إصلاحاً لا عقوبة عشوائية.
+                    if (harmful && culprits.length &&
+                        typeof LearningEngine.verify === 'function') {
+                        culprits.forEach(id => LearningEngine.verify(id, false));
+                    }
                 }
                 // مرفوض ⇒ F[fn] لم يُمَس أصلاً (لا كتابة إلا داخل البوابة)
             }
@@ -359,6 +675,9 @@ function fixAllEnginePipeline() {
             (tF, tR) => applyEmergencyToAll(tF, tR), 'Emergency', report);
     }
 
+    // ─── aiNeeded النهائي ───
+    _collectFinalAiNeeded(F, aiByFile, report);
+
     // ─── التقرير ───
     // totalFixed يعكس ما أزالته البوابة فعليًا، لا ما ادّعته المحركات.
     const rejectedCount = report.rejected.length;
@@ -367,6 +686,7 @@ function fixAllEnginePipeline() {
       const firstReject = report.rejected[0] || {};
       msg += ' • ' + rejectedCount + ' تعديل مرفوض: ' + (firstReject.reason || 'UNKNOWN');
     }
+    if (report.aiNeeded.length > 0) msg += ' • ' + report.aiNeeded.length + ' تحتاج AI';
     toast(msg);
 
     if (typeof globalThis !== 'undefined') globalThis.lastPipelineReport = report;
@@ -382,7 +702,13 @@ if (typeof fixAllEngine === 'undefined' && typeof globalThis !== 'undefined') {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { fixAllEnginePipeline, fixAllEngine: fixAllEnginePipeline, learnedSyntaxOk, _gateAndCommit, _runIsolatedEngine };
+    module.exports = {
+        fixAllEnginePipeline, fixAllEngine: fixAllEnginePipeline, learnedSyntaxOk,
+        _gateAndCommit, _runIsolatedEngine,
+        // [P2] مُصدَّرة للاختبار: النسبة والتنصيف وحرس الدائرية
+        LEARNED_OUTCOME, BISECT_MAX_ATTEMPTS, LEARN_EXCLUDED_SOURCES,
+        _learnableSource, _dryCheckLearned, _bisectLearned, _recordLearnedOutcomes
+    };
 }
 
 

@@ -12,7 +12,25 @@ function scanSecurity(code, fileName) {
     const ln = i + 1;
 
     // ─── 1. SQL Injection ───────────────────────────
-    if (/query|execute|sql/i.test(t) && /\+\s*\w+|\$\{/.test(t) && !/prepared|parameterized/i.test(t)) {
+    // [FIX] الشرط كان ‎/query|execute|sql/i.test(t)‎ — الكلمةُ المجرَّدة في أي
+    // موضع من السطر. فكل سطر فيه ‎req.query‎ أو ‎queryString‎ أو متغيّر اسمه
+    // ‎query‎ يصير «SQL Injection محتمل» متى وُجد تسلسلُ نصّ. والمقيس:
+    //     exec("ls " + req.query.dir)      ⇒ 🔴 SQL Injection محتمل   (زائف)
+    // وكان ذلك يُطالِب إصلاحَ حقن الأوامر الصحيح بإثبات parameterization
+    // لاستعلامٍ لا وجود له، فيُرفض إصلاحٌ سليم.
+    //
+    // فالشرط الآن دليلٌ على استعلامٍ فعلي: فعلُ SQL في السطر، أو نداءُ
+    // تنفيذِ استعلامٍ معروف. و‎req.query.x‎ وحده ليس أيًّا منهما.
+    const _sqlVerb = /\b(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|MERGE|REPLACE\s+INTO|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/i.test(t);
+    const _sqlCall = /\.\s*(?:query|execute|executemany|exec|prepare)\s*\(|\b(?:mysqli_query|mysql_query|pg_query|sqlite_query|dbQuery)\s*\(|\bcursor\s*\.\s*execute\s*\(/i.test(t);
+    // والدمجُ يجب أن يكون دمجَ **نصّ**: ‎/\+\s*\w+/‎ كان يطابق أي جمعٍ في السطر،
+    // فحسابٌ عاديٌّ بجوار اسمٍ يُشبه الاستعلام يصير بلاغًا. والمقيس على مصدر
+    // المحرك نفسه:
+    //     const qLine = …findIndex(l => l.includes('cursor.execute(query')) + 1;
+    // ‎+ 1‎ جمعُ أعداد، و‎.execute(‎ داخل نصّ لا نداءٌ. فالشرط: الجمعُ ملاصقٌ
+    // لنصٍّ حرفي من أحد طرفيه، أو إقحامُ قالب.
+    const _concatStr = /["'`][^"'`]*["'`]\s*\+|\+\s*["'`]|\$\{/.test(t);
+    if ((_sqlVerb || _sqlCall) && _concatStr && !/prepared|parameterized/i.test(t)) {
       issues.push({
         type: 'security', sev: 'c',
         title: '🔴 SQL Injection محتمل',
@@ -66,7 +84,39 @@ function scanSecurity(code, fileName) {
     }
 
     // ─── 5. Command Injection ───────────────────────
-    if (/(?:\bexec\s*\(|\bspawn\s*\(|\bos\.system\s*\(|\bsubprocess\.(?:run|Popen|call|check_output)\s*\()/i.test(t) &&
+    // [FIX] subprocess بقائمة وسائط وبلا shell=True لا يستدعي شِلًّا، فلا تُحقن
+    // metacharacters — وهي بالضبط التوصية في cEv أدناه، فكان الكاشف يُبلّغ عن
+    // علاجه الموصى به كثغرة حرجة. يبقى مكشوفًا: shell=True (ولو مع قائمة)،
+    // وتمرير command string، و os.system/exec/spawn بلا تغيير.
+    // [FIX] ‎\bexec\s*\(‎ و‎\bspawn\s*\(‎ كانا يُطابقان بعد النقطة، فعُدَّ نداءُ
+    // قاعدة بيانات مَصرِفَ أوامر:
+    //     conn.exec("SELECT * FROM t WHERE a=" + id)   ⇒ 🔴 Command Injection  (زائف)
+    //     db.exec(…) · sheet.exec(…) · obj.spawn(…)    ⇒ كذلك
+    // فيُطالَب إصلاحُ SQL الصحيح بإثبات علاجِ أوامر لا محلّ له، فيُرفض.
+    // والحدّ: ‎exec‎/‎spawn‎ بلا مُستقبِل، أو بمُستقبِل ‎child_process‎/‎cp‎ صريح.
+    //
+    // و‎spawn‎/‎execFile‎ بقائمة وسائط لا يستدعيان شِلًّا، فلا تُحقن
+    // metacharacters — وهما بالضبط العلاج الموصى به في cEv أدناه. فكان
+    // الكاشف يُبلّغ عن علاجه كثغرة حرجة:
+    //     spawn("ls", [d + "x"])   ⇒ 🔴 Command Injection  (زائف)
+    // نفس المنطق المطبَّق على subprocess في التعليق أعلاه. ويبقى مكشوفًا:
+    // ‎spawn("ls " + d)‎ بأمرٍ مُسلسَل بلا قائمة، و‎shell: true‎ ولو مع قائمة.
+    const _cmdExecRx  = /(?<![.\w$])exec\s*\(|(?:child_process|cp)\s*\.\s*exec\s*\(/i;
+    const _cmdSpawnRx = /(?<![.\w$])(?:spawn|execFile)\s*\(|(?:child_process|cp)\s*\.\s*(?:spawn|execFile)\s*\(/i;
+    const _cmdArgvList = /,\s*\[/.test(t);                       // وسائط مفصولة
+    const _cmdShellOpt = /\bshell\s*:\s*true\b/i.test(t);
+    // القائمةُ تُؤمِّن فقط إذا لم يكن المُنفَّذ نفسه شِلًّا: ‎spawn("sh", ["-c", …])‎
+    // يستدعي شِلًّا صراحةً فتُحقن فيه metacharacters، والقائمةُ هنا لا تُؤمّن
+    // شيئًا. أسقط إغفالُ ذلك اختبارًا قائمًا («يبقى مكشوفًا: spawn JS»).
+    const _cmdShellExe = /['"](?:[\w./\\]*[/\\])?(?:sh|bash|zsh|ksh|dash|csh|tcsh|fish|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh)['"]/i.test(t) ||
+                         /['"]-c['"]|['"]\/[cC]['"]/.test(t);
+    const _cmdSpawnRisky = _cmdSpawnRx.test(t) && (_cmdShellOpt || _cmdShellExe || !_cmdArgvList);
+    const _cmdOtherSink = _cmdExecRx.test(t) || _cmdSpawnRisky || /\bos\.system\s*\(/i.test(t);
+    const _cmdSubprocess = /\bsubprocess\.(?:run|Popen|call|check_output|check_call)\s*\(/i.test(t);
+    const _cmdShellTrue = /\bshell\s*=\s*True\b/i.test(t);
+    const _cmdArgList = /\bsubprocess\.\w+\s*\(\s*(?:\[|shlex\.split\s*\()/i.test(t);
+    const _cmdSubprocessRisky = _cmdSubprocess && (_cmdShellTrue || !_cmdArgList);
+    if ((_cmdOtherSink || _cmdSubprocessRisky) &&
         /\+|f"|f'|\$\{/.test(t)) {
       issues.push({
         type: 'security', sev: 'c',
