@@ -129,3 +129,73 @@ test('[LM-6] والنتيجةُ صحيحةٌ لا محفوظةً وحسب', () =
   // ومتطابقان ⇒ لا كتل
   assert.deepStrictEqual(K.lcsBlocks(['p', 'q'], ['p', 'q']), []);
 });
+
+// ── أدواتٌ لاختبارَي المفتاح ──────────────────────────────────────────
+// الذاكرةُ تُمسَح كاملةً عند تجاوز السقف (أربعة)، فستّةُ مداخلَ فريدةٍ تُفرّغها.
+function flushMemo() {
+  for (let i = 0; i < 6; i++) K.lcsBlocks(['pad' + i + '-' + Math.random()], ['pad']);
+}
+const plain = v => JSON.parse(JSON.stringify(v));
+
+test('[LM-7] زوجان مختلفان لا يتقاسمان نتيجةً محفوظة بسبب ‎\\0‎', () => {
+  // العيبُ المقيس قبل الإصلاح: المفتاحُ كان يفصل بين النصّين بـ‎\u0000‎
+  // ويُقدّم عدَدَي **أسطر** لا أحرف، فلا يحسمان موضعَ الفاصل متى ورد
+  // المحرفُ نفسُه داخل سطرٍ من المحتوى:
+  //
+  //     before=['a\0b'] after=['c']     ⇒ "1\u00011\u0001a\0b\0c"
+  //     before=['a']    after=['b\0c']  ⇒ "1\u00011\u0001a\0b\0c"
+  //
+  // فيأخذ الثاني فرقَ الأول. وليس الأثرُ بطئًا بل **فرقًا خاطئًا** يُغذّي
+  // ‎extractPair‎: إمّا لا تعلّمَ، وإمّا زوجٌ خاطئٌ يُكتَب في المخزن.
+  const NUL = '\u0000';
+  const A = { before: ['a' + NUL + 'b'], after: ['c'] };
+  const B = { before: ['a'],             after: ['b' + NUL + 'c'] };
+
+  // الحقيقةُ لكلٍّ على حدة، بذاكرةٍ مُفرَّغةٍ قبل كلِّ حساب
+  flushMemo(); const truthA = plain(K.lcsBlocks(A.before, A.after));
+  flushMemo(); const truthB = plain(K.lcsBlocks(B.before, B.after));
+  assert.notDeepStrictEqual(truthA, truthB,
+    'tripwire: الزوجان يُنتجان نفسَ الفرق — فالعيّنةُ لا تكشف خلطًا أصلًا');
+
+  // متتابعين داخل عمرٍ واحدٍ للذاكرة — هنا كان الثاني يأخذ فرقَ الأول
+  flushMemo();
+  assert.deepStrictEqual(plain(K.lcsBlocks(A.before, A.after)), truthA,
+    'الزوجُ الأول تغيّر ناتجُه');
+  assert.deepStrictEqual(plain(K.lcsBlocks(B.before, B.after)), truthB,
+    'الزوجُ الثاني أخذ فرقَ الأول — تصادمُ مفتاحٍ عند ‎\\0‎');
+
+  // والترتيبُ المعكوس لا يشفع
+  flushMemo();
+  assert.deepStrictEqual(plain(K.lcsBlocks(B.before, B.after)), truthB);
+  assert.deepStrictEqual(plain(K.lcsBlocks(A.before, A.after)), truthA,
+    'الزوجُ الأول أخذ فرقَ الثاني بعكس الترتيب');
+
+  // ⚠️ حارسٌ على الحارس: لا يُرضي هذا الاختبارَ إلغاءُ الحفظ. فالذاكرةُ
+  // ما زالت تُصيب على نفس المحتوى — وإلّا لمرّ الاختبارُ بحذف التحسين كلِّه.
+  flushMemo();
+  const a = ['x', 'OLD', 'y'], b = ['x', 'NEW', 'y'];
+  assert.strictEqual(K.lcsBlocks(a, b), K.lcsBlocks(a.slice(), b.slice()),
+    'الحفظُ تعطّل — الاختبارُ يمرّ بإلغاء التحسين لا بإصلاح المفتاح');
+});
+
+test('[LM-8] ولا يخلط ‎[\'a\',\'b\\nc\']‎ بـ‎[\'a\\nb\',\'c\']‎', () => {
+  // لبسٌ ثانٍ أغلقه المفتاحُ نفسُه: عددُ الأسطر مع النصّ المضموم لا يميّز
+  // مصفوفتين تضمّان إلى نفس النصّ وعدَدُهما واحد. ومفتاحُ ما قبل الإصلاح
+  // كان واحدًا للاثنتين حرفًا بحرف:
+  //     "2\u00012\u0001a\nb\nc\u0000a\nX"
+  // وهو غيرُ نافذٍ من الإنتاج (‎extractPair‎ تُمرّر ناتجَ ‎split('\n')‎ فلا
+  // عنصرَ فيه ‎\n‎)، لكن ‎lcsBlocks‎ مُصدَّرةٌ فيبلغها أيُّ مُستهلكٍ آخر.
+  const after = ['a', 'X'];
+  const P = ['a', 'b\nc'];
+  const Q = ['a\nb', 'c'];
+
+  flushMemo(); const truthP = plain(K.lcsBlocks(P, after));
+  flushMemo(); const truthQ = plain(K.lcsBlocks(Q, after));
+  assert.notDeepStrictEqual(truthP, truthQ,
+    'tripwire: المصفوفتان تُنتجان نفسَ الفرق — العيّنةُ لا تُميّز');
+
+  flushMemo();
+  assert.deepStrictEqual(plain(K.lcsBlocks(P, after)), truthP);
+  assert.deepStrictEqual(plain(K.lcsBlocks(Q, after)), truthQ,
+    'الثانيةُ أخذت فرقَ الأولى — المفتاحُ يقرأ النصَّ المضموم لا بنيةَ المصفوفة');
+});
