@@ -88,9 +88,16 @@ const ACCEPTED = [
   ['خاصّيةُ كائن',   'return cp.exec("ls " + opts.path);'],
 ];
 
-// مدخلاتٌ من الاستعمال اليومي: مسارات، أعلام، امتدادات
-const BENIGN = ['/var/log', '/tmp/my-dir', 'report.txt', '-la /etc', 'docs',
-                'src/main.js', 'a_b-c.d', '--opt=v'];
+// مدخلاتٌ من الاستعمال اليومي: مسارات وامتدادات.
+//
+// ⚠️ تصحيحُ فرضٍ: كانت هذه القائمةُ تضمّ ‎'-la /etc'‎ و‎'--opt=v'‎ على أنهما
+// «سليمان». وهما ليسا قيمةَ مسار بل حقنُ أعلام — وهو البابُ الذي نفذت منه
+// ثلاثُ حمولاتٍ إلى كتابة ملفٍ تعسّفية (‎find -fprintf/-fls/-fprint‎، مقيسةً
+// بتشغيلٍ حقيقي). فنُقلتا إلى ما **يجب** تحييدُه، ويحرسهما ‎[CMD-7]‎.
+// والمحرّكُ لا يملك أن يعرف أن تطبيقًا يُمرّر أعلامًا عبر هذا الموضع قصدًا،
+// فالتحييدُ هو الحكمُ الآمن، وثمنُه معلن.
+const BENIGN = ['/var/log', '/tmp/my-dir', 'report.txt', 'docs',
+                'src/main.js', 'a_b-c.d', './rel/path.txt', 'A_b.C-d/e'];
 
 for (const [name, body] of ACCEPTED) {
   test('[CMD-1] السلوكُ السليم يُحفَظ — ' + name, () => {
@@ -201,6 +208,90 @@ test('[CMD-5] من طرفٍ إلى طرف: يُطبَّق، ويُقبل، وي�
   // ④ والحقنُ مُنِع
   assert.ok(!SHELL_META.test(commandOf(out.repaired, 'x; rm -rf /')),
     'متحكّمٌ صَدَفيٌّ نجا في المسار الكامل');
+});
+
+// ─────────────────────────────────────────────────────────────
+// حدُّ العَلَم: إبقاءُ ‎-‎ في القائمة أعاد بابًا كانت القائمةُ القديمة
+// تُغلقه عرَضًا — حقنُ أعلامٍ تكتب أو تُنفّذ. والمقيس على ناتج المحرّك
+// الحقيقي، بتشغيلٍ في مجلدٍ معزول وبضبطٍ أوّليٍّ يستثني ما يُنشئه الأمرُ
+// الشرعيّ (8 مدخلاتٍ سليمة × 12 حمولة، صفرُ حالةٍ غير محسومة):
+//
+//     قبل جولتي      سلوكٌ محفوظ 2/8   حمولةٌ مُنِعت 12/12
+//     بالأحرفِ وحدها  سلوكٌ محفوظ 8/8   حمولةٌ مُنِعت  9/12  ← نُفِّذت 3
+//     ومعه            سلوكٌ محفوظ 8/8   حمولةٌ مُنِعت 12/12
+// ─────────────────────────────────────────────────────────────
+const OPTION_PAYLOADS = [
+  'x -fprintf PWN y', 'x -o -fls PWN', 'x -o -fprint PWN',
+  '--use-compress-program=/bin/touch', '-I/bin/touch', '-exec touch PWN ;',
+];
+
+test('[CMD-7] المُدخَلُ لا يصير عَلَمًا — لا كلمةَ تبدأ بشَرطة', () => {
+  const ctx = loadCtx();
+  const { fixed } = candidate(ctx, 'return cp.exec("ls " + dir);');
+  for (const p of OPTION_PAYLOADS.concat(['-la', '--all', 'a -b', 'x  --y'])) {
+    const out = commandOf(fixed, p);
+    // ما بعد اسم الأمر: لا كلمةَ تبدأ بـ‎-‎
+    const args = out.replace(/^ls\s*/, '');
+    assert.ok(!/(^|\s)-/.test(args),
+      'كلمةٌ تبدأ بشَرطةٍ نجت من التعقيم — ' + JSON.stringify(p) + ' ⇒ ' + JSON.stringify(out));
+  }
+});
+
+test('[CMD-8] والشَرطةُ داخل الاسم تبقى', () => {
+  // الحدُّ على بداية الكلمة وحدها، فلا يتأذّى اسمٌ فيه شَرطة.
+  const ctx = loadCtx();
+  const { code, fixed } = candidate(ctx, 'return cp.exec("ls " + dir);');
+  for (const v of ['my-dir', 'a_b-c.d', 'x-y-z', 'sub/my-dir/f.txt'])
+    assert.strictEqual(commandOf(fixed, v), commandOf(code, v),
+      'اسمٌ فيه شَرطةٌ وسطى تغيّر: ' + v + ' ⇒ ' + commandOf(fixed, v));
+});
+
+const SHELL_OK = (() => {
+  try { return process.platform !== 'win32' && require('node:fs').existsSync('/bin/sh'); }
+  catch (e) { return false; }
+})();
+
+test('[CMD-9] برهانٌ تنفيذي: النتيجةُ المتوقَّعة تُحفَظ ولا تُنفَّذ حمولة',
+  { skip: SHELL_OK ? false : 'لا ‎/bin/sh‎ في هذه البيئة' }, () => {
+  // لا يُكتفى بغياب التنفيذ: يُقارَن **مخرَجُ** الأمر بمخرَج الأصل.
+  const fsx = require('node:fs'), osx = require('node:os'), pathx = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const ctx = loadCtx();
+  const { code, fixed } = candidate(ctx, 'return cp.exec("find . -name " + dir);');
+
+  const dir = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'cmdtest-'));
+  const sh = cmd => {
+    const before = new Set(fsx.readdirSync(dir));
+    let out = '';
+    try { out = execFileSync('/bin/sh', ['-c', cmd], { cwd: dir, timeout: 8000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (e) { out = String(e.stdout || ''); }
+    const made = fsx.readdirSync(dir).filter(f => !before.has(f));
+    for (const f of made) { try { fsx.rmSync(pathx.join(dir, f), { recursive: true, force: true }); } catch (e) {} }
+    return { out: out.trim(), made };
+  };
+  try {
+    fsx.writeFileSync(pathx.join(dir, 'report.txt'), 'x\n');
+    fsx.writeFileSync(pathx.join(dir, 'a_b-c.d'), 'y\n');
+    fsx.mkdirSync(pathx.join(dir, 'my-dir'));
+
+    // ① النتيجةُ المتوقَّعة: نفسُ المخرَج قبل الإصلاح وبعده
+    for (const v of ['report.txt', 'my-dir', 'a_b-c.d']) {
+      const want = sh(commandOf(code, v)).out;
+      const got  = sh(commandOf(fixed, v)).out;
+      assert.ok(want.length > 0, 'tripwire: الأمرُ الأصليُّ لا يُنتج مخرَجًا لـ' + v);
+      assert.strictEqual(got, want, 'مخرَجُ الأمر تغيّر لـ' + v + ': ' + want + ' ⇒ ' + got);
+    }
+
+    // ② الحمولات: لا ملفَ يُنشَأ — وهي تُنشئ ملفًا إن نُفِّذت
+    for (const p of ['x -fprintf PWN_A y', 'x -o -fls PWN_B', 'x -o -fprint PWN_C',
+                     'report.txt; touch PWN_D', 'report.txt $(touch PWN_E)']) {
+      const r = sh(commandOf(fixed, p));
+      const pwn = r.made.filter(f => /^PWN_/.test(f));
+      assert.deepStrictEqual(pwn, [],
+        'حمولةٌ نُفِّذت — ' + JSON.stringify(p) + ' ⇒ ' + JSON.stringify(commandOf(fixed, p)) +
+        '  أنشأت ' + pwn.join(','));
+    }
+  } finally { try { fsx.rmSync(dir, { recursive: true, force: true }); } catch (e) {} }
 });
 
 test('[CMD-6] وملفٌ مختلطٌ: خطوةُ CMD لا تُسقطها خطواتُ غيرها', () => {
