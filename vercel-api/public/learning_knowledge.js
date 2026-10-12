@@ -172,7 +172,41 @@ var LearningKnowledge = (() => {
   }
 
   // ─── LCS Diff (blocks) ─────────────────────────────
+  //
+  // [LCS-MEMO] الفرقُ دالةٌ في النصّين، و‎learn()‎ تسأل عنه مرةً لكل بلاغ.
+  //
+  // ‎extractPair‎ تُعيد حسابَ الفرق كاملًا لكل بلاغ، وهو لا يعتمد على البلاغ
+  // إطلاقًا — إنما على ‎codeBefore‎ و‎codeAfter‎ وحدهما، وهما ثابتان طوال
+  // النداء. والجدولُ ‎O(n×m)‎، فالكلفةُ تتربّع مع الحجم.
+  //
+  // المقيس على ملفٍ من 472 سطرًا بـ255 بلاغًا، بمُحلِّل معالجٍ حقيقي:
+  //
+  //     fixAllEngine الكلي        20,555 ms
+  //     منها lcsBlocks            16,656 ms   (78% من الزمن كلّه)
+  //     learn() وحدها             15,123 ms
+  //
+  // أي 255 حسابًا متطابقًا لجدولٍ من 472×472 خانة. والنموُّ فوق-خطّي:
+  // 59 سطرًا ⇒ 548ms، و472 سطرًا ⇒ 20.5 ثانية.
+  //
+  // والحفظُ لا يغيّر ناتجًا: الدالةُ خالصة — مصفوفتا نصوصٍ إلى كتلٍ، بلا
+  // حالةٍ ولا عشوائية. والمُستهلكون يقرأون ولا يكتبون (‎find‎ و‎some‎
+  // وفهرسة)، فلا تلوّثَ بين نداءين. والحدُّ أربعةُ مداخل: الجدولُ كبير،
+  // والمطلوبُ نصُّ هذا النداء لا تاريخُه.
+  const _LCS_CAP = 4;
+  const _lcsMemo = new Map();
+
   function lcsBlocks(before, after) {
+    const key = before.length + '\u0001' + after.length + '\u0001' +
+                before.join('\n') + '\u0000' + after.join('\n');
+    const hit = _lcsMemo.get(key);
+    if (hit) return hit;
+    const val = _lcsBlocksUncached(before, after);
+    if (_lcsMemo.size >= _LCS_CAP) _lcsMemo.clear();
+    _lcsMemo.set(key, val);
+    return val;
+  }
+
+  function _lcsBlocksUncached(before, after) {
     const n = before.length, m = after.length;
     const dp = Array.from({length: n+1}, () => new Array(m+1).fill(0));
     for (let i = 1; i <= n; i++)
