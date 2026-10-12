@@ -751,7 +751,6 @@ function _logNameWords(name) {
 function _isSensitiveLogName(name) {
   const words = _logNameWords(name);
   if (!words.length) return false;
-
   if (_LOG_SENSITIVE_WORDS.has(words[words.length - 1])) return true;
   // ‎api_key‎ و‎apikey‎ ككلمةٍ واحدة
   return words.length === 1 && _LOG_SENSITIVE_WORDS.has(words[0]);
@@ -1748,6 +1747,19 @@ function repairCode(code, issues, fileName, _opts) {
   const repairs  = [];
   const aiNeeded = [];
   const rejected = [];   // candidates رُفضت قبل التطبيق (مثل SQL غير سليم)
+  // [SILENT-DROP] مُصلِحٌ نُودي ولم يُنتج شيئًا — قناةٌ مقروءةٌ لا صمت.
+  //
+  // كان المخرجُ عند ‎!result || result.fixed === repairedCode‎ يُرجع بلا أثر:
+  // لا ‎rejected‎ ولا ‎aiNeeded‎ إلا إذا كان ‎issue.aiRequired === true‎ — وأكثرُ
+  // الكاشفاتِ لا تضعه. فبلاغٌ مكتشَفٌ ومُوجَّهٌ إلى استراتيجيةٍ صحيحةٍ يختفي
+  // تمامًا إذا كان نمطُ المُصلِحِ أضيقَ من نمطِ الكاشف.
+  //
+  // وهذا بعينه ما خبّأ ‎[LOG-SINK]‎: ‎log.info(password)‎ كان يُكتشَف ويُوجَّه
+  // ويُنادى له ‎fixLogSecret‎ فيُرجع ‎null‎، فلا يظهر في أيِّ مخرَج — سبعةُ
+  // أشكالٍ من سبعة، ولا اختبارٌ واحدٌ يسقط. فالقناةُ أدناه تجعل الفجوةَ
+  // مقروءةً بلا أن تتغيّر قرارات القبول والرفض: ‎dropped‎ حقلٌ إضافيٌّ
+  // للتشخيص، و‎repairs‎ و‎rejected‎ و‎aiNeeded‎ كما هي حرفًا.
+  const dropped = [];
   let repairedCode = code;
 
   // تتبّع الأسطر: لكل سطر حالي → رقم سطره في code (أو -1 إذا أُضيف)،
@@ -1850,6 +1862,11 @@ function repairCode(code, issues, fileName, _opts) {
     } catch (e) {
       // فشل Strategy واحدة لا يجب أن يُسقط باقي الإصلاحات.
       console.warn(`[RepairEngine] Strategy failed: ${stratKey}`, e?.message || e);
+      dropped.push({
+        line: issue.line, strategy: stratKey, fixer: String(strat.fn.name || ''),
+        kind: 'FIXER_THREW', title: issue.title,
+        reason: String((e && e.message) || e), ev: String(lines[issue.line - 1] || '').trim(),
+      });
       return;
     }
 
@@ -1974,6 +1991,16 @@ function repairCode(code, issues, fileName, _opts) {
       }
 
       if (!result || result.fixed === repairedCode) {
+        // [SILENT-DROP] المُصلِحُ نُودي ولم يُنتج تغييرًا: فجوةُ قدرةٍ لا فجوةُ
+        // اكتشاف. تُسجَّل كي تُقرأ، ولا يتغيّر القرار.
+        dropped.push({
+          line: issue.line, strategy: stratKey, fixer: String(strat.fn.name || ''),
+          kind: 'FIXER_NO_CHANGE', title: issue.title,
+          reason: 'الاستراتيجيةُ نُودِيت وأرجعت null أو شفرةً غيرَ مُغيَّرة — ' +
+                  'نمطُ المُصلِحِ لا يُطابق هذا الشكل',
+          ev: String(lines[issue.line - 1] || '').trim(),
+          aiRequired: issue.aiRequired === true,
+        });
         // إذا فشل الإصلاح الحتمي، لكن Analyzer أعلن أن المشكلة
         // تحتاج AI، فمررها إلى AI بدل إسقاطها بصمت.
         if (issue.aiRequired === true) {
@@ -2095,6 +2122,9 @@ function repairCode(code, issues, fileName, _opts) {
   return {
     original: code, repaired: repairedCode,
     repairs, aiNeeded, rejected,
+    // [SILENT-DROP] حقلٌ إضافيٌّ للتشخيص وحده: ما نُودي له مُصلِحٌ فلم يُنتج
+    // شيئًا. لا يدخل ‎summary‎ ولا يغيّر ‎score‎ — فالعدُّ كما كان حرفًا.
+    dropped,
     summary: {
       total: issues.length,
       fixed: repairs.length,
