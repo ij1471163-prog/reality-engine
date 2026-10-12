@@ -515,7 +515,39 @@ var FixVerifier = (() => {
       } catch (e) {
         return { ok: false, available: true, language, reason: "TS check failed: " + e.message };
       }
-      return { ok: false, available: false, language, reason: "no TypeScript compiler available" };
+      // [TS-GATE] ولا مُترجمَ TypeScript في المنظومة إطلاقًا — لا في
+      // ‎index.html‎ (68 وسمَ نصّ، ولا واحدٌ منها مُترجم؛ و‎typescript_analyzer.js‎
+      // محلّلُ المشروع لا المُترجم) ولا في ‎package.json‎ (التابعان:
+      // ‎adm-zip‎ و‎formidable‎). فالفرعُ أعلاه ميّتٌ دائمًا، و‎available:false‎
+      // يعني ‎REJECTED_NO_SYNTAX_CHECKER [typescript]‎ لكلِّ مُرشَّح.
+      //
+      // ومقيسٌ أن ذلك يُلغي إصلاحَ TypeScript كلَّه: أربعُ استراتيجياتٍ من
+      // أربع (‎LOG_SECRET‎, ‎HTTP_USAGE‎, ‎VAR_USAGE‎, ‎LOOSE_EQUALITY‎) على
+      // نفسِ الشفرة — في ‎.js‎ تُصلَح 4/4، وفي ‎.ts‎ صفرٌ من أربع، والسببُ
+      // المسجَّل ‎GHOST_DISCARDED_BATCH — no_candidate_passed_gate ·
+      // REJECTED_NO_SYNTAX_CHECKER [typescript]‎. وهذا القياسُ هو ما كان
+      // ينقص القرارَ السابق («تحويلها إلى الفاحص البنيوي يغيّر قبولها بلا
+      // قياسٍ يوجبه») — وقد صار موجودًا.
+      //
+      // والفاحصُ ليس جديدًا ولا سياسةً جديدة: مسارُ الخادم يفحص TypeScript
+      // بـ‎structuralSyntax‎ نفسِها اليوم (‎server_engine_registration.js:94‎
+      // ‎check()‎). فهذا نقلُ الفحصِ القائمِ إلى مسار المتصفح، كما فُعل
+      // بـ‎[PHP-GATE]‎ حرفًا بحرف، ولا يُضعِف Fail-Closed:
+      //   "ok"      ⇒ available:true,  ok:true   ⇒ تكمل بقيةُ فحوص البوابة
+      //   "broken…" ⇒ available:true,  ok:false  ⇒ REJECTED_SYNTAX_BROKEN
+      //   "unknown" ⇒ available:false            ⇒ REJECTED_NO_SYNTAX_CHECKER
+      // أي: مُرشَّحٌ مكسورٌ يُرفض بدليل، وغيرُ المحسومِ يبقى مرفوضًا كما هو.
+      //
+      // وحدُّه معلن: توازنُ أقواسٍ ونصوصٍ وتعليقاتٍ، لا مُحلِّلُ TypeScript
+      // ولا مدقِّقُ أنواع. فخطأٌ في الأنواع أو في بنيةٍ خاصةٍ بـTS لا
+      // يُخِلّ بالتوازن يمرّ منه — وهو حدُّ الفاحصِ الذي يثق به الخادمُ أصلًا.
+      const v = structuralSyntax(code, "typescript");
+      if (v === "ok") return { ok: true, available: true, language, reason: null };
+      if (v === "unknown") {
+        return { ok: false, available: false, language,
+          reason: "typescript structure not decidable - no verdict" };
+      }
+      return { ok: false, available: true, language, reason: v };
     }
 
     if (language === "python") {

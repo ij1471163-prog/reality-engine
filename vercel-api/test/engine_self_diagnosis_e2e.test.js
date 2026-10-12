@@ -52,6 +52,30 @@ test('[E2E-0] المرساة موجودة في الإنتاج مرة واحدة 
 
 const DEFECTIVE_VERIFIER = REAL_VERIFIER.replace(ANCHOR, INJECTED);
 
+// ─── مرساةُ المُرشَّحِ الخبيث ───────────────────────────────────────────
+// المقصودُ كسرُ قرارِ **PHP** وحدَه، فيسقط مِجسّ ‎gate.php-broken-detected‎.
+// وكانت المرساةُ سطرَ القبولِ المشترك وحدَه:
+//     if (v === "ok") return { ok: true, available: true, language, reason: null };
+// ولمّا نال TypeScript فاحصًا بنيويًّا (‎[TS-GATE]‎) صار السطرُ مرتين، وفرعُ
+// TypeScript أسبقُ في الملفّ، فكان ‎replace‎ بنصٍّ (أوّلُ مطابقةٍ فقط) يُحوّر
+// الفرعَ الخطأ: ‎[E2E-5b]‎ تكشفه بشرطِ التفرّد، و‎[E2E-7]‎ كانت تمرّ بمُرشَّحٍ
+// لا يكسر ما بُني ليكسره فتُعلن ‎PENDING_REVIEW‎ بدل ‎ROLLED_BACK‎.
+// فالمرساةُ الآن تحمل سياقَ PHP معها — نفسُ القصدِ، معبَّرًا عنه بلا لبس.
+const BROKEN_ANCHOR = 'const v = structuralSyntax(code, "php");\n' +
+                      '      if (v === "ok") return { ok: true, available: true, language, reason: null };';
+const BROKEN_PATCH  = 'const v = structuralSyntax(code, "php");\n' +
+                      '      if (v === "ok" || /^broken/.test(v)) return { ok: true, available: true, language, reason: null };';
+
+test('[E2E-0b] مرساةُ الكسرِ تُصيب فرعَ PHP وحدَه، ومرةً واحدة', () => {
+  assert.strictEqual(REAL_VERIFIER.split(BROKEN_ANCHOR).length - 1, 1,
+    'مرساةُ المُرشَّحِ الخبيث يجب أن تظهر مرة واحدة بالضبط — وأن تكون في فرع PHP');
+  const malicious = REAL_VERIFIER.replace(BROKEN_ANCHOR, BROKEN_PATCH);
+  assert.notStrictEqual(malicious, REAL_VERIFIER, 'الحقنُ لم يُغيّر شيئًا');
+  // ولا يُمَسّ فرعُ TypeScript: سطرُ قبولِه يبقى كما هو
+  const tsAccept = 'const v = structuralSyntax(code, "typescript");';
+  assert.ok(malicious.includes(tsAccept), 'فرعُ TypeScript تغيّر — الحقنُ أصاب غيرَ هدفه');
+});
+
 // مصدر كود مُمرَّر: «الحالي» = المعطوب، «المرجع» = الحقيقي.
 // هذا يحاكي بدقة ما يحدث في الواقع: تغيير في الشجرة لم يُودَع بعد، وgit HEAD
 // يحمل النسخة السليمة. وبقية الوحدات تُقرأ من القرص كما هي.
@@ -227,10 +251,8 @@ test('[E2E-5b] مُرشَّح يُصلح المستهدف ويكسر غيره �
   // نبني مُرشَّحًا خبيثًا: يُصلح heredoc (يعيد available:false) ويكسر مِجسّ
   // آخر في نفس الوحدة — كشف PHP المكسور. هذا هو الحال الذي من أجله وُجد
   // فحص «عدم تراجع الوظائف الأخرى».
-  const BROKEN_ANCHOR = 'if (v === "ok") return { ok: true, available: true, language, reason: null };';
   assert.strictEqual(REAL_VERIFIER.split(BROKEN_ANCHOR).length - 1, 1, 'مرساة ثانية موجودة مرة واحدة');
-  const malicious = REAL_VERIFIER.replace(BROKEN_ANCHOR,
-    'if (v === "ok" || /^broken/.test(v)) return { ok: true, available: true, language, reason: null };');
+  const malicious = REAL_VERIFIER.replace(BROKEN_ANCHOR, BROKEN_PATCH);
 
   const opts = Object.assign({ publicDir: PUBLIC_DIR, sources: injectedSources() }, FOCUS);
   const baseline = ESD.runBattery(opts);
@@ -394,9 +416,7 @@ test('[E2E-6e] فشل applyCallback يُبقي الحالة PENDING_REVIEW وي�
 test('[E2E-7] فشل الاختبارات ⇒ ROLLED_BACK، وfinalCode هو الأصل', () => {
   // نُسجّل مزوّد patch يُعيد مُرشَّحًا يكسر مِجسًّا آخر، ونشغّل heal بمُشغِّل ESD.
   // هذا هو مسار الإنتاج نفسه: نفس heal، نفس allPassed، نفس Rollback.
-  const BROKEN_ANCHOR = 'if (v === "ok") return { ok: true, available: true, language, reason: null };';
-  const malicious = REAL_VERIFIER.replace(BROKEN_ANCHOR,
-    'if (v === "ok" || /^broken/.test(v)) return { ok: true, available: true, language, reason: null };');
+  const malicious = REAL_VERIFIER.replace(BROKEN_ANCHOR, BROKEN_PATCH);
 
   const opts = Object.assign({ publicDir: PUBLIC_DIR, sources: injectedSources() }, FOCUS);
   const baseline = ESD.runBattery(opts);
