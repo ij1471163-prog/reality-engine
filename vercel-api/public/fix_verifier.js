@@ -1752,11 +1752,34 @@ var FixVerifier = (() => {
              kept: accepted.size, dropped: total - accepted.size };
   }
 
-  function verifyFix(beforeCode, afterCode, fileName, analyzeFunc, opts) {
+  function verifyFix(beforeCode, afterCode, fileName, _analyzeFunc, opts) {
     opts = opts || {};
     const allowUnverifiedLanguages = opts.allowUnverifiedLanguages === true;
     const requireImprovement = opts.requireImprovement !== false;
     const allowMinifiedVendor = opts.allowMinifiedVendor === true;
+
+    // [ANALYZE-MEMO] التحليلُ يُحسب مرةً لكل نصّ، لا مرةً لكل سائل.
+    //
+    // ‎matchingIssues‎ تنادي المحلّل من جديد لكل صنفِ إثبات، على ‎beforeCode‎
+    // و‎afterCode‎ معًا. والنصّان لا يتغيّران داخل النداء الواحد، فالنتيجةُ
+    // نفسُها تُحسَب عشرين مرة. المقيس على ملفٍ من 472 سطرًا:
+    //
+    //     نداءات analyzeCode   7  ⇒  40      (×5.7)
+    //     زمنُ repairCode    499  ⇒  2174ms  (×4.4)،  منها 95% في المحلّل
+    //
+    // وهو ما يُحسّه المستخدم تعليقًا. والحفظُ هنا لا يغيّر حكمًا: نفسُ الدالة
+    // ونفسُ المدخل ⇒ نفسُ الناتج، يُحسَب مرةً ويُعاد. والمفتاحُ هو النصّ
+    // نفسُه، فأيُّ نصٍّ جديد يُحلَّل من جديد.
+    const _memo = new Map();
+    const analyzeFunc = (typeof _analyzeFunc === 'function')
+      ? function (code, fn) {
+          const k = String(code);
+          if (_memo.has(k)) return _memo.get(k);
+          const v = _analyzeFunc(code, fn);
+          _memo.set(k, v);
+          return v;
+        }
+      : _analyzeFunc;
 
     if (typeof afterCode !== "string" || afterCode.trim().length === 0) {
       return { accepted: false, reason: "REJECTED_EMPTY_OUTPUT", syntaxStatus: "unknown",
