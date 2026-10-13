@@ -1363,6 +1363,53 @@ function _cmdBlockDecls(lines, idx, name) {
   return (top.match(new RegExp('\\b(?:const|let|var|function|class)\\s+' + name + '\\b', 'g')) || []).length;
 }
 
+// ═══════════════════════════════════════════════════════
+// [CMD-WHOLE] الأمرُ كلُّه من المستخدم: لا إصلاحَ نصّيًّا آمنًا
+// ═══════════════════════════════════════════════════════
+// ‎cp.exec(req.query.cmd)‎ — لا نصَّ حرفيًّا في الوسيط، فاسمُ الأمرِ نفسُه
+// من المدخَل. وقياسٌ بالتنفيذِ الفعليِّ في مجلّدٍ مؤقّتٍ على ثلاثةِ
+// احتمالاتٍ، بأربعةِ مدخلاتٍ سليمةٍ وثماني حمولاتٍ غيرِ ضارّةٍ تُنشئ ملفًا
+// إن نُفِّذت:
+//
+//                            سلوكٌ سليم   حقنُ شِلٍّ مُنِع   ‎cat /etc/passwd‎
+//   ① تعقيمُ أحرفٍ + شِل          4/4          8/8          ⚠️ قرأ الملف
+//   ② ‎execFile‎ على المُدخَلِ كلِّه 4/4          7/8          ⚠️ قرأ الملف
+//   ③ قائمةُ أوامرٍ + ‎execFile‎    4/4          8/8          ⚠️ قرأ الملف
+//
+// فالثلاثةُ تقرأ ‎/etc/passwd‎، لأن ‎cat /etc/passwd‎ أمرٌ مشروعٌ بوسيطٍ
+// مشروع: الثغرةُ ليست في الشِلِّ بل في أن الأمرَ نفسَه بيدِ المُهاجِم.
+// والاحتمالُ ② **أسوأُ** من التعقيم: يُمرّر ‎-fprintf PWN7‎ وسيطًا حقيقيًّا
+// لـ‎find‎ فيُنشئ الملفَ فعلًا (حقنُ خيارات)، والتعقيمُ يُسقط الشُرَط.
+//
+// ⇒ فصلُ الأمرِ عن الوسائطِ **لا** يُعالج هذا الشكل. والعلاجُ الصحيحُ تغييرُ
+// تصميمٍ لا يستنتجه المحرّك: قائمةُ عملياتٍ مُعتمَدةٍ بأوامرَ ووسائطَ ثابتة،
+// يختار المُدخَلُ بينها ولا يُكوِّنها.
+//
+// ولذلك يُرفَض الشكلُ **قبل** البوابة بسببٍ مُسمَّى، ويُدفَع إلى ‎aiNeeded‎
+// بالعلاجِ المطلوب — بدل أن يُولَّد تخفيفٌ لا يعمل فتقتله البوابةُ بـ
+// ‎GHOST_DISCARDED_BATCH — no_candidate‎ فلا يفهم المستخدمُ شيئًا.
+// وهذا نفسُ نهجِ ‎weakCryptoCredentialProblem‎ القائم: رفضٌ + بيانُ ما يلزم.
+function cmdWholeCommandProblem(code, issue, stratKey) {
+  const lines = String(code).split('\n');
+  const line = lines[(Number(issue.line) || 0) - 1];
+  if (line === undefined) return null;
+  const isPy = stratKey === 'CMD_INJECTION_PY';
+  const callRx = isPy ? /(?:os\.system|os\.popen|subprocess\.(?:call|run|Popen|check_output))\s*\(/
+                      : /\bexec(?:Sync)?\s*\(/;
+  const m = callRx.exec(line);
+  if (!m) return null;
+  // وسيطُ النداء: ما بين قوسِه وأوّلِ ‎)‎ — يكفي للحكم على وجودِ نصٍّ حرفيّ
+  const argStart = m.index + m[0].length;
+  const close = line.indexOf(')', argStart);
+  const arg = line.slice(argStart, close < 0 ? line.length : close);
+  if (!arg.trim()) return null;
+  // نصٌّ حرفيٌّ في الوسيط ⇒ اسمُ الأمرِ ثابتٌ ⇒ التعقيمُ تخفيفٌ مشروع
+  if (/['"`]/.test(arg)) return null;
+  return 'CMD_WHOLE_COMMAND_FROM_INPUT — اسمُ الأمرِ نفسُه من المدخَل، ' +
+         'فلا تعقيمُ أحرفٍ ولا فصلُ وسائطَ يُجدي: ‎cat /etc/passwd‎ أمرٌ ' +
+         'مشروعٌ بوسيطٍ مشروع (مقيسٌ بالتنفيذ على ثلاثةِ احتمالات)';
+}
+
 function cmdCandidateProblem(beforeCode, afterCode, lineNum, stratKey) {
   const B = beforeCode.split('\n'), A = afterCode.split('\n');
   const line = B[lineNum - 1];
@@ -2172,6 +2219,26 @@ function repairCode(code, issues, fileName, _opts) {
 
       if (ghost.code !== repairedCode) repairedCode = ghost.code;
     } catch(e) {}
+  }
+
+  // [CMD-WHOLE] شرحُ الرفضِ للمستخدم — لا تغييرَ في أيِّ قرار.
+  // صنفُ الأوامرِ الذي انتهى بلا إصلاحٍ مُطبَّقٍ على سطره، وشكلُه «الأمرُ
+  // كلُّه من المُدخَل»، كان يُسجَّل ‎GHOST_DISCARDED_BATCH — no_candidate‎
+  // فلا يعرف المستخدمُ سببًا ولا علاجًا. فيُضاف بيانٌ واحدٌ إلى ‎aiNeeded‎
+  // بالسببِ والعلاج. والشرطُ «بلا إصلاحٍ على سطره» يحفظ عقدَ
+  // ‎security_no_drop‎: صنفٌ أُصلح لا يظهر في ‎aiNeeded‎.
+  for (const r of rejected) {
+    if (!/^CMD_INJECTION(_PY)?$/.test(String(r.strategy))) continue;
+    if (repairs.some(p => p.line === r.line && String(p.strategy) === String(r.strategy))) continue;
+    if (aiNeeded.some(a => a.line === r.line && String(a.strategy) === String(r.strategy))) continue;
+    const issue = issues.find(i => i && i.line === r.line) || { line: r.line };
+    const whole = cmdWholeCommandProblem(code, issue, r.strategy);
+    if (!whole) continue;
+    aiNeeded.push({
+      line: r.line, title: issue.title, strategy: r.strategy, ev: issue.ev,
+      reason: whole + ' — العلاجُ قائمةُ عملياتٍ مُعتمَدةٍ بأوامرَ ووسائطَ ' +
+              'ثابتة (execFile/spawn) يختار المُدخَلُ بينها ولا يُكوِّنها',
+    });
   }
 
   return {
