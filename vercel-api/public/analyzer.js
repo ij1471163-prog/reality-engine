@@ -184,7 +184,27 @@ function engineList(result) {
 // فالقناةُ خارجَ النتيجة: ‎engineFailures()‎ يقرأها الاختبارُ والواجهةُ والخادم.
 const ENGINE_FAILURES = [];
 const ENGINE_FAILURES_MAX = 200;
+const ENGINE_REASON_MAX = 200;
 let _engineFile = '';
+
+// [FAIL-SCRUB] رسالةُ العطبِ نصٌّ من المحرّكِ لا سلطةَ لنا عليه، وقد تحمل
+// شفرةَ المستخدم: محرّكٌ يرمي ‎new Error('cannot parse: ' + code.split('\n')[0])‎
+// يُدخِل سطرَ الإسنادِ كلَّه إلى السجلّ. ومقيسٌ قبل التنقيح: اثنان من أربعةِ
+// نواقلَ يُسرّبان ‎sk_live_…‎ و‎Hunter2-Very-Secret‎ إلى ‎engineFailures()‎
+// وإلى سطرِ ‎console.warn‎، وطولُ السببِ كان بلا حدٍّ (ملفٌّ كاملٌ محتمل).
+//
+// فالقيمُ تُنقَّح والطولُ يُحَدّ. وما يُفيد التشخيصَ يبقى: ‎code.split is not a
+// function‎ و‎Expected ',' or '}' after property value in JSON at position 20‎
+// لا يُمَسّان (نصوصُهما الحرفيةُ أقصرُ من الحدّ).
+function _scrubFailureText(s) {
+    let t = String(s == null ? '' : s);
+    // نصٌّ حرفيٌّ طويلٌ = قيمةٌ من شفرةِ المستخدم، ولا تُفيد في تحديدِ العطب
+    t = t.replace(/(['"`])(?:\\.|(?!\1)[^\\\n]){8,}\1/g, '$1[REDACTED]$1');
+    // رمزٌ طويلٌ بلا أقواس: مفاتيحُ API وما يشبهها
+    t = t.replace(/\b[A-Za-z0-9_\-]{24,}\b/g, '[REDACTED]');
+    if (t.length > ENGINE_REASON_MAX) t = t.slice(0, ENGINE_REASON_MAX) + '…';
+    return t;
+}
 
 /** سجلُّ أعطابِ المحرّكات في آخرِ تحليل (نسخةٌ، فلا يُعدّله القارئ). */
 function engineFailures() { return ENGINE_FAILURES.map(r => Object.assign({}, r)); }
@@ -192,12 +212,30 @@ function clearEngineFailures() { ENGINE_FAILURES.length = 0; }
 
 /** Run one external detector in isolation — a broken engine must not lose the whole file. */
 function runEngine(name, fn, stage) {
-    try { return engineList(fn()); }
+    try {
+        const raw = fn();
+        const list = engineList(raw);
+        // [SHAPE] ناتجٌ ليس مصفوفةً ولا ‎{issues}‎ يُفقَد كاملًا بلا أثر:
+        // ‎engineList‎ لا تقرأ إلا الاثنين فتُرجع ‎[]‎. ولا محرّكَ اليوم بهذا
+        // الشكل (قِيس: 22 من 22 تُرجع مصفوفةً أو ‎{issues}‎)، والسجلُّ حارسٌ
+        // كي لا يصير أحدُها كذلك صامتًا.
+        if (!list.length && raw && typeof raw === 'object' && !Array.isArray(raw) &&
+            !Array.isArray(raw.issues)) {
+            const keys = Object.keys(raw).slice(0, 6).join(',');
+            if (ENGINE_FAILURES.length < ENGINE_FAILURES_MAX)
+                ENGINE_FAILURES.push({
+                    engine: String(name), stage: String(stage || 'analyze'),
+                    reason: 'SHAPE_NOT_READ — الناتجُ كائنٌ بلا ‎issues‎ فلا يُقرأ منه شيء: {' + keys + '}',
+                    file: _engineFile, kind: 'ShapeMismatch',
+                });
+        }
+        return list;
+    }
     catch (e) {
         const rec = {
             engine: String(name),
             stage: String(stage || 'analyze'),
-            reason: String((e && e.message) || e),
+            reason: _scrubFailureText((e && e.message) || e),
             file: _engineFile,
             kind: (e && e.name) ? String(e.name) : 'Error',
         };

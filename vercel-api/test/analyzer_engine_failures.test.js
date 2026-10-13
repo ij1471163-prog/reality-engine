@@ -186,6 +186,66 @@ test('[EF-6] العطبُ المعلومُ ظاهرٌ: ‎analyzeProject‎ في
   assert.ok(/is not a function/.test(rec.reason), 'سببٌ غيرُ متوقَّع: ' + rec.reason);
 });
 
+test('[EF-8] والسجلُّ لا يسرّب سرًّا — رسالةُ العطبِ نصٌّ لا سلطةَ لنا عليه', () => {
+  // ناقلٌ واقعيّ: محرّكٌ يرمي رسالةً مبنيّةً على شفرةِ المستخدم. مقيسٌ قبل
+  // التنقيح: اثنان من أربعةِ نواقلَ يُسرّبان المفتاحَ وكلمةَ المرورِ إلى
+  // ‎engineFailures()‎ وإلى سطرِ ‎console.warn‎، والسببُ بلا حدِّ طول.
+  // قيمةٌ مُصطنَعةٌ عن قصد لا تُطابق نمطَ أيِّ مُزوِّد: حمايةُ الدفعِ في
+  // GitHub ترفض مفتاحًا بشكلِ ‎sk_live_…‎ ولو كان مُلفَّقًا في اختبار،
+  // والمطلوبُ هنا طولُ القيمةِ لا شكلُها (نصٌّ حرفيٌّ > 8 أحرف، ورمزٌ > 24).
+  const SECRET = 'ZZTESTFAKEVALUE-not-a-credential-0001';
+  const PASS = 'Hunter2-Very-Secret';
+  const code = 'const API_KEY = "' + SECRET + '";\n' +
+               'const password = "' + PASS + '";\n' +
+               'function f(t) {\n  return t;\n}\n';
+  const VECTORS = [
+    ['سطرُ الشفرةِ في الرسالة', c => { c.CVEPatterns.analyze = src => { throw new Error('cannot parse: ' + src.split('\n')[0]); }; }],
+    ['الملفُّ كلُّه في الرسالة', c => { c.ExtendedPatterns.analyze = src => { throw new Error(src); }; }],
+    ['JSON.parse على سرّ', c => { c.SmartContext.analyze = () => { JSON.parse('{"k":"' + SECRET + '"'); }; }],
+    ['رميُ كائنٍ لا Error', c => { c.KnowledgeBase.analyze = () => { throw { msg: SECRET }; }; }],
+  ];
+  for (const [label, inject] of VECTORS) {
+    const ctx = loadCtx();
+    inject(ctx);
+    ctx.analyzeCode(code, 'secrets.js');
+    const recs = ctx.engineFailures();
+    const surface = JSON.stringify(recs) + ' ' + ctx.__warns.join(' ');
+    assert.ok(!surface.includes(SECRET), 'المفتاحُ سُرِّب (' + label + ')');
+    assert.ok(!surface.includes(PASS), 'كلمةُ المرورِ سُرِّبت (' + label + ')');
+    for (const r of recs)
+      assert.ok(String(r.reason).length <= 201,
+        'سببٌ بلا حدِّ طول (' + label + '): ' + String(r.reason).length);
+  }
+
+  // وما يُفيد التشخيصَ يبقى — التنقيحُ لا يُفرِّغ الرسالة
+  const ctx2 = loadCtx();
+  ctx2.CVEPatterns.analyze = () => { throw new TypeError('x.split is not a function'); };
+  ctx2.analyzeCode(code, 'd.js');
+  const r2 = ctx2.engineFailures().find(r => r.engine === 'CVEPatterns');
+  assert.ok(r2 && /x\.split is not a function/.test(r2.reason),
+    'نصُّ التشخيصِ ضاع في التنقيح: ' + (r2 && r2.reason));
+});
+
+test('[EF-9] وناتجٌ بشكلٍ لا يُقرأ يُسجَّل بدل أن يُفقَد صامتًا', () => {
+  // ‎engineList‎ لا تقرأ إلا مصفوفةً أو ‎{issues}‎؛ وغيرُهما يُرجع ‎[]‎.
+  // ولا محرّكَ اليوم بهذا الشكل (22 من 22 سليمة) — والسجلُّ حارسٌ للمستقبل.
+  const ctx = loadCtx();
+  ctx.SmartContext.analyze = () => ({ findings: [{ line: 1, title: 'x' }] });
+  ctx.analyzeCode(CODE, 'shape.js');
+  const rec = ctx.engineFailures().find(r => r.engine === 'SmartContext');
+  assert.ok(rec, 'شكلٌ غيرُ مقروءٍ لم يُسجَّل');
+  assert.strictEqual(rec.kind, 'ShapeMismatch');
+  assert.strictEqual(rec.stage, 'context');
+  assert.ok(/SHAPE_NOT_READ/.test(rec.reason) && /findings/.test(rec.reason), rec.reason);
+
+  // ومصفوفةٌ أو ‎{issues}‎ لا تُسجَّل
+  const ok = loadCtx();
+  ok.SmartContext.analyze = () => ({ issues: [] });
+  ok.analyzeCode(CODE, 'shape2.js');
+  assert.ok(!ok.engineFailures().some(r => r.engine === 'SmartContext'),
+    'شكلٌ سليمٌ (‎{issues}‎) سُجِّل عطبًا');
+});
+
 test('[EF-7] كلُّ نداءِ ‎runEngine‎ مُوسَّمٌ بمرحلة', () => {
   // وسمُ المرحلةِ بيانٌ لا يُستنتَج: نداءٌ بلا وسمٍ يُسجّل ‎analyze‎ عامًّا
   // فتضيع المرحلة. هذا الحارسُ يمنع نداءً جديدًا بلا وسم.
