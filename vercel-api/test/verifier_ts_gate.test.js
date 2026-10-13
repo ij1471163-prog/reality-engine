@@ -25,8 +25,10 @@
 const test   = require('node:test');
 const assert = require('node:assert');
 const fs     = require('node:fs');
+const os     = require('node:os');
 const path   = require('node:path');
 const vm     = require('node:vm');
+const { execFileSync } = require('node:child_process');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
@@ -174,6 +176,98 @@ test('[TSG-5] ومُرشَّحٌ مكسورٌ في ‎.ts‎ لا يُطبَّق
   assert.strictEqual(v && v.valid, false, 'البوابةُ قبلت مُرشَّحًا مكسورًا: ' + txt.slice(0, 200));
   assert.ok(/REJECTED_SYNTAX_BROKEN \[typescript\]/.test(String(v.reason || '')),
     'الرفضُ لم يُنسب إلى نحوِ TypeScript: ' + String(v.reason).slice(0, 160));
+});
+
+// مُترجمُ TypeScript الحقيقيُّ شاهدًا مستقلًّا حين يكون متاحًا في البيئة.
+// ‎tsc‎ ليس من تَوابِع المشروع (‎package.json‎: ‎adm-zip‎ و‎formidable‎)، فهو
+// شاهدٌ اختباريٌّ لا قدرةٌ وقتَ التشغيل — ولذلك يتجاوَز الاختبارُ نفسَه
+// عند غيابه بدل أن يفشل.
+const TSC = (() => {
+  for (const p of ['/opt/node22/bin/tsc', 'tsc']) {
+    try { execFileSync(p, ['--version'], { stdio: 'ignore' }); return p; } catch (e) { /* التالي */ }
+  }
+  return null;
+})();
+// أخطاءُ ‎TS1xxx‎ نحويةٌ و‎TS2xxx‎ دلالية — نقيس الاثنين قبل/بعد
+function tscErrors(tsc, code, file) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsg-'));
+  const f = path.join(dir, file);
+  fs.writeFileSync(f, code);
+  let out = '';
+  try { execFileSync(tsc, ['--noEmit', '--skipLibCheck', '--target', 'es2020', f],
+        { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }); }
+  catch (e) { out = String(e.stdout || '') + String(e.stderr || ''); }
+  fs.rmSync(dir, { recursive: true, force: true });
+  const codes = [...out.matchAll(/error TS(\d{4}):/g)].map(m => Number(m[1]));
+  return { syntax: codes.filter(c => c < 2000).length, types: codes.filter(c => c >= 2000).length };
+}
+
+test('[TSG-7] حالاتٌ واقعية: تُصلَح، ولا يُدخِل الإصلاحُ خطأً — شاهدُه ‎tsc‎',
+  { skip: TSC ? false : 'مُترجمُ TypeScript غيرُ متاحٍ في هذه البيئة' }, () => {
+  const ctx = loadCtx();
+  const FILES = [
+    ['auth.ts',
+     'export function login(user: string, password: string): boolean {\n' +
+     '  console.log("login attempt", password);\n' +
+     '  if (user == "admin") {\n    return true;\n  }\n  return false;\n}\n',
+     ['LOG_SECRET', 'LOOSE_EQUALITY']],
+    ['api.ts',
+     'export async function send(data: Record<string, string>): Promise<Response> {\n' +
+     '  var url: string = "http://api.example.com/v1/items";\n' +
+     '  return fetch(url, { method: "POST", body: JSON.stringify(data) });\n}\n',
+     ['HTTP_USAGE', 'VAR_USAGE']],
+    ['cache.ts',
+     'export class Cache<T> {\n  private items: Map<string, T> = new Map();\n' +
+     '  get(k: string): T | undefined {\n    return this.items.get(k);\n  }\n' +
+     '  put(k: string, v: T, token: string): void {\n' +
+     '    console.warn("cache put", token);\n    this.items.set(k, v);\n  }\n}\n',
+     ['LOG_SECRET']],
+  ];
+  for (const [name, code, want] of FILES) {
+    const iss = ctx.analyzeCode(code, name) || [];
+    const out = ctx.repairCode(code, iss.map(x => Object.assign({}, x)), name);
+    const got = new Set((out.repairs || []).map(r => r.strategy));
+    for (const w of want)
+      assert.ok(got.has(w), w + ' لم يُطبَّق على ' + name + ' — رُفض: ' +
+        (out.rejected || []).map(r => r.reason).join(' | ').slice(0, 140));
+
+    const b = tscErrors(TSC, code, name), a = tscErrors(TSC, out.repaired, name);
+    assert.ok(a.syntax <= b.syntax, name + ': أخطاءُ نحوٍ جديدةٌ ' + b.syntax + ' ⇒ ' + a.syntax);
+    assert.ok(a.types <= b.types, name + ': أخطاءُ أنواعٍ جديدةٌ ' + b.types + ' ⇒ ' + a.types);
+
+    // والقيمةُ لا العدد: السرُّ غاب، والبروتوكولُ صار https
+    if (want.includes('LOG_SECRET')) {
+      assert.ok(/\[REDACTED\]/.test(out.repaired), name + ': لا عَلَمَ تنقيح');
+      assert.ok(!/console\.(log|warn)\("[^"]*",\s*(password|token)\)/.test(out.repaired),
+        name + ': المُعرِّفُ الحسّاس ما زال يُسجَّل');
+    }
+    if (want.includes('HTTP_USAGE')) assert.ok(/https:\/\//.test(out.repaired), name + ': ما زال http');
+  }
+});
+
+test('[TSG-8] وإصلاحٌ غيرُ صالحٍ لا يُمرَّر — حتى لو أنقص البلاغات',
+  { skip: TSC ? false : 'مُترجمُ TypeScript غيرُ متاحٍ في هذه البيئة' }, () => {
+  // ثلاثةُ مُرشَّحاتٍ تكسر الملفَّ وتُنقص عددَ البلاغاتِ في الوقتِ نفسِه
+  // (لأن الشفرةَ المكسورةَ تُحلَّل أقلّ). ‎tsc‎ يُثبت أنها مكسورةٌ فعلًا،
+  // والبوابةُ ترفضها — فانخفاضُ العدَّ لا يُمرِّر شيئًا.
+  const ctx = loadCtx();
+  const before = 'export function login(user: string, password: string): boolean {\n' +
+                 '  console.log("attempt", password);\n  return user === "a";\n}\n';
+  const BROKEN = [
+    ['قوسٌ ناقص',      'export function login(user: string, password: string): boolean {\n  console.log("attempt", "[REDACTED]";\n  return user === "a";\n}\n'],
+    ['معقوفٌ زائد',    'export function login(user: string, password: string): boolean {\n  console.log("attempt", "[REDACTED]");\n  return user === "a";\n}}\n'],
+    ['نصٌّ غيرُ منتهٍ', 'export function login(user: string, password: string): boolean {\n  console.log("attempt", "[REDACTED);\n  return user === "a";\n}\n'],
+  ];
+  const base = tscErrors(TSC, before, 'login.ts');
+  assert.strictEqual(base.syntax, 0, 'tripwire: الأصلُ مكسورٌ نحويًّا');
+  for (const [label, broken] of BROKEN) {
+    const t = tscErrors(TSC, broken, 'login.ts');
+    assert.ok(t.syntax > 0, 'tripwire: ‎tsc‎ لا يرى الكسرَ في ' + label);
+    const v = ctx.FixVerifier.fullVerify(before, broken, 'login.ts', ctx.analyzeCode);
+    assert.strictEqual(v.valid, false, 'البوابةُ قبلت مكسورًا (' + label + '): ' + JSON.stringify(v).slice(0, 160));
+    assert.ok(/REJECTED_SYNTAX_BROKEN \[typescript\]/.test(String(v.reason || '')),
+      label + ': الرفضُ لم يُنسب إلى نحوِ TypeScript: ' + String(v.reason).slice(0, 120));
+  }
 });
 
 test('[TSG-6] الحدُّ المعلَن: فاحصٌ بنيويٌّ لا مُحلِّلُ أنواع', () => {
