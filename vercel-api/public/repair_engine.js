@@ -80,14 +80,21 @@ function detectExt(code, fileName) {
 // إصلاح مزيّف يمر من الـverifier. يُضاف import os بعد shebang/encoding/
 // docstring/__future__ (قبل __future__ = SyntaxError). أي بنية غير مؤكدة ⇒ null
 // (لا إصلاح) بدل التخمين.
-function _pyBindsOs(code) {
+// [PY-IMPORT] نفسُ المنطقِ لأيِّ وحدة، لا لـ‎os‎ وحدها: ‎fixEmptyCatch‎ كان
+// يُقحم ‎import logging‎ بـ‎unshift‎ في السطرِ صفرٍ، وهو ما يُكسر الملفَ أمام
+// shebang أو ‎from __future__‎، ويعتمد ‎code.includes('import logging')‎ وهي
+// تُطابق تعليقًا أو نصًّا فيُترك الاستيرادُ ناقصًا. فالحارسُ المحكمُ أدناه
+// يخدم الوحدتين، والاسمان القديمان يبقيان كما هما.
+function _pyBindsModule(code, mod) {
+  const rx = new RegExp('^' + mod + '(\\.\\w+)*$');
   return code.split('\n').some(l => {
     const m = l.match(/^import[ \t]+([^#]+)/);
-    return !!m && m[1].split(',').some(item => /^os(\.\w+)*$/.test(item.trim()));
+    return !!m && m[1].split(',').some(item => rx.test(item.trim()));
   });
 }
-function _pyEnsureImportOs(code) {
-  if (_pyBindsOs(code)) return code;
+function _pyBindsOs(code) { return _pyBindsModule(code, 'os'); }
+function _pyEnsureImport(code, mod) {
+  if (_pyBindsModule(code, mod)) return code;
   const L = code.split('\n');
   let i = 0;
   if (L[0] !== undefined && L[0].startsWith('#!')) i = 1;
@@ -115,9 +122,10 @@ function _pyEnsureImportOs(code) {
     }
     break;
   }
-  L.splice(i, 0, 'import os');
+  L.splice(i, 0, 'import ' + mod);
   return L.join('\n');
 }
+function _pyEnsureImportOs(code) { return _pyEnsureImport(code, 'os'); }
 
 // ─── Helper ───────────────────────────────────────────
 function replaceLineInCode(code, lineNum, newLine) {
@@ -912,28 +920,75 @@ function fixEmptyCatch(code, issue, lines, ext) {
     fixed = line.replace(/catch\s*\((\w+)\s+(\w+)\)\s*\{\s*\}/, 'catch ($1 $2) { android.util.Log.e("Error", $2.getMessage()); }');
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ android.util.Log.e("Error", "exception occurred"); }');
   } else if (ext === 'py') {
-    // استخدم splice لإضافة السطر الجديد بشكل صحيح
-    const catchLines = code.split('\n');
-    const catchLn = issue.line - 1;
-    if (catchLn < 0 || catchLn >= catchLines.length) return null;
-    const catchLine = catchLines[catchLn];
-    // استنتج الـindentation من السطر الحالي
-    const baseIndent = catchLine.match(/^(\s*)/)?.[1] || '';
+    // ═══════════════════════════════════════════════════
+    // [PY-CATCH] إصلاحٌ كان يمرّ من الفحصِ ويكسر الشفرة
+    // ═══════════════════════════════════════════════════
+    // كان يكتب ‎logging.error("Exception: %s", str(e))‎ دائمًا — و‎e‎ غيرُ
+    // مربوطٍ في ‎except Exception:‎ ولا في ‎except:‎. فالناتجُ يمرّ من
+    // ‎py_compile‎ (فحصٌ نحويٌّ لا يرى الأسماء) ويرمي ‎NameError‎ وقتَ
+    // تنفيذِ مسارِ الاستثناء. مقيسٌ بـ‎python3‎ على الحالةِ الأصلية:
+    //     قبل:  RET=None                              (الخطأُ مكتومٌ — العيب)
+    //     بعد:  RAISED=NameError: name 'e' is not defined   (الشفرةُ مكسورة)
+    // أي أن البلاغَ يختفي والمشكلةُ تُستبدَل بأسوأ منها. وكان مستورًا
+    // لأن البلاغَ لم يكن يُوجَّه إلى هذه الاستراتيجيةِ أصلًا (‎[CATCH-ROUTE]‎).
+    //
+    // فالآن: يُستعمل الاسمُ المربوطُ إن وُجد، وإلا ‎exc_info=True‎ — وهي
+    // الصيغةُ القياسيةُ داخل معالِجِ استثناءٍ ولا تحتاج ربطًا.
+    // والموضعُ يُؤخَذ من رقمِ السطرِ المُبلَّغ لا ببحثٍ نصّيٍّ عن مثله:
+    // ‎indexOf‎ كان يُصيب أوّلَ سطرٍ مطابقٍ، فملفٌّ فيه ‎except Exception:‎
+    // مرتين يُعالَج موضعُه الأوّلُ مرتين ويبقى الثاني كما هو.
+    const ln = issue.line - 1;
+    const src0 = code.split('\n');
+    if (ln < 0 || ln >= src0.length) return null;
+    const catchLine = src0[ln];
+    const baseIndent = (catchLine.match(/^(\s*)/) || ['', ''])[1];
     const bodyIndent = baseIndent + '    ';
-    // أضف import logging لو غائب
-    if (!code.includes('import logging')) {
-      catchLines.unshift('import logging');
-    }
-    // أضف السطر بعد سطر except
-    const targetLn = catchLines.indexOf(catchLine, code.includes('import logging') ? 0 : 1);
-    if (targetLn < 0) return null;
-    catchLines.splice(targetLn + 1, 0, `${bodyIndent}logging.error("Exception: %s", str(e))`);
-    return { fixed: catchLines.join('\n'), patch: `${bodyIndent}logging.error(...)`, reason: 'Empty except now logs error' };
+    const bind = (catchLine.match(/\bexcept\b[^:]*\bas[ \t]+([A-Za-z_]\w*)[ \t]*:/) || [])[1];
+    const body = bind
+      ? `${bodyIndent}logging.error("Exception: %s", str(${bind}))`
+      : `${bodyIndent}logging.error("Unhandled exception", exc_info=True)`;
+    // ورأسُ الملفِّ يُحترَم: shebang وترميزٌ وdocstring و‎__future__‎ — وبنيةٌ
+    // غيرُ محسومةٍ تُرجع ‎null‎ بدل التخمين (نفسُ عقدِ ‎_pyEnsureImport‎).
+    const withImport = _pyEnsureImport(code, 'logging');
+    if (withImport === null) return null;
+    const all = withImport.split('\n');
+    const shift = all.length - src0.length;      // صفرٌ أو واحد
+    const target = ln + shift;
+    if (all[target] !== catchLine) return null;  // لم يُطابق الموضعُ ⇒ لا تخمين
+    all.splice(target + 1, 0, body);
+    return { fixed: all.join('\n'), patch: body.trim(), reason: 'Empty except now logs error' };
   } else if (ext === 'cs') {
     fixed = line.replace(/catch\s*(\([^)]*\))?\s*\{\s*\}/, 'catch (Exception ex) { Debug.LogError("Error: " + ex.Message); }');
   } else if (ext === 'js' || ext === 'ts') {
     fixed = line.replace(/catch\s*\(([^)]+)\)\s*\{\s*\}/, 'catch ($1) { console.error("Error:", $1); }');
     if (fixed === line) fixed = line.replace(/\{\s*\}$/, '{ console.error("unexpected error"); }');
+    // [CATCH-SHAPE] والجسمُ الفارغُ في سطرين — وهو شكلُ الحالةِ الأصلية:
+    //     } catch (e) {
+    //     }
+    // كان يُرجع ‎null‎ لأن النمطَين أعلاه يشترطان ‎{}‎ في السطرِ نفسِه.
+    // فيُضاف السطرُ داخل الجسم بـ‎splice‎، كما يفعل فرعُ بايثون أعلاه
+    // بالضبط. ولا يتغيّر تدفّقُ التحكّم ولا قيمةُ إرجاعٍ: سطرُ تسجيلٍ
+    // فقط — وهو نفسُ نصِّ الإصلاحِ الذي يُنتجه المسارُ القائمُ للشكلِ
+    // ذي السطرِ الواحد.
+    //
+    // والشرطُ ضيّقٌ: السطرُ ينتهي بـ‎{‎ بعد ‎catch‎، وأوّلُ سطرٍ غيرِ
+    // فارغٍ بعده ‎}‎ وحدَه. فتعليقٌ داخل الجسم ليس فراغًا، وجسمٌ فيه
+    // شفرةٌ لا يُمَسّ.
+    if (fixed === line && /(?:^|\})\s*catch\s*(?:\([^)]*\))?\s*\{\s*$/.test(line.trim())) {
+      const all = code.split('\n');
+      const ln = issue.line - 1;
+      if (ln < 0 || ln >= all.length) return null;
+      let j = ln + 1;
+      while (j < all.length && !all[j].trim()) j++;
+      if (j >= all.length || all[j].trim() !== '}') return null;
+      const bind = (line.match(/catch\s*\(\s*([A-Za-z_$][\w$]*)/) || [])[1];
+      const indent = (line.match(/^(\s*)/) || ['', ''])[1] + '  ';
+      const body = bind
+        ? `${indent}console.error("Error:", ${bind});`
+        : `${indent}console.error("unexpected error");`;
+      all.splice(ln + 1, 0, body);
+      return { fixed: all.join('\n'), patch: body.trim(), reason: 'Empty catch now logs error' };
+    }
   } else {
     return null;
   }

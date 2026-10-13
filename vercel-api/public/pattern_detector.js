@@ -41,16 +41,55 @@ function detectPatterns(code, fileName) {
     }
 
     // 3. catch فارغ JS
-    if (isJS && (t === 'catch(e){}' || t === 'catch (e) {}' || t === 'catch{}')) {
-      issues.push({
-        type: 'bug', sev: 'h',
-        title: 'catch فارغ يخفي الأخطاء',
-        line: i + 1, ev: t,
-        fix: t.replace('{}', '{ console.error(e); }'),
-        conf: 95, cIcon: '🔴',
-        cAct: 'الأخطاء مخفية',
-        cEv: ['أضف console.error أو معالجة حقيقية']
-      });
+    // ═══════════════════════════════════════════════════
+    // [CATCH-SHAPE] المطابقةُ كانت مساواةً نصّيةً تامّةً لثلاثةِ أشكال:
+    //     t === 'catch(e){}' || t === 'catch (e) {}' || t === 'catch{}'
+    // وهي لا تتحقّق إلا إذا كان إغلاقُ ‎try‎ في سطرٍ منفصل (نمطُ Allman):
+    //     try {
+    //       …
+    //     }
+    //     catch (e) {}
+    // أمّا النمطُ الشائع (K&R) فيبدأ السطرُ بـ‎}‎ فلا يُساوي شيئًا منها:
+    //     } catch (e) {}      } catch (e) { }      } catch (e) {\n  }
+    //
+    // ومقيسٌ أن بقيةَ المسارِ سليمةٌ تمامًا على أشكالِ Allman: ثلاثةٌ من
+    // ثلاثةٍ تُكتشَف وتُوجَّه إلى ‎EMPTY_CATCH‎ وتُصلَح وتقبلها البوابة.
+    // فالعطبُ في شرطِ المطابقةِ وحدَه، لا في غيابِ كاشفٍ ولا مُصلِح —
+    // و‎fixEmptyCatch‎ يُنتج إصلاحًا صحيحًا لأشكالِ K&R أيضًا.
+    //
+    // والتوسيعُ محدودٌ بما يملك المُصلِحُ إصلاحَه، فلا يُنشأ بلاغٌ بلا
+    // علاج (وهو الدرسُ المقيسُ في ‎[LOG-SINK]‎ معكوسًا): جسمٌ فارغٌ تمامًا،
+    // إمّا ‎{}‎ في السطر نفسِه أو ‎{‎ ويكون أوّلُ سطرٍ غيرِ فارغٍ بعده ‎}‎.
+    // وتعليقٌ داخل الجسم ليس فراغًا: ‎catch (e) { /* مقصود */ }‎ تجاهلٌ
+    // مُتعمَّدٌ موثَّقٌ فلا يُمَسّ.
+    if (isJS) {
+      const mCatch = /(?:^|\})\s*catch\s*(?:\([^)]*\))?\s*\{\s*(\}\s*(?:else\b|finally\b)?.*)?$/.exec(t);
+      const sameLineClosed = mCatch && /^\}/.test(String(mCatch[1] || ''));
+      let emptyCatch = false;
+      if (mCatch) {
+        if (sameLineClosed) {
+          emptyCatch = true;                       // ‎} catch (e) {}‎ أو ‎{ }‎
+        } else if (mCatch[1] === undefined) {      // ‎} catch (e) {‎ — ننظر إلى ما بعده
+          let j = i + 1;
+          while (j < lines.length && !lines[j].trim()) j++;
+          emptyCatch = j < lines.length && lines[j].trim() === '}';
+        }
+      }
+      if (emptyCatch) {
+        issues.push({
+          type: 'bug', sev: 'h',
+          // ‎strategy‎ صريحٌ: العنوانُ وحدَه يُوجِّه بكلمةِ ‎catch‎، لكن
+          // التصريحَ مُقدَّمٌ عليه في ‎detectStrategy‎ ولا يتعلّق بنصِّ العنوان.
+          strategy: 'EMPTY_CATCH',
+          title: 'catch فارغ يخفي الأخطاء',
+          line: i + 1, ev: t,
+          fix: t.includes('{}') ? t.replace('{}', '{ console.error(e); }')
+                                : 'أضف console.error(e) داخل الـcatch',
+          conf: 95, cIcon: '🔴',
+          cAct: 'الأخطاء مخفية',
+          cEv: ['أضف console.error أو معالجة حقيقية']
+        });
+      }
     }
 
     // 4. except فارغ Python
@@ -59,6 +98,13 @@ function detectPatterns(code, fileName) {
       if (nextLine === 'pass' || nextLine === '') {
         issues.push({
           type: 'bug', sev: 'h',
+          // [CATCH-ROUTE] البلاغُ كان يُكتشَف ويملك المُصلِحُ إصلاحَه
+          // (‎fixEmptyCatch‎ فرعُ py يُنتج ‎logging.error(...)‎ مقيسًا)، ثم
+          // لا يُوجَّه: ‎detectStrategy‎ يستنتج من العنوان، وقائمتُه تحمل
+          // ‎catch‎ ولا تحمل ‎except‎ — وهي كلمةُ بايثون. فكان البلاغُ
+          // يسقط عند ‎NO_STRAT‎ بلا أثر. والتصريحُ هنا هو المسارُ الذي
+          // تُفضّله ‎detectStrategy‎ أصلًا على استنتاجِ العنوان.
+          strategy: 'EMPTY_CATCH',
           title: 'except فارغ يخفي الأخطاء',
           line: i + 1, ev: t,
           fix: t + '\n    logging.error(e)',
