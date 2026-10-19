@@ -39,7 +39,28 @@ const STRATEGIES = {
   HARDCODED_SECRET: { fn: fixHardcodedSecret,    autoFix: true,  confidence: 0.85 },
   LOG_SECRET:       { fn: fixLogSecret,          autoFix: true,  confidence: 0.90 },
   EMPTY_CATCH:      { fn: fixEmptyCatch,         autoFix: true,  confidence: 0.80 },
-  EMPTY_FUNCTION:   { fn: fixEmptyFunction,      autoFix: true,  confidence: 0.70 },
+  // ═══════════════════════════════════════════════════
+  // [STUB-NOT-FIX] كان ‎autoFix: true‎، وما يُنتجه المُصلِحُ تعليقٌ لا تنفيذ:
+  //     function handleError() {}  ⇒  function handleError() {
+  //                                     // TODO: implement
+  //                                   }
+  // والكاشفُ نفسُه يَعُدّ جسمًا تعليقُه وحدَه فارغًا (الشرطُ الصريحُ في
+  // ‎pattern_detector‎: ‎nextLines[0].startsWith('//') && nextLines[1] === '}'‎).
+  // فالبلاغُ لا يزول — مقيس: «دالة ناقصة» 1 قبل و1 بعد.
+  //
+  // وللتناقضِ ثمنان مقيسان:
+  //   • وحدَها: البوابةُ تحكم ‎REJECTED_NO_IMPROVEMENT‎ بحقّ، وGhost يطرح
+  //     الدفعةَ كلَّها ⇒ صفرُ إصلاح.
+  //   • مع غيرها: تركب الدفعةَ التي أنقصت العددَ بسببِ إصلاحاتٍ أخرى،
+  //     فتُحتسَب إصلاحًا (‎fixed=3‎) والبلاغُ باقٍ ⇒ نجاحٌ مُعلَنٌ بلا إصلاح.
+  //
+  // فالحلُّ ليس إرضاءَ الكاشفِ بنصٍّ آخر: ملءُ جسمِ دالّةٍ فارغةٍ قرارٌ
+  // دلاليٌّ لا يُشتقّ من اسمِها، و‎throw‎ أو ‎return null‎ تغييرُ سلوكٍ لا
+  // إصلاح. فتُعلَن كما هي: ‎autoFix: false‎ كـ‎CALLBACK_HELL‎ و‎MISSING_AUTH‎،
+  // فيذهب البلاغُ إلى ‎aiNeeded‎ صادقًا بدل أن يُعَدَّ مُصلَحًا.
+  // و‎fn‎ يبقى موضعَه: لا يُنادى مع ‎autoFix: false‎، وحذفُه تغييرٌ بلا داعٍ.
+  // ═══════════════════════════════════════════════════
+  EMPTY_FUNCTION:   { fn: fixEmptyFunction,      autoFix: false, confidence: 0.70 },
   CALLBACK_HELL:    { fn: null,                  autoFix: false, confidence: 0.75 },
   MISSING_AUTH:     { fn: null,                  autoFix: false, confidence: 0.70 },
   API_KEY:          { fn: fixApiKeyAdvanced,     autoFix: true,  confidence: 0.90 },

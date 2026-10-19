@@ -49,21 +49,37 @@ const repair = (ctx, code, file) => {
 };
 
 test('[SD-1] فجوةُ قدرةٍ مُقاسةٌ تظهر في ‎dropped‎ بالاسمِ والسطرِ والسبب', () => {
-  // ‎fixEmptyFunction‎ يشترط ‎{}‎ في سطرٍ واحد (‎if (!line.includes("{}")) return null‎)،
-  // والكاشفُ يُبلّغ عن الشكلَين. فهذه فجوةُ قدرةٍ قائمةٌ لم تُوسَّع في هذه
-  // الجولة عن قصد: حشوُ جسمٍ فارغٍ بـ‎return null‎ يغيّر قيمةَ الإرجاع من
-  // ‎undefined‎ إلى ‎null‎ — تغييرُ سلوكٍ لا إصلاحُ عيب. لكنها تُقرأ الآن.
+  // كان المثالُ هنا ‎EMPTY_FUNCTION‎، وقد صار ‎autoFix: false‎ في
+  // ‎[STUB-NOT-FIX]‎ فلم يَعُد مُصلِحُه يُنادى أصلًا — انظر ‎[SD-1ب]‎.
+  // والمثالُ الباقي على حاله: ‎fixSQLInjection‎ يُنادى على بايثون ويُرجع
+  // ‎null‎ بقرارٍ موثَّقٍ في جسمِه («السياقُ والdriver غيرُ معروفَين»)،
+  // فهذه فجوةُ قدرةٍ قائمةٌ تُقرأ في ‎dropped‎ بدل أن تضيع.
   const ctx = loadCtx();
-  const { out } = repair(ctx, 'function todo() {\n}\nfunction alsoTodo(a, b) {\n}\n', 'emptyFn.js');
+  const { out } = repair(ctx,
+    'def f(cur, name):\n    cur.execute("SELECT * FROM u WHERE n = \'" + name + "\'")\n', 'q.py');
   assert.ok(Array.isArray(out.dropped), 'حقلُ dropped غائب');
-  const ef = out.dropped.filter(d => d.strategy === 'EMPTY_FUNCTION');
-  assert.strictEqual(ef.length, 2, 'عددُ الفجواتِ المُقاسة: ' + JSON.stringify(out.dropped));
-  for (const d of ef) {
+  const sq = out.dropped.filter(d => d.fixer === 'fixSQLInjection');
+  assert.ok(sq.length >= 1, 'لا إسقاطَ مسجَّل: ' + JSON.stringify(out.dropped));
+  for (const d of sq) {
     assert.strictEqual(d.kind, 'FIXER_NO_CHANGE', d.kind);
-    assert.strictEqual(d.fixer, 'fixEmptyFunction', d.fixer);
-    assert.ok(d.line > 0 && d.ev.includes('function'), JSON.stringify(d));
+    assert.ok(d.line > 0 && String(d.ev).includes('execute'), JSON.stringify(d));
     assert.ok(String(d.reason).length > 10, 'سببٌ بلا نصّ');
   }
+});
+
+test('[SD-1ب] و‎EMPTY_FUNCTION‎ لا يُسقَط بل يُعلَن أنه يحتاج AI', () => {
+  // ‎[STUB-NOT-FIX]‎: ما كان يُنتجه المُصلِحُ تعليقُ ‎// TODO‎، والكاشفُ يَعُدُّ
+  // جسمًا تعليقُه وحدَه فارغًا، فالبلاغُ لا يزول. فصار ‎autoFix: false‎:
+  // لا يُنادى المُصلِحُ، ولا يُحتسَب إصلاحًا، ولا يُسجَّل إسقاطَ قدرةٍ —
+  // بل يُعلَن ‎aiNeeded‎ صادقًا.
+  const ctx = loadCtx();
+  const { out } = repair(ctx, 'function todo() {}\nfunction alsoTodo(a, b) {}\n', 'emptyFn.js');
+  assert.strictEqual(out.dropped.filter(d => d.strategy === 'EMPTY_FUNCTION').length, 0,
+    'عاد يُنادى المُصلِحُ: ' + JSON.stringify(out.dropped));
+  assert.strictEqual((out.repairs || []).length, 0, 'حُشِي جسمٌ فارغٌ وعُدَّ إصلاحًا');
+  assert.ok((out.aiNeeded || []).length >= 1, 'لم يُعلَن aiNeeded: ' + JSON.stringify(out.aiNeeded));
+  assert.strictEqual(out.repaired, 'function todo() {}\nfunction alsoTodo(a, b) {}\n',
+    'تغيّر الكودُ بلا إصلاحٍ مُثبَت');
 });
 
 test('[SD-2] بلاغُ كاشفٍ غيرِ محصورٍ بحدِّ كلمةٍ يُقرأ ولا يُصلَح', () => {
@@ -96,7 +112,8 @@ test('[SD-3] ولا يُسجَّل إسقاطٌ حين يُصلِح المُصل
 test('[SD-4] والقناةُ تشخيصيةٌ محضة — ‎summary‎ و‎score‎ لا يتغيّران', () => {
   // هذا هو الحدُّ: لو دخل الإسقاطُ العدَّ لتغيّرت تقاريرٌ وقراراتٌ قائمة.
   const ctx = loadCtx();
-  const { iss, out } = repair(ctx, 'function todo() {\n}\nfunction alsoTodo(a, b) {\n}\n', 'emptyFn.js');
+  const { iss, out } = repair(ctx,
+    'def f(cur, name):\n    cur.execute("SELECT * FROM u WHERE n = \'" + name + "\'")\n', 'q.py');
   assert.ok(out.dropped.length > 0, 'tripwire: لا إسقاطَ لنقيسه');
   assert.strictEqual(out.summary.total, iss.length);
   assert.strictEqual(out.summary.fixed, (out.repairs || []).length);
