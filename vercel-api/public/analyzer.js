@@ -436,8 +436,34 @@ function analyzeCode(code, fileName) {
     _engineFile = fileName;
     if (!code.trim()) return [];
 
+    // ═══════════════════════════════════════════════════
+    // [JAVA-PATH] كان هذا الفرعُ يعود فورًا بثماني قواعدَ من ‎engine_java‎
+    // وحدَها، فلا يرى ملفُّ ‎.java‎ شيئًا من الفاحصاتِ غيرِ المرتبطةِ بلغة.
+    // وأثرُه مقيس: ‎LOG_SECRET‎ مُعلَنٌ لجافا في ‎STRATEGY_LANGS‎ و‎fixLogSecret‎
+    // يُنتج له ‎Log.d("TAG", "[REDACTED]")‎ صحيحًا — ولا بلاغَ يصله قطّ، لأن
+    // القاعدةَ التي تراه (رقم 9 في ‎security_scanner‎) خلفَ هذا العود.
+    // وكذلك ‎HARDCODED_PASS/java‎: صفرُ بلاغ.
+    //
+    // فيُضَمُّ الفاحصان اللذان لا يفترضان لغةً بعينها. والقياسُ على خمسِ
+    // عيّناتِ جافا سليمةٍ تمامًا (مجموعات، حلقات، قراءةٌ من البيئة، https،
+    // تعليقٌ فيه كلمةُ password): صفرُ بلاغٍ من كليهما — فلا ثمنَ في
+    // الإيجابِ الكاذب. و‎detectPatterns‎ يبقى خارجًا: قواعدُه (‎var‎، ‎==‎،
+    // ‎catch‎ بنمطِ JS) محمولةٌ على JavaScript، والمقيسُ أنه يُنتج صفرًا على
+    // جافا في الحالتين، فضمُّه زيادةٌ بلا أثرٍ وبمخاطرةِ قواعدَ لا تخصُّها.
+    // والدمجُ بمساواةٍ تامّةٍ للسطرِ والعنوان، كما في المسارِ العامّ.
+    // ═══════════════════════════════════════════════════
     if (typeof analyzeJava !== 'undefined' && ext === 'java') {
         const javaIssues = runEngine('analyzeJava', () => analyzeJava(code, fileName), 'lang:java');
+        if (typeof scanSecurity === 'function') {
+            runEngine('scanSecurity', () => scanSecurity(code, fileName), 'security:java').forEach(si => {
+                if (!javaIssues.some(x => x.line === si.line && x.title === si.title)) javaIssues.push(si);
+            });
+        }
+        if (typeof detectSecrets === 'function') {
+            runEngine('detectSecrets', () => detectSecrets(code, fileName), 'secrets:java').forEach(s => {
+                if (!javaIssues.some(x => x.line === s.line && x.title === s.title)) javaIssues.push(s);
+            });
+        }
         finalizeIssues(javaIssues, code);
         return dedupeIssues(dropRedactedLogFindings(javaIssues, code));
     }
