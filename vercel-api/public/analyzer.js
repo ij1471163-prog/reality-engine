@@ -531,10 +531,29 @@ function analyzeCode(code, fileName) {
         });
     }
     // Pattern detection
+    // ═══════════════════════════════════════════════════
+    // [ADJ-MERGE] كان الشرطُ ‎Math.abs(x.line - pi.line) <= 1‎: بلاغٌ على بُعدِ
+    // سطرٍ واحدٍ من بلاغٍ بالعنوانِ نفسِه يُعَدّ تكرارًا ويُسقَط. والدمجان
+    // فوقَه (‎detectSecrets‎ و‎scanSecurity‎) يستعملان المساواةَ التامّة، فكان
+    // التساهلُ خاصًّا بهذا الموضعِ وحدَه لا سياسةً عامّة.
+    //
+    // ومشكلتان مستقلّتان على سطرَين متلاصقَين لا تجمعهما إلا المجاورة:
+    //     try { a(); } catch (e) {}
+    //     try { b(); } catch (e) {}
+    // فكان الثاني يُسقَط قبل أن يراه مسارُ الإصلاح. والضررُ ليس خفاءَ بلاغٍ
+    // فحسب: إعادةُ تحليلِ المُرشَّحِ تُظهر ما كان محجوبًا، فلا ينقص العددُ
+    // الكلّيُّ، فتحكم البوابةُ ‎REJECTED_NO_IMPROVEMENT‎ ويطرح Ghost الدفعةَ
+    // كلَّها. والمقيس: أربعُ catch متجاورة ⇒ أربعةٌ تُكتشَف، صفرٌ يُصلَح؛
+    // وبسطرٍ فارغٍ بينها ⇒ ثلاثةٌ من ثلاثة. المسافةُ هي المتغيّرُ الوحيد.
+    //
+    // والتكرارُ الحقيقيُّ — السطرُ نفسُه والعنوانُ نفسُه — ما زال يُسقَط هنا،
+    // ويُسقَط بعده ثانيةً في ‎dedupeIssues‎ بمفتاحِ ‎line + vulnClass‎ الذي
+    // يجمع العناوينَ المختلفةَ للثغرةِ الواحدة. فلم يُفتح بابُ تكرار.
+    // ═══════════════════════════════════════════════════
     if (typeof detectPatterns === 'function') {
         const patternIssues = runEngine('detectPatterns', () => detectPatterns(code, fileName), 'patterns');
         patternIssues.forEach(pi => {
-            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
+            const dup = issues.some(x => x.line === pi.line && x.title === pi.title);
             if (!dup) issues.push(pi);
         });
     }

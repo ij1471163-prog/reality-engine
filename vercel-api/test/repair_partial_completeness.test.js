@@ -14,16 +14,21 @@
 // وعادت 3/3 يومَ حُذف ‎ghost_mode.js‎ في ‎0e450b1‎، وسقطت ثانيةً يومَ أُعيد
 // في ‎71a4e81‎، حتى أصلحها ‎05257b9‎. فهذه الاختباراتُ تحرس ذلك العَود.
 //
-// ── ما هو ‎todo‎ ولماذا ───────────────────────────────────────────────
-// يبقى سببٌ ثانٍ غيرُ معالَج، ومُثبَتٌ بالتنفيذ، موضعُه ‎analyzer.js:537‎:
+// ── السببُ الثاني، وقد عولج ─────────────────────────────────────────
+// كان ‎analyzer.js:537‎ يقول:
 //     const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
 // فبلاغان من ‎detectPatterns‎ بالعنوانِ نفسِه على سطرَين متجاورَين يُعَدّان
-// تكرارًا، ويُسقَط الثاني قبل أن يراه مسارُ الإصلاح. ودمجُ ‎scanSecurity‎
-// فوقَه مباشرةً يستعمل المساواةَ التامّة (‎x.line === si.line‎)، فالتساهلُ
-// خاصٌّ بهذا الموضع. والضابطُ في ‎[PC-4]‎ و‎[PC-5]‎: المسافةُ سطرٌ واحدٌ هي
-// المتغيّرُ الوحيد — إن تباعدت الأسطر أُصلحت الحالةُ كاملةً.
-// لا تُعدَّل البوابةُ ولا المُصلِحاتُ لأجل هذه الاختبارات: الدواءُ في موضعِ
-// الدمج، وحتى ينزل يبقى الشرطُ مكتوبًا هنا ‎todo‎ لا أخضرَ كاذبًا.
+// تكرارًا، ويُسقَط الثاني قبل أن يراه مسارُ الإصلاح. وصار ‎[ADJ-MERGE]‎
+// مساواةً تامّةً كالدمجَين فوقَه (‎detectSecrets‎ و‎scanSecurity‎).
+// والضررُ لم يكن خفاءَ بلاغٍ فحسب: إعادةُ تحليلِ المُرشَّحِ تُظهر ما كان
+// محجوبًا فلا ينقص العددُ الكلّيّ، فتحكم البوابةُ ‎REJECTED_NO_IMPROVEMENT‎
+// ويطرح Ghost الدفعةَ كلَّها — أربعُ catch متجاورة: أربعةٌ تُكتشَف وصفرٌ
+// يُصلَح. و‎[PC-4]‎/‎[PC-5]‎ الضابط: بسطرٍ فارغٍ بينها كانت تُصلَح كلُّها،
+// فالمسافةُ هي المتغيّرُ الوحيد.
+//
+// ولم يُمَسّ في هذا العلاج إسقاطُ التكرارِ الحقيقيّ: السطرُ نفسُه والعنوانُ
+// نفسُه ما زال واحدًا — ‎[PC-11]‎ — ثم يمرّ الكلُّ على ‎dedupeIssues‎ بمفتاحِ
+// ‎line + vulnClass‎. ولم تُعدَّل البوابةُ ولا المُصلِحاتُ ولا أيُّ محرّك.
 // ═══════════════════════════════════════════════════════
 'use strict';
 const test = require('node:test'), assert = require('node:assert');
@@ -119,16 +124,18 @@ test('[PC-5] ثلاثةُ != متباعدة: تُصلَح كلُّها', () => {
   assert.strictEqual(occurrences(r.repaired, ' != '), 0);
 });
 
-// ═══ ما يُثبِت أن الدمجَ — لا الكاشفَ ولا المُصلِح — هو المُسقِط ═══
+// ═══ الدمجُ يُمرِّر المستقلَّ المتجاور، ويُسقط التكرارَ الحقيقيّ ═══
 
-test('[PC-6] الكاشفُ يرى المتجاورةَ كلَّها، والدمجُ يُسقط ما جاوَرَ غيرَه', () => {
+test('[PC-6] ما يراه الكاشفُ من المتجاورةِ يصل إلى مسارِ الإصلاح كاملًا', () => {
   for (const [code, n, rx] of [[CATCH2, 2, /catch/], [CATCH3, 3, /catch/],
                                [CATCH4, 4, /catch/], [NEQ3, 3, /!= بدل/]]) {
     const detected = (ctx.detectPatterns(code, 'pc6.js') || []).filter(i => rx.test(i.title));
     assert.strictEqual(detected.length, n, 'الكاشفُ نفسُه أنقص — العطبُ انتقل');
     const merged = (ctx.analyzeCode(code, 'pc6.js') || []).filter(i => rx.test(i.title));
-    assert.ok(merged.length < detected.length,
-      'لم يعد الدمجُ يُسقط شيئًا — حُلَّت المشكلةُ فليُرفع الـtodo عن [PC-7]…[PC-10]');
+    assert.strictEqual(merged.length, detected.length,
+      'الدمجُ أسقط بلاغًا مستقلًّا لمجرّدِ المجاورة — عاد ‎analyzer.js:537‎');
+    assert.deepStrictEqual(merged.map(i => i.line).sort((a, b) => a - b),
+                           detected.map(i => i.line).sort((a, b) => a - b));
   }
 });
 
@@ -140,23 +147,23 @@ test('[PC-7] المُصلِحُ قادرٌ على كلِّ سطرٍ متجاور
   }
 });
 
-// ═══ الشرطُ غيرُ المُحقَّقِ بعد — سببُه ‎analyzer.js:537‎ ═══
+// ═══ الإصلاحُ الكاملُ للحالاتِ التي كان الدمجُ يُسقط بلاغاتِها ═══
 
-const WHY = 'فجوةٌ مقيسة: ‎analyzer.js:537‎ يُسقط بلاغَ detectPatterns المجاورَ ' +
-            'لبلاغٍ بالعنوانِ نفسِه (‎Math.abs(x.line - pi.line) <= 1‎). غيرُ معالَجةٍ ' +
-            'في هذه الجولة: المطلوبُ تقريرُ سببٍ لا تعديلُ كود.';
-
-test('[PC-8] سطران متجاوران بالمشكلةِ نفسِها: يُصلَحان معًا', { todo: WHY }, () => {
-  assert.strictEqual(occurrences(cycle(CATCH2, 'pc8.js').repaired, 'catch (e) {}'), 0);
+test('[PC-8] سطران متجاوران بالمشكلةِ نفسِها: يُصلَحان معًا', () => {
+  const r = cycle(CATCH2, 'pc8.js');
+  assert.strictEqual(occurrences(r.repaired, 'catch (e) {}'), 0);
+  // كانت الدفعةُ تُطرح كلُّها، فيخرج صفرُ إصلاحاتٍ مع بلاغَين مكتشَفَين.
+  assert.strictEqual(r.rejected.length, 0);
+  assert.strictEqual(r.repairs.length, 2);
 });
 
-test('[PC-9] ثلاثةٌ وأربعةٌ متجاورة: تُصلَح كلُّها', { todo: WHY }, () => {
+test('[PC-9] ثلاثةٌ وأربعةٌ متجاورة: تُصلَح كلُّها', () => {
   assert.strictEqual(occurrences(cycle(CATCH3, 'pc9a.js').repaired, 'catch (e) {}'), 0);
   assert.strictEqual(occurrences(cycle(CATCH4, 'pc9b.js').repaired, 'catch (e) {}'), 0);
   assert.strictEqual(occurrences(cycle(NEQ3, 'pc9c.js').repaired, ' != '), 0);
 });
 
-test('[PC-10] لا يُعلَن نجاحٌ كاملٌ وجزءٌ من المشكلةِ باقٍ في الناتج', { todo: WHY }, () => {
+test('[PC-10] لا يُعلَن نجاحٌ كاملٌ وجزءٌ من المشكلةِ باقٍ في الناتج', () => {
   // ‎summary.total‎ يُحتسب من القائمةِ **بعد** الدمج، فما أسقطه الدمجُ لا
   // يدخل المقام. والنتيجةُ المقيسة: ‎total=2 fixed=2 score=100%‎ وفي الناتجِ
   // ‎catch (e) {}‎ واحدةٌ باقيةٌ على القرص.
@@ -166,6 +173,53 @@ test('[PC-10] لا يُعلَن نجاحٌ كاملٌ وجزءٌ من المشك
     if (r.summary.score === 100) {
       assert.strictEqual(occurrences(r.repaired, needle), 0,
         'أُعلن 100٪ وبقي ' + occurrences(r.repaired, needle) + ' من المشكلة');
+    }
+  }
+});
+
+// ═══ الحالتان جنبًا إلى جنب: ما يُسقَط وما يُمرَّر ═══
+
+/** يُشغِّل analyzeCode على كاشفِ أنماطٍ محقونٍ، ثم يُعيد الأصليَّ مهما جرى. */
+function withPatterns(stub, fn) {
+  const real = ctx.detectPatterns;
+  ctx.detectPatterns = stub;
+  try { return fn(); } finally { ctx.detectPatterns = real; }
+}
+const SRC = 'module.exports.f = function f(a, b) {\n  a();\n  b();\n  return f;\n};\n';
+const TITLE = 'بلاغُ اختبارٍ موضعيّ';
+const mk = line => ({ type: 'bug', sev: 'm', title: TITLE, line, ev: 'x',
+                      conf: 60, cIcon: '🟡', cAct: 'اختبار', cEv: [] });
+
+test('[PC-11] تكرارٌ حقيقيّ — السطرُ نفسُه والعنوانُ نفسُه: واحدٌ فقط يبقى', () => {
+  // يحرسه الدمجُ أوّلًا (‎x.line === pi.line && x.title === pi.title‎)، ثم
+  // ‎dedupeIssues‎ ثانيةً بمفتاحِ ‎line + vulnClass‎. والمقيسُ هو السلوك.
+  const out = withPatterns(() => [mk(2), mk(2), mk(2)],
+                           () => ctx.analyzeCode(SRC, 'pc11.js') || []);
+  assert.strictEqual(out.filter(i => i.title === TITLE).length, 1);
+});
+
+test('[PC-12] بلاغان مستقلّان على سطرَين متجاورَين: كلاهما يمرّ', () => {
+  const out = withPatterns(() => [mk(2), mk(3)],
+                           () => ctx.analyzeCode(SRC, 'pc12.js') || []);
+  // ‎Array.from‎ لا زينة: المصفوفةُ العائدةُ من الـVM من عالَمٍ آخر، و‎deepStrictEqual‎
+  // يفشل عليها وإن تطابق المحتوى.
+  const got = Array.from(out.filter(i => i.title === TITLE).map(i => i.line)).sort((a, b) => a - b);
+  assert.deepStrictEqual(got, [2, 3],
+    'المجاورةُ وحدَها أسقطت بلاغًا مستقلًّا — عاد ‎analyzer.js:537‎');
+});
+
+test('[PC-13] لا بلاغَين متطابقَين (سطر+عنوان) في ناتجِ ملفاتٍ حقيقيّة', () => {
+  const names = fs.readdirSync(PUBLIC_DIR)
+    .filter(n => n.endsWith('.js') && !n.includes('.min.'))
+    .sort().slice(0, 12);
+  assert.ok(names.length >= 6, 'المُدوَّنةُ أصغرُ من أن تُثبِت شيئًا');
+  for (const n of names) {
+    const out = ctx.analyzeCode(fs.readFileSync(path.join(PUBLIC_DIR, n), 'utf8'), n) || [];
+    const seen = new Set();
+    for (const i of out) {
+      const key = (i.line || 0) + '\u0000' + String(i.title || '');
+      assert.ok(!seen.has(key), 'تكرارٌ تامٌّ في ' + n + ' عند السطر ' + i.line);
+      seen.add(key);
     }
   }
 });
