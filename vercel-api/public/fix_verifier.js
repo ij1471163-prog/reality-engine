@@ -1364,7 +1364,16 @@ var FixVerifier = (() => {
   // التثبيت وحدها لا تُغيّر حكمًا في أي حالة قابلة للبناء (مقيس).
   function secretAssignOf(line) {
     const s = String(line);
-    const m = /^\s*(?:(?:const|let|var|public|private|protected|static|final|readonly)\s+)*(\$?[\w$]+(?:\s*[.[][\w$'"\]]+)*)\s*[:=]\s*(['"])((?:(?!\2).)*)\2/.exec(s);
+    // [TYPED-DECL] كان النمطُ يسمح بالمُعدِّلات ولا يسمح باسمِ النوع، ولا
+    // يعرف ‎export‎. وجافا وC# لا يخلو إسنادُ حقلٍ فيهما من نوع:
+    //     static final String DB_PASSWORD = "…"
+    //     const string DB_PASSWORD = "…"
+    // فكانت ‎secretAssignOf‎ تُرجع null، فتخرج ‎gone‎ فارغةً من
+    // ‎secretFixProven‎، فيُرَدُّ كلُّ نقلٍ صحيحٍ إلى البيئة في اللغتَين
+    // بـ‎REJECTED_SECRET_FIX_UNPROVEN‎ — أربعُ خلايا في مصفوفةِ القدرة.
+    // والنوعُ اختياريٌّ والمفتاحُ بعده مطلوبٌ قبل ‎[:=]‎، فلا يبتلع النوعُ
+    // المفتاحَ حيث لا نوعَ أصلًا (js و py و php): يتراجع النمطُ ويلتقطه.
+    const m = /^\s*(?:(?:export|const|let|var|public|private|protected|internal|static|final|readonly)\s+)*(?:[A-Za-z_][\w.]*(?:<[^<>=]*>)?(?:\[\])?\s+)?(\$?[\w$]+(?:\s*[.[][\w$'"\]]+)*)\s*[:=]\s*(['"])((?:(?!\2).)*)\2/.exec(s);
     if (!m) return null;
     const key = m[1], quote = m[2], value = m[3];
     if (!SECRET_KEY_RX.test(key) && !SECRET_VALUE_RX.test(value)) return null;
@@ -1671,7 +1680,10 @@ var FixVerifier = (() => {
       if (!secretLiteralIsWholeValue(line, lang)) return false;   // الدعوى نفسها غير مُثبتة
       const a = secretAssignOf(line);
       const sameKey = new RegExp(
-        '^\\s*(?:(?:const|let|var|public|private|protected|static|final|readonly)\\s+)*' +
+        // [TYPED-DECL] نفسُ السماحِ في سطرِ البديل، وإلا أُثبِت الاختفاءُ
+        // ولم يُثبَت الإحلال.
+        '^\\s*(?:(?:export|const|let|var|public|private|protected|internal|static|final|readonly)\\s+)*' +
+        '(?:[A-Za-z_][\\w.]*(?:<[^<>=]*>)?(?:\\[\\])?\\s+)?' +
         esc(a.key) + '\\s*[:=]');
       // سطرٌ جديد يُسنِد إلى نفس المفتاح ويقرأ من مصدر بيئة/أسرار
       const proven = A.some(l => !bSet.has(l.trim()) && sameKey.test(l) && ENV_SOURCE_RX.test(l));
