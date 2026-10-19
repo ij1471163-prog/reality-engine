@@ -117,12 +117,16 @@ var KnowledgeBase = (() => {
       { lang: 'any', pattern: /(?:PASSWORD|password)\s*=\s*["'][^"']{4,}["']/i, conf: 0.90 },
       { lang: 'any', pattern: /(?:DB_PASS|DB_PASSWORD|PASS)\s*=\s*["'][^"']{4,}["']/i, conf: 0.90 },
       { lang: 'any', pattern: /(?:SECRET|secret)\s*=\s*["'][^"']{8,}["']/i, conf: 0.90 },
-      { lang: 'any', pattern: /sk_live_[a-zA-Z0-9]{20,}/i, conf: 0.99 },
-      { lang: 'any', pattern: /sk_test_[a-zA-Z0-9]{20,}/i, conf: 0.95 },
-      { lang: 'any', pattern: /ghp_[a-zA-Z0-9]{36}/i, conf: 0.99 },
-      { lang: 'any', pattern: /AKIA[0-9A-Z]{16}/i, conf: 0.99 },
-      { lang: 'any', pattern: /AIzaSy[a-zA-Z0-9_-]{33}/i, conf: 0.99 },
-      { lang: 'any', pattern: /SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}/i, conf: 0.99 },
+      // ‎selfEvident‎: قيمةٌ حرفيّةٌ تُثبت نفسَها. الأنماطُ أعلاه تصف **شكلَ
+      // إسناد** (‎API_KEY = "…"‎) فيبطُلها نقلُ القيمةِ إلى البيئة، أمّا هذه
+      // فتصف **القيمةَ** نفسَها، ووجودُ ‎process.env‎ في موضعٍ آخرَ من السطرِ
+      // لا يجعلها آمنة. انظر ‎[SELF-EVIDENT]‎ عند فحصِ قائمةِ الأمان.
+      { lang: 'any', pattern: /sk_live_[a-zA-Z0-9]{20,}/i, selfEvident: true, conf: 0.99 },
+      { lang: 'any', pattern: /sk_test_[a-zA-Z0-9]{20,}/i, selfEvident: true, conf: 0.95 },
+      { lang: 'any', pattern: /ghp_[a-zA-Z0-9]{36}/i, selfEvident: true, conf: 0.99 },
+      { lang: 'any', pattern: /AKIA[0-9A-Z]{16}/i, selfEvident: true, conf: 0.99 },
+      { lang: 'any', pattern: /AIzaSy[a-zA-Z0-9_-]{33}/i, selfEvident: true, conf: 0.99 },
+      { lang: 'any', pattern: /SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}/i, selfEvident: true, conf: 0.99 },
     ],
     safe: [
       { lang: 'js',  pattern: /process\.env\.\w+/i, conf: 0.99 },
@@ -328,13 +332,33 @@ var KnowledgeBase = (() => {
 
       allPatterns.forEach(({ type, sev, patterns, safe }) => {
         // تحقق لو في safe pattern
-        const isSafe = safe.some(s => 
+        const isSafe = safe.some(s =>
           (s.lang === 'any' || s.lang === lang) && s.pattern.test(t)
         );
-        if (isSafe) return;
 
+        // ═══════════════════════════════════════════════════
+        // [SELF-EVIDENT] كان ‎if (isSafe) return;‎ هنا، فيُبيَّض السطرُ كلُّه
+        // لمجرّدِ ورودِ ‎process.env.X‎ فيه. والسطرُ الواحدُ يحمل الاثنين معًا
+        // في شكلٍ شائع:
+        //     const cfg = { r: process.env.REGION, id: "AKIA…" };
+        //     const API_KEY = process.env.K || "…";
+        // فكان المفتاحُ الحقيقيُّ لا يُرى أصلًا (مقيس: ‎AKIA‎ مع ‎process.env‎
+        // ⇒ صفرُ بلاغ).
+        //
+        // والأسوأُ أن المُصلِحَ نفسَه يصنع هذا الشرط. سطرٌ فيه سرّان:
+        //     const A = "sk_test_1…", B = "sk_test_2…";
+        // يُصلَح أوّلُهما إلى ‎process.env.A‎، فيُبيَّض السطرُ فيختفي البلاغُ
+        // وتقول البوابةُ ‎before:1 after:0‎ ويُعلَن ‎score=100٪‎ — والسرُّ
+        // الثاني حيٌّ على القرص. مقيسٌ بالتنفيذ.
+        //
+        // والتمييزُ الذي يحسم: أنماطُ الإسنادِ (‎API_KEY = "…"‎) تصف شكلًا
+        // يبطُل فعلًا بالنقلِ إلى البيئة، فتبقى قائمةُ الأمانِ عليها كما هي.
+        // وأنماطُ ‎selfEvident‎ تصف القيمةَ نفسَها — مفتاحُ Stripe مفتاحُ
+        // Stripe مهما جاوره — فلا تُبيَّض.
+        // ═══════════════════════════════════════════════════
         patterns.forEach(p => {
           if (p.lang !== 'any' && p.lang !== lang) return;
+          if (isSafe && !p.selfEvident) return;
           if (!p.pattern.test(t)) return;
 
           const key = `${ln}:${type}`;
