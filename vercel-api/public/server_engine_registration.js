@@ -22,7 +22,14 @@ function jsSyntax(code) {
 // بنية لا يفهمها بثقة (regex غامض، heredoc، ملف PHP فيه ?>) بدل التخمين.
 function structuralSyntax(code, lang) {
   const php = lang === "php";
+  // [CLIKE-GATE] java و csharp: نفسُ الموازنةِ بلا ما هو خاصٌّ بـJS —
+  // لا حرفيّاتِ regex (فالشرطةُ المائلةُ قسمةٌ دائمًا) ولا نصوصَ العلامةِ
+  // الخلفيّة. وما لا يحسمه الفاحصُ يُعلَن «غيرَ محسوم» لا «سليمًا»:
+  // كتلُ النصِّ ‎"""‎ في جافا وC#، والنصُّ الحرفيُّ ‎@"‎ في C#.
+  const clike = lang === "java" || lang === "csharp";
   if (php && (/<<<\s*['"]?\w/.test(code) || /\?>/.test(code))) return "unknown";
+  if (clike && /"""/.test(code)) return "unknown";
+  if (lang === "csharp" && /@"/.test(code)) return "unknown";
   const stack = [];
   const close = { ")": "(", "]": "[", "}": "{" };
   let i = 0, prev = "";           // prev = آخر رمز مهم (لتمييز regex عن القسمة)
@@ -34,7 +41,7 @@ function structuralSyntax(code, lang) {
     const c = code[i], d = code[i + 1];
     if (c === "/" && d === "/" || (php && c === "#" && d !== "[")) { while (i < n && code[i] !== "\n") i++; continue; }
     if (c === "/" && d === "*") { const e = code.indexOf("*/", i + 2); if (e < 0) return "broken: unterminated comment"; i = e + 2; continue; }
-    if (c === "'" || c === '"' || (!php && c === "`")) {
+    if (c === "'" || c === '"' || (!php && !clike && c === "`")) {
       const q = c; i++;
       while (i < n) {
         const ch = code[i];
@@ -48,7 +55,7 @@ function structuralSyntax(code, lang) {
       if (code[i] === q) { i++; prev = "str"; }
       continue;
     }
-    if (!php && c === "/" && exprBefore()) {          // regex literal
+    if (!php && !clike && c === "/" && exprBefore()) {  // regex literal
       i++; let cls = false;
       while (i < n) {
         const ch = code[i];
@@ -91,14 +98,15 @@ function structuralSyntax(code, lang) {
 
 function check(code, lang) {
   if (lang === "javascript") return jsSyntax(code);
-  if (lang === "typescript" || lang === "php") return structuralSyntax(code, lang);
+  if (lang === "typescript" || lang === "php" ||
+      lang === "java" || lang === "csharp") return structuralSyntax(code, lang);
   return "unknown";
 }
 
 // يُرجع سبب الرفض أو null
 function serverSyntaxProblem(before, after, fileName) {
   const lang = FixVerifier.detectLanguage(fileName);
-  if (!["javascript", "typescript", "php"].includes(lang)) return null;
+  if (!["javascript", "typescript", "php", "java", "csharp"].includes(lang)) return null;
   if (check(before, lang) !== "ok") return null;
   const a = check(after, lang);
   return a.startsWith("broken") ? `REJECTED_SYNTAX_BROKEN [${lang}]: ${a.slice(8)}` : null;

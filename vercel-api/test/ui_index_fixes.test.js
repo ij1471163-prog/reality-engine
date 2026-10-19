@@ -242,10 +242,11 @@ test('[UI-3d] أربعُ لغات: الموضعُ صحيح، ولا سطرَ ي�
   }
 });
 
-test('[UI-3f] documented: java/cs تردّهما البوابة لغياب فاحصٍ نحوي — حدٌّ قائم', () => {
-  // ليس من أثر هذا التعديل: البوابة fail-closed، فلا تعتمد لغةً لا تستطيع
-  // فحصها نحويًّا. فـ‎applyFix‎ يبني المُرشَّح صحيحًا والبوابةُ ترفضه.
-  // ويُثبَّت هنا لئلا يُقرأ «لم يُطبَّق» خطأً على أنه خللُ موضع.
+test('[UI-3f] جافا صار لها فاحصٌ نحويّ، فالمُرشَّحُ الصحيحُ يُقبَل ويُكتَب', () => {
+  // كان هذا الاختبارُ يوثّق الحدَّ المعاكس: لا فاحصَ لجافا فتردُّ البوابةُ
+  // كلَّ مُرشَّحٍ مهما صحّ، وسأل نصُّه صراحةً «أضيف فاحصٌ نحوي؟». وقد أُضيف
+  // في ‎[CLIKE-GATE]‎، فصار يُثبّت السلوكَ الجديد: قبولٌ للصحيح، ورفضٌ
+  // للمكسور بدليلٍ بنيويّ، لا رفضٌ شاملٌ لغيابِ أداة.
   const ctx = loadPage();
   const src = ['class A {', '  String u = "http://x.example.com/p";', '  int n = 1;', '}'].join('\n');
   run(ctx, 'F["App.java"] = ' + JSON.stringify(src) + ';' +
@@ -254,12 +255,19 @@ test('[UI-3f] documented: java/cs تردّهما البوابة لغياب فا�
     'JSON.stringify((function(){var r = FixVerifier.verifyFix(F["App.java"],' +
     ' F["App.java"].replace("http://","https://"), "App.java", analyzeCode, {});' +
     ' return { accepted: r.accepted, reason: String(r.reason || ""), status: r.syntaxStatus };})())'));
-  assert.strictEqual(v.accepted, false, 'جافا صارت تُقبَل — راجعْ: أضيف فاحصٌ نحوي؟');
-  assert.strictEqual(v.status, 'no_checker');
-  assert.match(v.reason, /REJECTED_NO_SYNTAX_CHECKER \[java\]/);
+  assert.strictEqual(v.accepted, true, 'مُرشَّحٌ صحيحٌ في جافا ما زال يُرَدّ: ' + v.reason);
+  assert.doesNotMatch(v.reason, /REJECTED_NO_SYNTAX_CHECKER/);
 
   run(ctx, 'applyFix("App.java", 1, "", ' + JSON.stringify('  String u = "https://x.example.com/p";') + ', 0)');
-  assert.strictEqual(run(ctx, 'F["App.java"]'), src, 'كُتب تعديلٌ لم تُقرّه البوابة');
+  assert.match(run(ctx, 'F["App.java"]'), /https:\/\/x\.example\.com/, 'أقرّته البوابةُ ولم يُكتَب');
+
+  // ولا يُقبل المكسور: قوسٌ ناقصٌ يُرَدّ بسببٍ بنيويٍّ مُسمًّى، لا بغيابِ فاحص.
+  const w = JSON.parse(run(ctx,
+    'JSON.stringify((function(){var r = FixVerifier.verifyFix(' +
+    JSON.stringify(src) + ', ' + JSON.stringify(src.replace('\n}', '')) +
+    ', "App.java", analyzeCode, {});' +
+    ' return { accepted: r.accepted, reason: String(r.reason || "") };})())'));
+  assert.strictEqual(w.accepted, false, 'قُبل مُرشَّحٌ مكسورٌ في جافا');
 });
 
 test('[UI-3e] وسطرٌ خارج المدى لا يُغيّر شيئًا', () => {

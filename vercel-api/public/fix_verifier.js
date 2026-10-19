@@ -425,7 +425,14 @@ var FixVerifier = (() => {
   //                                             (نفس مسار اليوم بالضبط)
   function structuralSyntax(code, lang) {
     const php = lang === "php";
+    // [CLIKE-GATE] java و csharp: نفسُ الموازنةِ بلا ما هو خاصٌّ بـJS —
+    // لا حرفيّاتِ regex (فالشرطةُ المائلةُ قسمةٌ دائمًا) ولا نصوصَ العلامةِ
+    // الخلفيّة. وما لا يحسمه الفاحصُ يُعلَن «غيرَ محسوم» لا «سليمًا»:
+    // كتلُ النصِّ ‎"""‎ في جافا وC#، والنصُّ الحرفيُّ ‎@"‎ في C#.
+    const clike = lang === "java" || lang === "csharp";
     if (php && (/<<<\s*['"]?\w/.test(code) || /\?>/.test(code))) return "unknown";
+    if (clike && /"""/.test(code)) return "unknown";
+    if (lang === "csharp" && /@"/.test(code)) return "unknown";
     const stack = [];
     const close = { ")": "(", "]": "[", "}": "{" };
     let i = 0, prev = "";           // prev = آخر رمز مهم (لتمييز regex عن القسمة)
@@ -437,7 +444,7 @@ var FixVerifier = (() => {
       const c = code[i], d = code[i + 1];
       if (c === "/" && d === "/" || (php && c === "#" && d !== "[")) { while (i < n && code[i] !== "\n") i++; continue; }
       if (c === "/" && d === "*") { const e = code.indexOf("*/", i + 2); if (e < 0) return "broken: unterminated comment"; i = e + 2; continue; }
-      if (c === "'" || c === '"' || (!php && c === "`")) {
+      if (c === "'" || c === '"' || (!php && !clike && c === "`")) {
         const q = c; i++;
         while (i < n) {
           const ch = code[i];
@@ -451,7 +458,7 @@ var FixVerifier = (() => {
         if (code[i] === q) { i++; prev = "str"; }
         continue;
       }
-      if (!php && c === "/" && exprBefore()) {          // regex literal
+      if (!php && !clike && c === "/" && exprBefore()) {  // regex literal
         i++; let cls = false;
         while (i < n) {
           const ch = code[i];
@@ -562,6 +569,24 @@ var FixVerifier = (() => {
       if (v === "unknown") {
         return { ok: false, available: false, language,
           reason: "php structure not decidable (heredoc or close-tag) - no verdict" };
+      }
+      return { ok: false, available: true, language, reason: v };
+    }
+
+    // [CLIKE-GATE] على مثالِ ‎[PHP-GATE]‎ و‎[TS-GATE]‎ حرفًا: نقلُ الفحصِ
+    // البنيويِّ القائمِ إلى لغتَين كانتا بلا فاحصٍ إطلاقًا، فكان كلُّ مُرشَّحٍ
+    // فيهما يُرَدّ بـ‎REJECTED_NO_SYNTAX_CHECKER‎ مهما صحّ. ومقيسٌ أن ذلك كان
+    // يُلغي إصلاحَ java/cs كلَّه (ثماني خلايا في مصفوفةِ القدرة).
+    // ولا يُضعِف Fail-Closed:
+    //   "ok"      ⇒ available:true,  ok:true   ⇒ تكمل بقيةُ فحوص البوابة
+    //   "broken…" ⇒ available:true,  ok:false  ⇒ REJECTED_SYNTAX_BROKEN
+    //   "unknown" ⇒ available:false            ⇒ REJECTED_NO_SYNTAX_CHECKER
+    if (language === "java" || language === "csharp") {
+      const v = structuralSyntax(code, language);
+      if (v === "ok") return { ok: true, available: true, language, reason: null };
+      if (v === "unknown") {
+        return { ok: false, available: false, language,
+          reason: language + " structure not decidable (text block or verbatim string) - no verdict" };
       }
       return { ok: false, available: true, language, reason: v };
     }

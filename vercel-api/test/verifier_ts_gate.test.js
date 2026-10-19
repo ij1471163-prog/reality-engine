@@ -128,7 +128,12 @@ test('[TSG-3] وأحكامُ اللغاتِ الأخرى لم تتغيّر', () 
     ['b.php',  '<?php\nfunction f() { return 1; }\n?>\n','php',        false, false],
     ['a.go',   'package main\nfunc main() {}\n',         'go',         false, false],
     ['a.rb',   'def f\n  1\nend\n',                      'ruby',       false, false],
-    ['a.java', 'class A { int f() { return 1; } }\n',     'java',       false, false],
+    // java و csharp لهما فاحصٌ بنيويٌّ منذ ‎[CLIKE-GATE]‎؛ وكانتا
+    // ‎false,false‎ أي ‎REJECTED_NO_SYNTAX_CHECKER‎ لكلِّ مُرشَّح.
+    ['a.java', 'class A { int f() { return 1; } }\n',     'java',       true,  true],
+    ['b.java', 'class A { int f() { return 1; }\n',       'java',       false, true],
+    ['a.cs',   'class A { int F() { return 1; } }\n',     'csharp',     true,  true],
+    ['b.cs',   'class A { string p = @"C:\\x"; }\n',       'csharp',     false, false],
   ];
   for (const [file, code, lang, ok, available] of EXPECT) {
     const r = check(code, file);
