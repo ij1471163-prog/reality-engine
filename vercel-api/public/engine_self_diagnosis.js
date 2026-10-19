@@ -86,6 +86,8 @@ var EngineSelfDiagnosis = (() => {
     "advanced_analyzer.js",
     "threat_detector.js",
     "dependency_analyzer.js",
+    // EDIT-LAYER: يطابق بيان api/analyze.js — انظر repair_edit.js
+    "repair_edit.js",
     "repair_engine.js", "fallback_fixes.js", "emergency_fixes.js",
     "smart_repair.js", "fixers_orchestrator.js", "repair_sql.js", "self_healing_engine.js",
     "repair_html.js", "repair_advanced.js", "fix_verifier.js",

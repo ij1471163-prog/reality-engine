@@ -853,7 +853,85 @@ function _redactLoggerSink(line) {
 }
 
 // ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
+// ═══════════════════════════════════════════════════════
+// [EDIT-LAYER/LOG] مسارُ الشجرةِ أمامَ المسارِ النصّيّ — إضافةٌ لا بديل
+// ═══════════════════════════════════════════════════════
+// المعرفةُ هنا كما هي (‎_isSensitiveLogName‎، ‎_isLogReceiver‎،
+// ‎_LOG_SINK_METHODS‎) — والجديدُ أن المواضعَ تأتي من مُحلِّلٍ لا من نمط.
+// فما كان يتعذّر على النصِّ يصير بديهيًّا: ‎)‎ داخل نصٍّ حرفيّ، ونداءٌ
+// متداخلٌ في الوسائط، ونداءان في سطرٍ واحد، ووسائطُ على أسطر.
+//
+// والنصوصُ الحرفيةُ لا تُمَسّ لأنها **نوعُ عُقدةٍ مختلف**، لا لأن قاعدةً
+// تستثنيها. وكذلك قيمةُ نداءٍ (‎getToken()‎): عُقدةُ نداءٍ لا اسمُ سرّ.
+//
+// أيُّ تعذُّرٍ ⇒ ‎null‎ ⇒ يُكمل المُصلِحُ القائمُ كما كان حرفًا بحرف.
+function _logSecretByTree(code, issue, ext) {
+  if (typeof repairEditSupports !== 'function' || !repairEditSupports(ext)) return null;
+  const line = Number(issue && issue.line) || 0;
+  if (line < 1) return null;
+  const ast = repairEditParse(code);
+  if (!ast) return null;
+
+  const edits = [];
+  const seen = new Set();
+  for (const call of repairEditCallsAtLine(ast, line)) {
+    const callee = call.callee;
+    if (!callee || callee.type !== 'MemberExpression' || callee.computed) continue;
+    const meth = callee.property && callee.property.name;
+    if (!meth || !_LOG_SINK_METHODS.has(String(meth).toLowerCase())) continue;
+    const recv = repairEditText(code, callee.object);
+    if (recv !== 'console' && !_isLogReceiver(recv)) continue;
+
+    // النزولُ في الضمّ: ‎"tok: " + user.token‎ طرفاه عُقدتان، لا نصٌّ واحد
+    const scan = n => {
+      if (!n || seen.has(n.start + ':' + n.end)) return;
+      if (n.type === 'BinaryExpression' && n.operator === '+') { scan(n.left); scan(n.right); return; }
+      if (n.type === 'Literal' || n.type === 'TemplateLiteral') return;     // نصٌّ: لا يُمَسّ
+      if (n.type === 'CallExpression' || n.type === 'NewExpression') return; // قيمةٌ لا اسم
+      if (n.type === 'Identifier' || n.type === 'MemberExpression') {
+        const txt = repairEditText(code, n);
+        if (_LOG_RESERVED.has(txt.split('.')[0])) return;
+        if (_isSensitiveLogName(txt)) {
+          seen.add(n.start + ':' + n.end);
+          edits.push([n.start, n.end, '"[REDACTED]"']);
+        }
+        return;
+      }
+      if (n.type === 'ObjectExpression') {
+        for (const p of n.properties || []) {
+          if (p.type !== 'Property' || p.computed) continue;
+          const key = p.key && (p.key.name || p.key.value);
+          if (key && _isSensitiveLogName(String(key)) && p.value &&
+              p.value.type !== 'Literal' && p.value.type !== 'TemplateLiteral') {
+            seen.add(p.value.start + ':' + p.value.end);
+            edits.push([p.value.start, p.value.end, '"[REDACTED]"']);
+          }
+        }
+      }
+    };
+    for (const arg of call.arguments || []) scan(arg);
+  }
+  if (!edits.length) return null;
+
+  const fixedCode = repairEditApply(code, edits);
+  if (fixedCode === null) return null;
+
+  // ‎patch‎ يبقى على عقدِه: نصُّ السطرِ المُعدَّلِ الأوّلِ بعد التحرير
+  const at = repairEditLineOf(code, Math.min(...edits.map(e => e[0])));
+  const patch = String(fixedCode).split('\n')[at - 1];
+  return {
+    fixed: fixedCode,
+    patch: (patch === undefined ? '' : patch).trim(),
+    reason: 'Sensitive data redacted from logs',
+  };
+}
+
 function fixLogSecret(code, issue, lines, ext) {
+  // [EDIT-LAYER/LOG] يُجرَّب مسارُ الشجرةِ أوّلًا، ويعود إلى ما تحتَه عند أيِّ
+  // تعذُّر. والجسمُ الباقي من هنا إلى آخرِ الدالّةِ لم يتغيّر حرفًا.
+  const byTree = _logSecretByTree(code, issue, ext);
+  if (byTree) return byTree;
+
   const line = lines[issue.line - 1];
   if (!line) return null;
   let fixed = line;

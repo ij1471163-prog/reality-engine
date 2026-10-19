@@ -107,8 +107,11 @@ test('[MAN-4] الحذف لم يمسّ أي سكربت آخر — القائمت
   // [S1] 60→61 و62→63: أُضيف learning_validation.js إلى البيانين عمدًا ضمن
   // تقسيم التعلّم. الزيادة واحدةٌ لكل بيان — وأيُّ زيادةٍ غيرها تُسقِط هذا.
   // [S2] 61→62 و63→64: وأُضيف learning_knowledge.js كذلك، للسبب نفسه.
+  // [S3] 64→65 في بيانِ الصفحة وحدَه: أُضيف repair_edit.js — طبقةُ تحريرٍ على
+  // مدى المحارف تستعملها مُصلِحاتُ repair_engine.js. زيادةٌ واحدةٌ مقصودة،
+  // والبيانُ الآخر لم يتغيّر لأن هذا السكربتَ ليس من بيانِه.
   const counts = MANIFESTS.map(({ file }) => srcsOf(fs.readFileSync(file, 'utf8')).length);
-  assert.deepStrictEqual(counts, [62, 64],
+  assert.deepStrictEqual(counts, [62, 65],
     'عدد السكربتات تغيّر: ' + JSON.stringify(counts) +
     ' — إن كان التغيير مقصودًا فليُحدَّث هذا الرقم صراحةً');
 });

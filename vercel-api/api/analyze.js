@@ -89,6 +89,9 @@ module.exports = async (req, res) => {
       'advanced_analyzer.js',
       'threat_detector.js',
       'dependency_analyzer.js',
+      // EDIT-LAYER: آلةُ تحريرٍ على مدى المحارف تستعملها مُصلِحاتُ
+      // repair_engine.js. تُحمَّل قبلها، وغيابُها يُعيد المسارَ النصّيّ.
+      'repair_edit.js',
       'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
       'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'self_healing_engine.js',
       'repair_html.js', 'repair_advanced.js', 'fix_verifier.js',

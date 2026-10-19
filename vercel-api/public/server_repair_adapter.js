@@ -78,6 +78,8 @@ function createRepairEngine() {
     "dependency_analyzer.js",
     "repair_sql.js",
     "fix_verifier.js",
+    // EDIT-LAYER: تُحمَّل قبل repair_engine.js، وغيابُها يُعيد المسارَ النصّيّ
+    "repair_edit.js",
     "repair_engine.js",
     "smart_repair.js",
     "sql_injection_fix.js",
