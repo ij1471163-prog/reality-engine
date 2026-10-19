@@ -642,7 +642,17 @@ function fixAccumulation(code, issue, lines, ext) {
 
   // إسناد عادي للمتغير نفسه فقط: ليس ==/=>، ولا خاصية obj.X، ولا تعريف let/const/var،
   // ولا داخل رأس for(...)، ولا وسيط مسمّى في Python f(x=...).
-  const re = new RegExp('(^|[^\\w$.])' + esc + '\\s*=(?![=>])', 'g');
+  // [PHP-SIGIL] الصنفُ ‎[^\w$.]‎ يمنع أن يسبق الاسمَ ‎$‎ — وهو في PHP سِمةُ
+  // المتغيّرِ نفسِها لا جزءٌ من اسمٍ أطول. فكان ‎$total = …‎ لا يُطابَق أصلًا
+  // فيُرجع المُصلِحُ ‎null‎ لكلِّ تراكمٍ في PHP (مقيس: ‎FIXER_NO_CHANGE‎).
+  // فتُطلَب السِّمةُ صراحةً هناك، وتُكتَب في البديلِ كما كانت.
+  //
+  // والهدفُ يصل بالشكلَين: محلّلُ المشروعِ يضع ‎total‎ في العنوان بلا سِمة،
+  // ومُستدعون آخرون يضعون ‎$total‎ بها. فلا تُضاف إلا إن لم تكن فيه أصلًا،
+  // وإلا صار النمطُ ‎\$\$total‎ فلا يُطابق شيئًا.
+  const phpSigil = ext === 'php' && !target.startsWith('$');
+  const sig = phpSigil ? '\\$' : '';
+  const re = new RegExp('(^|[^\\w$.])' + sig + esc + '\\s*=(?![=>])', 'g');
   const hits = [...line.matchAll(re)].filter(m => {
     const before = line.slice(0, m.index + m[1].length);
     if (/\b(?:let|const|var)\s+(?:[\w$]+\s*=[^,;]*,\s*)*$/.test(before)) return false;
@@ -689,7 +699,8 @@ function fixAccumulation(code, issue, lines, ext) {
         new RegExp('\\.forEach\\s*\\(\\s*\\(\\s*[\\w$]+\\s*,\\s*' + pe + '\\s*\\)').test(code)) return null;
   }
 
-  const fixed = line.slice(0, start) + target + ' += ' + line.slice(end).replace(/^\s*/, '');
+  const fixed = line.slice(0, start) + (phpSigil ? '$' : '') + target +
+                ' += ' + line.slice(end).replace(/^\s*/, '');
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: `${target} = → ${target} +=` };
 }

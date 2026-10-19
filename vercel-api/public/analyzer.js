@@ -264,7 +264,13 @@ function loopLines(code, ext) {
             inLoop[i] = stack.length ? 1 : 0;
             if (/^(?:for|while)\b.*:\s*$/.test(t)) stack.push(ind);
         } else {
-            const opensLoop = /(^|[^\w$])(?:for|while)\s*\(/.test(clean) || /\.forEach\s*\(/.test(clean);
+            // [FOREACH-LOOP] ‎foreach (…)‎ حلقةُ PHP وC# الأشيع، ولم تكن
+            // تُطابَق: ‎for‎ يليه ‎each‎ لا ‎(‎، و‎\.forEach\s*\(‎ يشترط نقطةً.
+            // فكان كلُّ سطرٍ داخلَ ‎foreach‎ يُقرأ خارجَ حلقة، وكاشفُ التراكم
+            // لا يعمل إلا داخلَ حلقة — فسقط ‎ACCUMULATION/php‎ كلُّه رغم أن
+            // بقيّةَ شروطِه مُستوفاة (مقيسٌ: النمطُ يطابق، والمتغيّرُ مُهيَّأٌ
+            // بصفرٍ قبلَها، والسطرُ ليس ضوضاء — والحلقةُ وحدَها كانت صفرًا).
+            const opensLoop = /(^|[^\w$])(?:foreach|for|while)\s*\(/.test(clean) || /\.forEach\s*\(/.test(clean);
             inLoop[i] = stack.length ? 1 : 0;
             if (opensLoop) stack.push(depth);
             depth += (clean.match(/\{/g) ?? []).length - (clean.match(/\}/g) ?? []).length;
@@ -480,8 +486,15 @@ function analyzeCode(code, fileName) {
         const queryBound = /^\s*query\s*=/m.test(code) || /\bdef\s+\w+\s*\([^)]*\bquery\b/.test(code) ||
                            /\bfor\s+query\b/.test(code) || /\bas\s+query\b/.test(code) ||
                            /\bquery\s*:/.test(code);
-        if (code.includes('cursor.execute(query') && !queryBound) {
-            const qLine = code.split('\n').findIndex(l => l.includes('cursor.execute(query')) + 1;
+        // [EXEC-RECEIVER] كان الشرطُ نصًّا حرفيًّا: ‎code.includes('cursor.execute(query')‎.
+        // واسمُ المؤشِّرِ اصطلاحٌ لا قاعدة — ‎cur‎ و‎db‎ و‎conn‎ شائعةٌ مثلُه،
+        // وكانت تمرّ بلا بلاغٍ البتّة (مقيس: ‎cur.execute(query)‎ و
+        // ‎db.execute(query)‎ ⇒ صفرُ بلاغ، و‎cursor‎ وحدَه يُبلَّغ عنه).
+        // والحارسُ هو ‎queryBound‎ لا اسمُ المُستقبِل: لا يُبلَّغ إلا إذا لم
+        // يكن ‎query‎ مُعرَّفًا في الملفِّ أصلًا.
+        const _execQ = /\b[\w.]+\.execute\s*\(\s*query\b/;
+        if (_execQ.test(code) && !queryBound) {
+            const qLine = code.split('\n').findIndex(l => _execQ.test(l)) + 1;
             if (qLine > 0) {
                 issues.push({ type:'py', sev:'c', line:qLine, ev:'cursor.execute(query, ...)',
                     title:'🔴 NameError: query غير معرّف — أزل # من query',
@@ -604,7 +617,12 @@ function analyzeCode(code, fileName) {
         _accumVars.forEach(_v => {
             const _esc = escapeRegex(_v);
             const _p = new RegExp('\\b'+_esc+'\\s*=(?!=|\\+|-)\\s*\\S');
-            if (_p.test(_t) && !/(?:let|var|const)\s+/.test(_t)) {
+            // [SELF-ACCUM] ‎x = x + 1‎ تراكمٌ مكتوبٌ مطوَّلًا، لا عطبُ ‎=‎ مكانَ
+            // ‎+=‎. وكان يُبلَّغ عنه، واقتراحُ إصلاحِه ‎x += x + 1‎ — وهو يُضاعف.
+            // فيُستثنى الطرفُ الأيمنُ الذي يبدأ بالمتغيّرِ نفسِه. والعطبُ
+            // المقصود (‎total = it.price‎) طرفُه الأيمنُ شيءٌ آخرُ فيبقى.
+            const _self = new RegExp('\\b'+_esc+'\\s*=(?!=)\\s*\\$?'+_esc+'\\b');
+            if (_p.test(_t) && !_self.test(_t) && !/(?:let|var|const)\s+/.test(_t)) {
                 const _known = _declaredVars2.has(_v) ||
                     _lines2.slice(0,_i).some(_l=>new RegExp('\\b'+_esc+'\\s*=\\s*0').test(_l));
                 if (_known) {
