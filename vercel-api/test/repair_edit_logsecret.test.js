@@ -91,20 +91,24 @@ const LIVE = [
 
 for (const [label, code, call, kept] of LIVE) {
   test('[EL-1] عطبٌ حيٌّ يُغلَق، والسرُّ يزول فعلًا — ' + label, () => {
-    // ① القديمُ يعجز — وهذا شرطُ كونِ الاختبارِ انحدارًا لا زينة
-    const oldCtx = loadCtx(false);
-    const a = repair(oldCtx, code, 'a.js');
-    assert.ok(a.iss.length > 0, 'tripwire: لا بلاغَ على هذه الشفرة');
-    assert.strictEqual((a.out.repairs || []).filter(r => r.strategy === 'LOG_SECRET').length, 0,
-      'المسارُ النصّيُّ صار يُصلح هذا الشكل — يجب تحديثُ هذا الاختبارِ وتوثيقُ السبب');
+    // يُقاس على اللاقطَين معًا: الشجرةُ (js) والماسحُ البنيويُّ النصّيّ.
+    // وكلاهما يجب أن يُغلق هذه الأشكال — فالعيبُ كان في الأداةِ النصّيّةِ
+    // القديمة (تعبيرٌ نمطيٌّ يقف عند أوّلِ ‎)‎)، لا في اللغة.
+    for (const backend of [true, false]) {
+      const ctx = loadCtx(backend);
+      const b = repair(ctx, code, 'a.js');
+      assert.ok(b.iss.length > 0, 'tripwire: لا بلاغَ على هذه الشفرة');
+      assert.ok((b.out.repairs || []).some(r => r.strategy === 'LOG_SECRET'),
+        'لم يُطبَّق إصلاح (لاقطُ ' + (backend ? 'الشجرة' : 'النصّ') + ') — رُفض: ' +
+        (b.out.rejected || []).map(r => r.reason).join(' | ').slice(0, 160));
+      const base0 = exec(code, call), after0 = exec(b.out.repaired, call);
+      assert.ok(!after0.logged.some(l => l.includes(SECRET)),
+        'السرُّ ما زال يُطبَع (لاقطُ ' + (backend ? 'الشجرة' : 'النصّ') + ')');
+      assert.deepStrictEqual(after0.ret, base0.ret, 'قيمةُ الإرجاع تغيّرت');
+    }
 
-    // ② والجديدُ يُصلح
     const ctx = loadCtx(true);
     const b = repair(ctx, code, 'a.js');
-    assert.ok((b.out.repairs || []).some(r => r.strategy === 'LOG_SECRET'),
-      'لم يُطبَّق إصلاح — رُفض: ' + (b.out.rejected || []).map(r => r.reason).join(' | ').slice(0, 160));
-
-    // ③ والحكمُ بالتنفيذ: السرُّ لم يَعُد يُطبَع، والسلوكُ كما هو
     const base = exec(code, call), after = exec(b.out.repaired, call);
     assert.ok(base.logged.some(l => l.includes(SECRET)), 'tripwire: الأصلُ لا يطبع السرّ');
     assert.ok(!after.logged.some(l => l.includes(SECRET)),
@@ -128,14 +132,14 @@ const HISTORY = [
   ['مَصرِفُ ‎log.‎',    'function f(password) {\n  const log = { info: (...a) => console.log(...a) };\n  log.info(password);\n  return 1;\n}\nmodule.exports = { f };\n', api => api.f(SECRET)],
 ];
 
-test('[EL-2] ولا يتراجع شكلٌ كان يعمل — القديمُ والجديدُ كلاهما يُصلح', () => {
+test('[EL-2] ولا يتراجع شكلٌ كان يعمل — اللاقطان كلاهما يُصلح', () => {
   const oldCtx = loadCtx(false), newCtx = loadCtx(true);
   for (const [label, code, call] of HISTORY) {
     const a = repair(oldCtx, code, 'a.js'), b = repair(newCtx, code, 'a.js');
     const aRep = (a.out.repairs || []).some(r => r.strategy === 'LOG_SECRET');
     const bRep = (b.out.repairs || []).some(r => r.strategy === 'LOG_SECRET');
-    assert.ok(aRep, 'tripwire: المسارُ النصّيُّ لا يُصلح ' + label);
-    assert.ok(bRep, 'تراجُع: الطبقةُ الجديدةُ لا تُصلح ' + label);
+    assert.ok(aRep, 'لاقطُ النصِّ لا يُصلح ' + label);
+    assert.ok(bRep, 'لاقطُ الشجرةِ لا يُصلح ' + label);
 
     const base = exec(code, call), after = exec(b.out.repaired, call);
     assert.ok(!after.logged.some(l => l.includes(SECRET)), label + ': السرُّ ما زال يُطبَع');
@@ -262,23 +266,33 @@ test('[EL-5ب] وعلى تركيبةٍ كثيرةِ البلاغات: عيّنة
   assert.ok(parses(only));
 });
 
-test('[EL-6] والمفتاحُ يُعيد المُصلِحَ القديمَ كما كان — رجوعٌ بلا نشر', () => {
+test('[EL-6] المفتاحُ يختار اللاقطَ، واللاقطان متكافئان حيث يعملان معًا', () => {
+  // بعد إعادةِ الكتابةِ لم تَعُد في الملفِّ نسختان من المنطق، فلا «مُصلِحٌ
+  // قديمٌ» يُرجَع إليه في زمنِ التشغيل. المفتاحُ يختار **اللاقط**: الشجرةَ
+  // حيث تتوفّر، وإلا الماسحَ البنيويَّ النصّيّ. والرجوعُ عن إعادةِ الكتابةِ
+  // كلِّها يكون بالمستودعِ لا بمفتاحٍ — وهذا ما تقتضيه نظافةُ التنفيذ.
   const ctx = loadCtx(true);
-  const live = 'function f(password) {\n  console.log("a) b", password);\n  return 1;\n}\nmodule.exports = { f };\n';
-  assert.ok(repair(ctx, live, 'a.js').out.repairs.some(r => r.strategy === 'LOG_SECRET'),
-    'tripwire: الطبقةُ لا تعمل وهي مُشغَّلة');
-
+  assert.strictEqual(ctx.repairEditEnabled(), true);
+  assert.strictEqual(ctx.repairEditSupports('js'), true);
   ctx.setRepairEditEnabled(false);
   assert.strictEqual(ctx.repairEditEnabled(), false);
-  assert.strictEqual(repair(ctx, live, 'a.js').out.repairs.filter(r => r.strategy === 'LOG_SECRET').length, 0,
-    'الإطفاءُ لا يُعيد السلوكَ القديم');
-  // والشكلُ القديمُ ما زال يعمل وهي مُطفأة
-  const old = 'function f(password) {\n  console.log("User:", password);\n  return 1;\n}\nmodule.exports = { f };\n';
-  assert.ok(repair(ctx, old, 'a.js').out.repairs.some(r => r.strategy === 'LOG_SECRET'),
-    'المُصلِحُ القديمُ لم يَعُد يعمل بعد الإطفاء');
-
+  assert.strictEqual(ctx.repairEditSupports('js'), false, 'المفتاحُ لا يُغيّر اللاقط');
   ctx.setRepairEditEnabled(true);
-  assert.strictEqual(ctx.repairEditEnabled(), true);
+
+  // والتكافؤ: كلُّ شكلٍ من أشكالِ السطرِ الواحدِ يُعطي الناتجَ نفسَه بأيِّ لاقط
+  const tree = loadCtx(true), text = loadCtx(false);
+  const SAME = [
+    'function f(password) {\n  console.log("a) b", password);\n  return 1;\n}\nmodule.exports = { f };\n',
+    'function f(password, token) {\n  console.log(password, token);\n  return 1;\n}\nmodule.exports = { f };\n',
+    'function f(token) {\n  console.log("tok: " + token);\n  return 1;\n}\nmodule.exports = { f };\n',
+    'function f(password) {\n  log.info(password);\n  return 1;\n}\nmodule.exports = { f };\n',
+    'function f(passwordCount) {\n  console.log(passwordCount);\n  return 1;\n}\nmodule.exports = { f };\n',
+  ];
+  for (const code of SAME) {
+    const a = repair(tree, code, 'a.js').out.repaired;
+    const b = repair(text, code, 'a.js').out.repaired;
+    assert.strictEqual(b, a, 'اللاقطان يختلفان على شكلٍ يدعمانه معًا:\n' + a + '\n---\n' + b);
+  }
 });
 
 test('[EL-7] الطبقةُ آلةٌ عامّةٌ محروسة: لا ناتجَ غيرَ مفحوص', () => {
@@ -308,4 +322,65 @@ test('[EL-8] وسطرُ ‎patch‎ على عقدِه: نصُّ السطرِ ا�
   assert.ok(r, 'لا إصلاح');
   assert.strictEqual(r.after, 'console.log("a) b", "[REDACTED]");');
   assert.strictEqual(r.line, 2);
+});
+
+test('[EL-9] وإعادةُ الكتابةِ أغلقت الأشكالَ في اللغاتِ الأخرى كذلك', () => {
+  // قياسٌ سابقٌ على التنفيذِ النصّيِّ القديم: ثلاثةٌ من خمسةِ أشكالٍ تسقط في
+  // py و ts و java **بالتساوي** — فالعيبُ كان في الأداةِ لا في اللغة. وبعد
+  // توحيدِ اللاقطِ صارت تُغلَق كلُّها بالقاعدةِ نفسِها.
+  const ctx = loadCtx(true);
+  const CASES = [
+    ['py  قوسٌ داخل نصّ', 'a.py',  'def f(password):\n    print("a) b", password)\n', 'print("a) b", "[REDACTED]")'],
+    ['py  نداءٌ متداخل',  'a.py',  'def f(password, fmt):\n    print(fmt(1, 2), password)\n', 'print(fmt(1, 2), "[REDACTED]")'],
+    ['py  نداءان في سطر', 'a.py',  'def f(a, password):\n    print(a); print(password)\n', 'print(a); print("[REDACTED]")'],
+    ['ts  قوسٌ داخل نصّ', 'a.ts',  'function f(password: string): void {\n  console.log("a) b", password);\n}\n', 'console.log("a) b", "[REDACTED]");'],
+    ['java Log.e مفرد',   'A.java', 'class A {\n  void f(String token) {\n    Log.e(token);\n  }\n}\n', 'Log.e("[REDACTED]");'],
+  ];
+  for (const [label, file, code, want] of CASES) {
+    const lines = code.split('\n');
+    const ext = file.split('.').pop();
+    const ln = lines.findIndex(l => /print|console|Log\./.test(l)) + 1;
+    const r = ctx.fixLogSecret(code, { line: ln, ev: lines[ln - 1].trim() }, lines, ext);
+    assert.ok(r, label + ': لا إصلاح');
+    assert.strictEqual(r.patch, want, label);
+  }
+
+  // وما كان يُنقَّح خطأً لم يَعُد: ‎logging.getLogger‎ تهيئةٌ لا تسجيل،
+  // وقاعدةُ ‎logging\.\w+‎ القديمةُ كانت تُنقّح وسيطَها. لا يُنقَل العيب.
+  const cfg = 'import logging\ndef f(token):\n    logging.getLogger(token)\n';
+  assert.strictEqual(
+    ctx.fixLogSecret(cfg, { line: 3, ev: 'logging.getLogger(token)' }, cfg.split('\n'), 'py'),
+    null, 'سطرُ تهيئةٍ نُقِّح');
+  // ودوالُّ التسجيلِ التسعُ تبقى تعمل
+  for (const m of ['info', 'debug', 'warning', 'warn', 'error', 'critical', 'fatal', 'exception', 'log']) {
+    const c = 'import logging\ndef f(password):\n    logging.' + m + '(password)\n';
+    const r = ctx.fixLogSecret(c, { line: 3, ev: 'logging.' + m + '(password)' }, c.split('\n'), 'py');
+    assert.ok(r && r.patch === 'logging.' + m + '("[REDACTED]")', 'logging.' + m + ': ' + (r && r.patch));
+  }
+});
+
+test('[EL-10] ولا منطقَ تعديلِ نصٍّ داخل المُصلِح — التحريرُ في الطبقةِ وحدَها', () => {
+  // الشرطُ البنيويُّ لإعادةِ الكتابة: المُصلِحُ يُحدِّد **ماذا** يُنقَّح،
+  // والطبقةُ تُحدِّد **كيف** يُحرَّر. فإن عاد ‎.replace(‎ أو ‎lines[i] =‎ إلى
+  // كتلةِ LOG_SECRET فقد عادت الازدواجيةُ التي من أجلها أُعيدت الكتابة.
+  const src = fs.readFileSync(path.join(PUBLIC_DIR, 'repair_engine.js'), 'utf8');
+  const start = src.indexOf('const _LOG_SENSITIVE_WORDS');
+  const end = src.indexOf('// ─── Empty Catch');
+  assert.ok(start > 0 && end > start, 'tripwire: كتلةُ LOG_SECRET لم تُعثَر');
+  const block = src.slice(start, end);
+
+  // ‎.replace(‎ المسموحُ وحدَه: تطبيعُ الاسمِ في ‎_logNameWords‎ و‎.replace(/^\s+/‎
+  // لقياسِ الإزاحة — لا استبدالَ في شفرةِ المستخدم.
+  const codeEdits = block.split('\n').filter(l =>
+    !l.trim().startsWith('//') &&
+    (/replaceLineInCode\s*\(/.test(l) || /\blines\s*\[[^\]]*\]\s*=/.test(l) || /\.splice\s*\(/.test(l)));
+  assert.deepStrictEqual(codeEdits, [],
+    'عاد تعديلُ النصِّ داخل المُصلِح: ' + JSON.stringify(codeEdits));
+
+  // والتحريرُ يمرُّ بالطبقة
+  assert.ok(/repairEditApply\s*\(/.test(block), 'المُصلِحُ لا يستعمل طبقةَ التحرير');
+  // وتنفيذٌ واحدٌ لا تنفيذان
+  assert.ok(!/_logSecretByTree|_redactLoggerSink|_logSplitLiterals|_redactLogArgs/.test(
+    block.split('\n').filter(l => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')),
+    'بقيت بقايا التنفيذِ القديمِ جنبًا إلى جنب');
 });

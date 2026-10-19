@@ -718,35 +718,35 @@ function fixHardcodedSecret(code, issue, lines, ext) {
   return { fixed: out, patch: fixed.trim(), reason: 'Secret moved to env variable' };
 }
 
-// ─── تنقيحُ وسائطِ اللوج ──────────────────────────────
+// ═══════════════════════════════════════════════════════
+// [LOG-SECRET] قاعدةٌ واحدة، لاقطان، تحريرٌ على المدى
+// ═══════════════════════════════════════════════════════
+// أُعيدت كتابةُ التنفيذِ لا القاعدة. القاعدةُ كما أثبتتها الجولاتُ السابقة:
 //
-// العلّةُ المقيسة: الـregex الذي كان يُنقّح الوسائط يبتلع قوسَي النداء في
-// النمط الخارجي، فلا يبقى في ‎args‎ ما تستند إليه نظرتُه الخلفية على الوسيطة
-// الأولى ولا الأمامية على الأخيرة. فلم تُنقَّح إلا وسيطةٌ **وسطى**:
+//   ① المَصرِف: ‎console.*‎ أو مُستقبِلٌ آخرُ كلمةٍ في اسمه ‎log/logger/logging‎
+//      (‎log‎، ‎Log‎، ‎appLog‎، ‎this.logger‎) ولا ‎dialog‎ ولا ‎catalog‎؛
+//      ودالّةٌ من قائمةٍ صريحةٍ لا ‎\w+‎ فلا يُمَسّ ‎getLogger‎ ولا ‎setLevel‎.
+//   ② الحسّاس: ما كانت **آخرُ** كلمةٍ في اسمه حسّاسة — ‎userPassword‎ سرٌّ
+//      و‎passwordCount‎ عدّاد.
+//   ③ النصوصُ الحرفيةُ لا تُمَسّ، وقيمةُ نداءٍ (‎getToken()‎) ليست اسمَ سرّ.
 //
-//     console.log("User:", password)   ⇒ لم يُمَسّ   (أخيرة)
-//     console.log(password)            ⇒ لم يُمَسّ   (وحيدة)
-//     console.log(password, "tail")    ⇒ لم يُمَسّ   (أولى)
-//     console.log("a", password, "b")  ⇒ نُقِّح       (وسطى)
-//
-// وكان يقتصر على معرِّفٍ مجرّد، فيفوته ‎user.token‎ و‎"tok: " + token‎ — وهما
-// أشيعُ ما يُكتَب فعلًا. فسبعةُ كاشفاتٍ تُبلّغ عن السطر، والمُصلِحُ يُنادى
-// خمسَ مرات ويُرجع ‎null‎ في كلِّها.
-//
-// والتنقيحُ هنا يقوم على تقسيمٍ أوّلي: النصوصُ الحرفية تُعزَل ولا تُمَسّ
-// إطلاقًا، فلا يُنقَّح ‎token‎ داخل ‎"token: "‎ (وذلك كان يُنتج نصًّا مكسورًا).
-// وفي غير الحرفيّ تُنقَّح سلسلةُ أعضاءٍ أو معرِّفٌ يحمل اسمًا حسّاسًا.
-//
-// وما لا يُمَسّ، مقيسًا: نداءُ دالّة (‎getToken()‎ — القيمةُ لا الاسم)،
-// والكلماتُ المحجوزة، والأسماءُ السليمة، وأيُّ شيءٍ داخل نصّ.
-// الحسّاسُ هو ما كانت **آخرُ** كلمةٍ في اسمه حسّاسة، لا ما وردت فيه الكلمةُ
-// حيثُ كان. فـ‎userPassword‎ و‎apiToken‎ و‎cfg.secretKey‎ أسماءُ السرِّ نفسِه،
-// أمّا ‎passwordCount‎ و‎tokenCount‎ فعدّاداتٌ عنه — وتنقيحُها إفسادٌ لشفرةٍ
-// سليمة. ومقيسٌ أن التوسيعَ بلا هذا التضييق يُنقّح ‎console.log(passwordCount)‎
-// في ‎repair_strategy_routing‎، وهو اختبارٌ موضوعٌ لهذا بعينه.
-// وكذلك ‎monkey‎ و‎keyboard‎ لا تُمَسّان: آخرُ كلمةٍ فيهما ليست ‎key‎.
+// والذي تغيّر: كيف يُعرَف موضعُ الوسيط. كان أربعةَ فروعِ ‎regex‎ وثلاثَ
+// دوالَّ مساعدةٍ تُقسّم النصَّ يدويًّا (‎_logSplitLiterals‎، ‎_redactLogArgs‎،
+// ‎_redactLoggerSink‎)، وكلُّها تسقط على ما لا يستطيعه التعبيرُ النمطيّ:
+// ‎)‎ داخل نصّ، ونداءٌ متداخل، ونداءان في سطر — ثلاثةٌ من خمسةِ أشكالٍ في
+// js وpy وts وjava **بالتساوي**. فصار الموضعُ من لاقطٍ واحد:
+//   • js  ⇒ شجرةُ ‎acorn‎ (تشمل النداءَ الموزَّعَ على أسطر)
+//   • غيرُها ⇒ ماسحٌ نصّيٌّ يعي النصوصَ والأقواسَ، في حدِّ السطرِ الواحد
+// ثم تحريرٌ واحدٌ على المدى عبر ‎repairEditApply‎ — بلا منطقِ تعديلِ نصٍّ
+// داخل المُصلِح.
 const _LOG_SENSITIVE_WORDS = new Set(['password', 'passwd', 'pwd', 'secret', 'token',
   'key', 'apikey', 'credential', 'credentials', 'auth', 'cvv', 'ssn']);
+const _LOG_RECEIVER_WORDS = new Set(['log', 'logger', 'logging']);
+const _LOG_SINK_METHODS = new Set(['log', 'info', 'debug', 'warn', 'warning', 'error',
+  'critical', 'fatal', 'exception', 'trace', 'verbose', 'notice']);
+const _LOG_RESERVED = new Set(['true', 'false', 'null', 'undefined', 'this', 'new', 'typeof',
+  'JSON', 'String', 'Number', 'Boolean', 'Object', 'Array', 'Math', 'Date', 'console', 'process',
+  'None', 'True', 'False', 'self']);
 
 // تقسيمُ آخرِ مقطعٍ من الاسم إلى كلمات: camelCase و‎_‎ و‎-‎
 function _logNameWords(name) {
@@ -763,229 +763,148 @@ function _isSensitiveLogName(name) {
   // ‎api_key‎ و‎apikey‎ ككلمةٍ واحدة
   return words.length === 1 && _LOG_SENSITIVE_WORDS.has(words[0]);
 }
-const _LOG_CHAIN = /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?![\w$(])/g;
-const _LOG_RESERVED = new Set(['true', 'false', 'null', 'undefined', 'this', 'new', 'typeof',
-  'JSON', 'String', 'Number', 'Boolean', 'Object', 'Array', 'Math', 'Date', 'console', 'process']);
-
-// يُقسّم نصَّ الوسائط إلى قطعٍ حرفيةٍ وغيرِ حرفية، فلا يُمَسّ داخلُ النصوص.
-function _logSplitLiterals(s) {
-  const out = [];
-  let i = 0, buf = '';
-  while (i < s.length) {
-    const c = s[i];
-    if (c === '"' || c === "'" || c === '`') {
-      if (buf) { out.push({ lit: false, t: buf }); buf = ''; }
-      let j = i + 1;
-      while (j < s.length) {
-        if (s[j] === '\\') { j += 2; continue; }
-        if (s[j] === c) { j++; break; }
-        j++;
-      }
-      out.push({ lit: true, t: s.slice(i, j) });
-      i = j;
-      continue;
-    }
-    buf += c;
-    i++;
-  }
-  if (buf) out.push({ lit: false, t: buf });
-  return out;
-}
-
-function _redactLogArgs(args) {
-  return _logSplitLiterals(args).map(p => {
-    if (p.lit) return p.t;
-    return p.t.replace(_LOG_CHAIN, m => {
-      if (_LOG_RESERVED.has(m.split('.')[0])) return m;
-      return _isSensitiveLogName(m) ? '"[REDACTED]"' : m;
-    });
-  }).join('');
-}
-
-// ═══════════════════════════════════════════════════════
-// [LOG-SINK] مَصرِفُ تسجيلٍ خارج ‎console‎ و‎logging‎
-// ═══════════════════════════════════════════════════════
-// ‎scanSecurity‎ (security_scanner.js:168) يُبلّغ عن ‎/console\.log|print|Log\./i‎
-// فيشمل ‎log.info‎ و‎Log.debug‎ و‎appLog.warn‎ و‎log.warning‎. والبلاغُ يُوجَّه
-// إلى ‎LOG_SECRET‎ صحيحًا، و‎fixLogSecret‎ **تُنادى**، ثم تُرجع ‎null‎ لأن
-// نمطَها كان ‎console.*‎ و‎logging.*‎ وحدَهما. وعندها يُسقط البلاغُ **صامتًا**:
-// ‎repair_engine.js‎ (المخرجُ عند ‎!result || result.fixed === repairedCode‎)
-// لا يُسجّل في ‎rejected‎ ولا في ‎aiNeeded‎ إلا إذا كان ‎issue.aiRequired‎،
-// و‎scanSecurity‎ لا يضعه. مقيسٌ: سبعةُ أشكالٍ من سبعة — js و ts و py.
-//
-// فالعطبُ ليس في الاكتشاف ولا في التوجيه، بل في أن مفرداتِ المُصلِحِ أضيقُ
-// من مفرداتِ الكاشف، والفرقُ يُبتلع بلا أثر.
-//
-// والمُستقبِلُ محدودٌ بحدِّ الكلمة: آخرُ كلمةٍ في اسمه ‎log‎/‎logger‎/‎logging‎.
-// فـ‎dialog‎ و‎catalog‎ و‎blog‎ لا تُمَسّ وإن أبلغ عنها الكاشفُ (ونمطُه
-// ‎/Log\./i‎ غيرُ محصورٍ بحدِّ كلمةٍ فيُطابق ‎dialog.‎) — لأن
-// ‎dialog.show(password)‎ نداءٌ وظيفيٌّ وتنقيحُه إفسادٌ للسلوك لا إصلاحٌ له.
-// وبقاؤها بلا إصلاحٍ هو ما يفعله المحرّكُ اليوم: لا تراجُع عن شيءٍ قائم.
-//
-// والدالّةُ من قائمةٍ صريحةٍ لا ‎\w+‎، لنفس سببِ ‎[PY-LOG-METHODS]‎:
-// ‎\w+‎ يطابق ‎getLogger‎ و‎basicConfig‎ و‎addHandler‎ و‎setLevel‎، وتنقيحُ
-// وسائطِها يُفسد التهيئة ولا يُنقّح تسجيلًا.
-const _LOG_RECEIVER_WORDS = new Set(['log', 'logger', 'logging']);
-const _LOG_SINK_METHODS = new Set(['log', 'info', 'debug', 'warn', 'warning', 'error',
-  'critical', 'fatal', 'exception', 'trace', 'verbose', 'notice']);
-const _LOG_SINK_CALL = /((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(([^)]+)\)/g;
 
 function _isLogReceiver(name) {
   const words = _logNameWords(name);
   return words.length > 0 && _LOG_RECEIVER_WORDS.has(words[words.length - 1]);
 }
 
-// يُنقّح أوّلَ نداءِ تسجيلٍ **مؤهَّلٍ** في السطر. والمسحُ يتجاوز نداءً غيرَ
-// مؤهَّلٍ يسبقه (‎if (cfg.ok()) log.info(password)‎) بدل أن يتوقف عنده.
-function _redactLoggerSink(line) {
-  _LOG_SINK_CALL.lastIndex = 0;
-  let m;
-  while ((m = _LOG_SINK_CALL.exec(line)) !== null) {
-    const [whole, recv, meth, args] = m;
-    if (!_isLogReceiver(recv)) continue;
-    if (!_LOG_SINK_METHODS.has(String(meth).toLowerCase())) continue;
-    const redacted = _redactLogArgs(args);
-    if (redacted === args) continue;
-    return line.slice(0, m.index) + recv + '.' + meth + '(' + redacted + ')' +
-           line.slice(m.index + whole.length);
-  }
-  return line;
+/**
+ * ① هل هذا النداءُ مَصرِفَ تسجيل؟ ‎recv‎ قد يكون فارغًا (‎print‎).
+ * المفرداتُ هنا **هي نفسُها** التي كانت موزَّعةً على فروعِ الـregex الأربعة،
+ * مجموعةً في موضعٍ واحد — لا توسيعَ ولا تضييق:
+ *   console → خمسُ دوالَّ كما كان النمطُ ‎console\.(log|error|warn|info|debug)‎
+ *   py      → ‎print‎، و‎logging‎ **بقائمةِ الدوالِّ** لا بـ‎\w+‎: القاعدةُ
+ *             القديمة ‎logging\.\w+‎ كانت تُنقّح ‎logging.getLogger(token)‎
+ *             و‎basicConfig‎ — وهي تهيئةٌ لا تسجيل. والمشروعُ وثّق هذا
+ *             السببَ نفسَه في ‎[PY-LOG-METHODS]‎ حين رفض ‎\w+‎ في الكاشف،
+ *             فلا يُنقَل العيبُ إلى التنفيذِ الجديد.
+ *   java    → ‎Log.*‎ كما كان ‎(android\.util\.)?Log\.\w+‎ (فـ‎Log.d/e/v/i/w‎ تبقى)
+ *   مُستقبِلٌ آخرُ كلمةٍ في اسمه log/logger/logging → قائمةُ الدوالِّ الصريحة
+ *   (وهي ما أضافه ‎[LOG-SINK]‎ بعد قياسِ سبعةِ أشكالٍ تُكتشَف ولا تُصلَح)
+ */
+const _LOG_CONSOLE_METHODS = new Set(['log', 'error', 'warn', 'info', 'debug']);
+function _isLogSinkCall(recv, meth, ext) {
+  const m = String(meth || '').toLowerCase();
+  if (!recv) return ext === 'py' && m === 'print';
+  if (recv === 'console') return _LOG_CONSOLE_METHODS.has(m);
+  if (ext === 'java' && _isLogReceiver(recv)) return true;
+  return _isLogReceiver(recv) && _LOG_SINK_METHODS.has(m);
 }
 
-// ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
-// ═══════════════════════════════════════════════════════
-// [EDIT-LAYER/LOG] مسارُ الشجرةِ أمامَ المسارِ النصّيّ — إضافةٌ لا بديل
-// ═══════════════════════════════════════════════════════
-// المعرفةُ هنا كما هي (‎_isSensitiveLogName‎، ‎_isLogReceiver‎،
-// ‎_LOG_SINK_METHODS‎) — والجديدُ أن المواضعَ تأتي من مُحلِّلٍ لا من نمط.
-// فما كان يتعذّر على النصِّ يصير بديهيًّا: ‎)‎ داخل نصٍّ حرفيّ، ونداءٌ
-// متداخلٌ في الوسائط، ونداءان في سطرٍ واحد، ووسائطُ على أسطر.
-//
-// والنصوصُ الحرفيةُ لا تُمَسّ لأنها **نوعُ عُقدةٍ مختلف**، لا لأن قاعدةً
-// تستثنيها. وكذلك قيمةُ نداءٍ (‎getToken()‎): عُقدةُ نداءٍ لا اسمُ سرّ.
-//
-// أيُّ تعذُّرٍ ⇒ ‎null‎ ⇒ يُكمل المُصلِحُ القائمُ كما كان حرفًا بحرف.
-function _logSecretByTree(code, issue, ext) {
-  if (typeof repairEditSupports !== 'function' || !repairEditSupports(ext)) return null;
-  const line = Number(issue && issue.line) || 0;
-  if (line < 1) return null;
+/** ② + ③ هل يُنقَّح هذا الوسيطُ النصّيّ؟ (مسارُ الماسحِ النصّيّ) */
+function _logTextArgEdits(arg) {
+  const t = arg.text;
+
+  // الضمُّ أوّلًا: ‎"tok: " + token‎ يبدأ بعلامةِ اقتباسٍ وليس نصًّا حرفيًّا.
+  // (فحصُ «يبدأ باقتباس» قبل الضمِّ كان يُسقط هذا الشكل — أسقطه تحذيرُ
+  // ‎[EL-2]‎ قبل أن يصل إلى أحد.) والقَسْمُ على كلِّ ‎+‎ يحفظ المواضعَ بدقّةٍ
+  // ولو وقع ‎+‎ داخل نصّ، لأن كلَّ قطعةٍ تُفحَص بذاتها فلا تمرّ إلا ما كان
+  // مُعرِّفًا خالصًا.
+  if (t.includes('+')) {
+    const parts = [];
+    let off = 0;
+    for (const piece of t.split('+')) {
+      const start = arg.start + off;
+      const lead = piece.length - piece.replace(/^\s+/, '').length;
+      const body = piece.trim();
+      if (body && !/^['"`]/.test(body) && !/[()]/.test(body) &&
+          /^[A-Za-z_$][\w$.]*$/.test(body) &&
+          !_LOG_RESERVED.has(body.split('.')[0]) && _isSensitiveLogName(body))
+        parts.push([start + lead, start + lead + body.length]);
+      off += piece.length + 1;
+    }
+    return parts.length ? parts : null;
+  }
+
+  // ثم: نصٌّ حرفيٌّ لا يُمَسّ، ونداءٌ قيمةٌ لا اسمٌ، والباقي يُقاس باسمه.
+  if (/^['"`]/.test(t)) return null;
+  if (/\(/.test(t)) return null;
+  if (_LOG_RESERVED.has(t.split('.')[0])) return null;
+  if (!/^[A-Za-z_$][\w$.]*$/.test(t)) return null;                   // ليس مُعرِّفًا ولا سلسلةَ أعضاء
+  return _isSensitiveLogName(t) ? [[arg.start, arg.end]] : null;
+}
+
+/** مواضعُ التنقيحِ من الشجرة (js) */
+function _logEditsFromTree(code, line) {
   const ast = repairEditParse(code);
   if (!ast) return null;
-
   const edits = [];
   const seen = new Set();
+  const scan = n => {
+    if (!n || seen.has(n.start + ':' + n.end)) return;
+    if (n.type === 'BinaryExpression' && n.operator === '+') { scan(n.left); scan(n.right); return; }
+    if (n.type === 'Literal' || n.type === 'TemplateLiteral') return;        // ③
+    if (n.type === 'CallExpression' || n.type === 'NewExpression') return;   // ③
+    if (n.type === 'Identifier' || n.type === 'MemberExpression') {
+      const txt = repairEditText(code, n);
+      if (_LOG_RESERVED.has(txt.split('.')[0])) return;
+      if (_isSensitiveLogName(txt)) { seen.add(n.start + ':' + n.end); edits.push([n.start, n.end, '"[REDACTED]"']); }
+      return;
+    }
+    if (n.type === 'ObjectExpression') {
+      for (const p of n.properties || []) {
+        if (p.type !== 'Property' || p.computed) continue;
+        const key = p.key && (p.key.name || p.key.value);
+        if (key && _isSensitiveLogName(String(key)) && p.value &&
+            p.value.type !== 'Literal' && p.value.type !== 'TemplateLiteral') {
+          seen.add(p.value.start + ':' + p.value.end);
+          edits.push([p.value.start, p.value.end, '"[REDACTED]"']);
+        }
+      }
+    }
+  };
   for (const call of repairEditCallsAtLine(ast, line)) {
     const callee = call.callee;
     if (!callee || callee.type !== 'MemberExpression' || callee.computed) continue;
-    const meth = callee.property && callee.property.name;
-    if (!meth || !_LOG_SINK_METHODS.has(String(meth).toLowerCase())) continue;
     const recv = repairEditText(code, callee.object);
-    if (recv !== 'console' && !_isLogReceiver(recv)) continue;
-
-    // النزولُ في الضمّ: ‎"tok: " + user.token‎ طرفاه عُقدتان، لا نصٌّ واحد
-    const scan = n => {
-      if (!n || seen.has(n.start + ':' + n.end)) return;
-      if (n.type === 'BinaryExpression' && n.operator === '+') { scan(n.left); scan(n.right); return; }
-      if (n.type === 'Literal' || n.type === 'TemplateLiteral') return;     // نصٌّ: لا يُمَسّ
-      if (n.type === 'CallExpression' || n.type === 'NewExpression') return; // قيمةٌ لا اسم
-      if (n.type === 'Identifier' || n.type === 'MemberExpression') {
-        const txt = repairEditText(code, n);
-        if (_LOG_RESERVED.has(txt.split('.')[0])) return;
-        if (_isSensitiveLogName(txt)) {
-          seen.add(n.start + ':' + n.end);
-          edits.push([n.start, n.end, '"[REDACTED]"']);
-        }
-        return;
-      }
-      if (n.type === 'ObjectExpression') {
-        for (const p of n.properties || []) {
-          if (p.type !== 'Property' || p.computed) continue;
-          const key = p.key && (p.key.name || p.key.value);
-          if (key && _isSensitiveLogName(String(key)) && p.value &&
-              p.value.type !== 'Literal' && p.value.type !== 'TemplateLiteral') {
-            seen.add(p.value.start + ':' + p.value.end);
-            edits.push([p.value.start, p.value.end, '"[REDACTED]"']);
-          }
-        }
-      }
-    };
+    if (!_isLogSinkCall(recv, callee.property && callee.property.name, 'js')) continue;
     for (const arg of call.arguments || []) scan(arg);
   }
-  if (!edits.length) return null;
+  return edits;
+}
 
-  const fixedCode = repairEditApply(code, edits);
-  if (fixedCode === null) return null;
+/** مواضعُ التنقيحِ من الماسحِ النصّيّ (ts / py / java وغيرها) */
+function _logEditsFromText(code, line, ext) {
+  const all = String(code).split('\n');
+  const text = all[line - 1];
+  if (text === undefined) return null;
+  let base = 0;
+  for (let i = 0; i < line - 1; i++) base += all[i].length + 1;
+  const edits = [];
+  for (const call of repairEditTextCalls(text, { comment: ext === 'py' ? '#' : '//' })) {
+    if (!_isLogSinkCall(call.recv, call.meth, ext)) continue;
+    for (const arg of call.args) {
+      const spans = _logTextArgEdits(arg);
+      if (spans) for (const [s, e] of spans) edits.push([base + s, base + e, '"[REDACTED]"']);
+    }
+  }
+  return edits;
+}
 
-  // ‎patch‎ يبقى على عقدِه: نصُّ السطرِ المُعدَّلِ الأوّلِ بعد التحرير
+// ─── Log Secret ───────────────────────────────────────
+function fixLogSecret(code, issue, lines, ext) {
+  const line = Number(issue && issue.line) || 0;
+  if (line < 1 || !String(code).split('\n')[line - 1]) return null;
+
+  // اللاقط: الشجرةُ حيث تتوفّر، وإلا الماسحُ النصّيّ. والقاعدةُ واحدةٌ
+  // في الحالتين — ولذلك لا يُكرَّر منطقُ التنقيحِ ولا منطقُ التحرير.
+  const useTree = typeof repairEditSupports === 'function' && repairEditSupports(ext);
+  const edits = useTree ? _logEditsFromTree(code, line) : _logEditsFromText(code, line, ext);
+  if (!edits || !edits.length) return null;
+
+  // الفحصُ الذاتيُّ بعد التحرير لا يكون إلا حيث يوجد مُحلِّل. ولغةٌ بلا
+  // مُحلِّلٍ تُترك لفحصِ البوابة — كما كان المسارُ النصّيُّ القائمُ تمامًا.
+  const fixed = repairEditApply(code, edits, { verify: useTree });
+  if (fixed === null) return null;
+
   const at = repairEditLineOf(code, Math.min(...edits.map(e => e[0])));
-  const patch = String(fixedCode).split('\n')[at - 1];
+  const patch = String(fixed).split('\n')[at - 1];
   return {
-    fixed: fixedCode,
+    fixed,
     patch: (patch === undefined ? '' : patch).trim(),
     reason: 'Sensitive data redacted from logs',
   };
-}
-
-function fixLogSecret(code, issue, lines, ext) {
-  // [EDIT-LAYER/LOG] يُجرَّب مسارُ الشجرةِ أوّلًا، ويعود إلى ما تحتَه عند أيِّ
-  // تعذُّر. والجسمُ الباقي من هنا إلى آخرِ الدالّةِ لم يتغيّر حرفًا.
-  const byTree = _logSecretByTree(code, issue, ext);
-  if (byTree) return byTree;
-
-  const line = lines[issue.line - 1];
-  if (!line) return null;
-  let fixed = line;
-
-  // helper: يستبدل قيمة حساسة واحدة بـ "[REDACTED]" ويحافظ على باقي arguments
-  function redactArg(str) {
-    return str.replace(
-      /\b(password|secret|token|key|apikey|api_key)\b\s*(?=[,)])/gi,
-      '"[REDACTED]"'
-    );
-  }
-
-  if (ext === 'java') {
-    // Log.d("TAG", sensitiveVar) → Log.d("TAG", "[REDACTED]")
-    // يحافظ على الوسيطة الأولى (TAG) ويستبدل الحساسة فقط
-    fixed = line.replace(
-      /((android\.util\.)?Log\.\w+\s*\()([^)]+)\)/,
-      (_, fn, _prefix, args) => {
-        const parts = args.split(/,(?![^(]*\))/); // split بـ comma خارج الأقواس
-        if (parts.length < 2) return _;
-        const tag = parts[0];
-        const rest = parts.slice(1).map(a =>
-          /password|secret|token|key/i.test(a) ? ' "[REDACTED]"' : a
-        );
-        return `${fn}${tag},${rest.join(',')})`;
-      }
-    );
-  } else if (ext === 'js' || ext === 'ts') {
-    // console.log("User:", password) → console.log("User:", "[REDACTED]")
-    fixed = line.replace(
-      /(console\.(?:log|error|warn|info|debug)\s*\()([^)]+)\)/,
-      (whole, fn, args) => {
-        const redacted = _redactLogArgs(args);
-        return redacted === args ? whole : `${fn}${redacted})`;
-      }
-    );
-    // [LOG-SINK] ‎log.info‎/‎Log.debug‎/‎appLog.warn‎ — إضافةٌ لا تبديل:
-    // لا تُستشار إلا إذا لم يُنتج مسارُ ‎console‎ تغييرًا، فسلوكُه يبقى كما هو بتًّا.
-    if (fixed === line) fixed = _redactLoggerSink(line);
-  } else if (ext === 'py') {
-    // print(password) أو logging.info(secret)
-    fixed = line.replace(
-      /((?:print|logging\.\w+)\s*\()([^)]+)\)/,
-      (whole, fn, args) => {
-        const redacted = _redactLogArgs(args);
-        return redacted === args ? whole : `${fn}${redacted})`;
-      }
-    );
-    // [LOG-SINK] ‎log.warning‎ و‎logger.debug‎ — وكذلك إضافةٌ لا تبديل
-    if (fixed === line) fixed = _redactLoggerSink(line);
-  }
-
-  if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'Sensitive data redacted from logs' };
 }
 
 // ─── Empty Catch — مع import logging لـ Python ────────

@@ -92,7 +92,11 @@ function repairEditCallsAtLine(ast, line) {
  * يُرجع ‎null‎ إن تداخلت أو خرجت عن الحدود أو أنتجت شفرةً لا تُحلَّل —
  * فالقرارُ عندئذٍ للمُصلِحِ القائم، ولا يخرج من هنا ناتجٌ غيرُ مفحوص.
  */
-function repairEditApply(code, edits) {
+function repairEditApply(code, edits, opts) {
+  // ‎verify‎: الفحصُ الذاتيُّ بالتحليلِ بعد التحرير. يُطفأ صراحةً للغةٍ لا
+  // مُحلِّلَ لها (py / java / php): لا يُحلَّل ناتجُها هنا فيُترك لفحصِ
+  // البوابة، كما كان المسارُ النصّيُّ القائم. وحيث يوجد مُحلِّلٌ فالفحصُ لازم.
+  const verify = !opts || opts.verify !== false;
   if (!Array.isArray(edits) || !edits.length) return null;
   const src = String(code);
   const sorted = edits.slice().sort((a, b) => a[0] - b[0]);
@@ -113,7 +117,99 @@ function repairEditApply(code, edits) {
   if (out === src) return null;
   // فحصٌ ذاتيّ: ما لا يُحلَّل لا يخرج. وهذا حدٌّ أدنى لا إثباتُ صحّة —
   // إثباتُ الصحّةِ تنفيذُ الشفرةِ، وهو في الاختبارات لا هنا.
-  if (repairEditParse(out) === null) return null;
+  if (verify && repairEditParse(out) === null) return null;
+  return out;
+}
+
+// ── لاقطُ النداءاتِ النصّيّ: للغاتِ التي لا مُحلِّلَ لها ──────────────
+// بايثون وTypeScript وجافا لا مُحلِّلَ لها في الحزمة، وقياسُها يقول إن
+// عيوبَ المسارِ النصّيِّ تُصيبها بالتساوي: ثلاثةٌ من خمسةِ أشكالٍ تسقط في
+// كلٍّ منها (قوسٌ داخل نصّ، نداءٌ متداخل، نداءان في سطر) — وهي نفسُ
+// الأشكالِ التي تسقط في js. فالعيبُ ليس في لغةٍ بل في الأداة.
+//
+// فهذا ماسحٌ يعي النصوصَ والأقواسَ والتعليقات — نفسُ تقنيةِ
+// ‎structuralSyntax‎ التي تثق بها البوابةُ والخادمُ أصلًا — يُعطي مدى كلِّ
+// نداءٍ ومدى كلِّ وسيطٍ فيه. وحدُّه معلَن: **سطرٌ واحد**، كما كان المسارُ
+// النصّيُّ القائم؛ ونداءٌ موزَّعٌ على أسطرٍ يبقى لمسارِ الشجرةِ وحدَه.
+function repairEditTextCalls(text, opts) {
+  const s = String(text == null ? '' : text);
+  const comment = (opts && opts.comment) || '//';
+  const out = [];
+  const isIdChar = c => /[A-Za-z0-9_$]/.test(c);
+  let i = 0;
+
+  // نهايةُ النصِّ الحرفيِّ المبتدئِ عند ‎p‎، أو ‎-1‎ إن لم يُغلَق
+  const skipString = p => {
+    const q = s[p];
+    let j = p + 1;
+    while (j < s.length) {
+      if (s[j] === '\\') { j += 2; continue; }
+      if (s[j] === q) return j + 1;
+      j++;
+    }
+    return -1;
+  };
+
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '"' || c === "'" || c === '`') { const e = skipString(i); if (e < 0) break; i = e; continue; }
+    if (s.startsWith(comment, i)) break;                 // تعليقٌ: لا نداءَ بعده
+    if (!isIdChar(c) || /[0-9]/.test(c)) { i++; continue; }
+
+    // سلسلةُ مُعرِّفاتٍ مفصولةٌ بنقاط: ‎a.b.c‎
+    const chainStart = i;
+    let j = i;
+    while (j < s.length) {
+      while (j < s.length && isIdChar(s[j])) j++;
+      if (s[j] === '.' && j + 1 < s.length && isIdChar(s[j + 1]) && !/[0-9]/.test(s[j + 1])) { j++; continue; }
+      break;
+    }
+    const chain = s.slice(chainStart, j);
+    let k = j;
+    while (k < s.length && /\s/.test(s[k])) k++;
+    if (s[k] !== '(') { i = Math.max(j, i + 1); continue; }
+
+    // القوسُ المُطابِق، مع احترامِ النصوصِ والتداخل
+    const argsStart = k + 1;
+    let depth = 0, p = k, close = -1;
+    while (p < s.length) {
+      const ch = s[p];
+      if (ch === '"' || ch === "'" || ch === '`') { const e = skipString(p); if (e < 0) break; p = e; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') { depth++; p++; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') { depth--; p++; if (depth === 0) { close = p - 1; break; } continue; }
+      p++;
+    }
+    if (close < 0) { i = argsStart; continue; }           // قوسٌ لا يُغلَق في السطر
+
+    // تقسيمُ الوسائطِ على الفواصلِ العليا وحدَها
+    const args = [];
+    let a = argsStart, d = 0, q = argsStart;
+    while (a <= close) {
+      const ch = s[a];
+      if (a === close || (ch === ',' && d === 0)) {
+        const raw = s.slice(q, a);
+        if (raw.trim()) {
+          const lead = raw.length - raw.replace(/^\s+/, '').length;
+          const trail = raw.length - raw.replace(/\s+$/, '').length;
+          args.push({ start: q + lead, end: a - trail, text: raw.trim() });
+        }
+        q = a + 1; a++; continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') { const e = skipString(a); if (e < 0) break; a = e; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') d++;
+      else if (ch === ')' || ch === ']' || ch === '}') d--;
+      a++;
+    }
+
+    const dot = chain.lastIndexOf('.');
+    out.push({
+      callStart: chainStart, callEnd: close + 1,
+      recv: dot < 0 ? '' : chain.slice(0, dot),
+      meth: dot < 0 ? chain : chain.slice(dot + 1),
+      args,
+    });
+    i = argsStart;                                        // ندخل النداءَ لنلتقط المتداخل
+  }
   return out;
 }
 
@@ -129,5 +225,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     setRepairEditEnabled, repairEditEnabled, repairEditSupports, repairEditParse,
     repairEditWalk, repairEditText, repairEditCallsAtLine, repairEditApply, repairEditLineOf,
+    repairEditTextCalls,
   };
 }
