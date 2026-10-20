@@ -1,11 +1,11 @@
 {
   "_meta": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "Reality Engine — Self-Healing Log",
     "fields": {
       "id":            "معرف فريد SH_{timestamp}_{random}",
       "timestamp":     "وقت الحادثة ISO8601",
-      "type":          "نوع المشكلة: ENGINE_ERROR | ENGINE_CONFLICT | REGRESSION | ACCUMULATION | FOREACH_RETURN | SQL_INJECTION | SYNTAX | RUNTIME_ERROR",
+      "type":          "نوع المشكلة: ENGINE_ERROR | ENGINE_CONFLICT | REGRESSION | ACCUMULATION | FOREACH_RETURN | SQL_INJECTION | SYNTAX | RUNTIME_ERROR | ENGINE_SELF_DEFECT",
       "engine":        "المحرك المتأثر",
       "fileName":      "اسم الملف",
       "detail":        "وصف المشكلة",
@@ -13,10 +13,14 @@
       "healingResult": "PASS | FAIL | SKIPPED",
       "testResults":   "نتائج كل الاختبارات",
       "patch":         "الـ diff (سطور متغيرة)",
-      "patchedCode":   "الكود المقترح (قبل الموافقة فقط)",
+      "patchedCode":   "الكود المقترح (قبل الموافقة فقط) — لا يُحفظ في التخزين الدائم",
       "approvedAt":    "وقت الموافقة (إذا أُقرّ)",
       "rejectedAt":    "وقت الرفض (إذا رُفض)",
-      "rollbackMsg":   "سبب الـ Rollback (إذا فشل)"
+      "rollbackMsg":   "سبب الـ Rollback (إذا فشل)",
+      "updatedAt":     "آخر تحديث للحادثة ISO8601 [v2]",
+      "attempts":      "محاولات الإصلاح؛ لكل منها معرّف SHA_… وأختام SHA-256 للكود الأصلي والمعدَّل ونتيجة اختبار مختومة بهما [v2]",
+      "currentAttemptId": "معرّف المحاولة الحالية ضمن attempts [v2]",
+      "redaction":     "ملخّص ما حُجب من أسرار: عدد وفئات فقط، بلا قيم [v2]"
     }
   },
   "entries": []

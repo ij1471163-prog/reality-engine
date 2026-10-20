@@ -45,7 +45,7 @@ const MAX_FIELD_BYTES     = 100000;    // سقف لكل حقل مركّب (testR
 const MAX_ATTEMPTS        = 50;        // محاولات لكل حادثة (n متسلسل، فلا قصّ جزئي)
 
 const TYPES    = ["ENGINE_ERROR", "ENGINE_CONFLICT", "REGRESSION", "ACCUMULATION",
-                  "FOREACH_RETURN", "SQL_INJECTION", "SYNTAX", "RUNTIME_ERROR"];
+                  "FOREACH_RETURN", "SQL_INJECTION", "SYNTAX", "RUNTIME_ERROR", "ENGINE_SELF_DEFECT"];
 const STATUSES = ["PENDING_REVIEW", "APPROVED", "REJECTED", "ROLLED_BACK"];
 const RESULTS  = ["PASS", "FAIL", "SKIPPED"];
 
