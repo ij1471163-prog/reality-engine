@@ -272,11 +272,16 @@ test('JS: بلا موضع ربط يبقى fail-closed', () => {
   assert.strictEqual(repair(code, 'a.js').fixed, code);
 });
 
-test('PHP: سلوك الفرع الثالث لم يتغيّر', () => {
+test('PHP: الفرعُ الثالثُ تغيّر عمدًا — لا رقعةَ $conn بعد [PHP-BIND]', () => {
+  // كان هذا الاختبارُ سلكَ إنذارٍ يقول «دفعةُ D1 لم تمسَّ فرعَ php»، وكان
+  // يُثبّت الناتجَ القديم: ‎$stmt = $conn->prepare(…)‎. و‎[PHP-BIND]‎ مسَّه
+  // عمدًا، لأنّ ذلك الناتجَ كان يكسر البرنامج: ‎$conn‎ كائنٌ مُخترَع.
+  // والعيّنةُ هنا إسنادٌ بلا موضعِ تنفيذٍ وبلا محرّكٍ مُصرَّحٍ به، فالحكمُ
+  // الصحيحُ عليها الامتناع.
   const code = '<?php\n$q = "SELECT * FROM t WHERE id = " . $uid;\n';
   const { fixed } = repair(code, 'a.php');
-  assert.match(fixed, /\$stmt = \$conn->prepare\(/);
-  assert.match(fixed, /bind_param/);
+  assert.strictEqual(fixed, code, 'كُتب تعديلٌ بلا كائنِ اتصالٍ معروف:\n' + fixed);
+  assert.doesNotMatch(fixed, /\$conn\b/, 'عادت رقعةُ $conn المُخترَعة');
 });
 
 // ═══ 5. بايثون: ما يجب ألا يُلمس أصلاً ═══════════════════

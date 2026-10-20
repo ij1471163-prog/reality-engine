@@ -416,17 +416,15 @@ function emergencyFix(code, fileName) {
 
     // SQL concatenation → prepared statement
     if (/["'].*(?:SELECT|INSERT|UPDATE|DELETE).*["']\s*\./.test(fixed)) {
+      // [PHP-BIND] كانت هنا نسخةٌ من رقعةِ ‎$conn‎ المكسورة — كائنُ اتصالٍ
+      // مُخترَع، وتعريفٌ يُحذَف واستعمالُه باقٍ. البابُ الآن واحدٌ في
+      // ‎repair_engine‎، يمتنع إن لم يُعرَف المحرّكُ وموضعُ التنفيذ.
       const lines = fixed.split('\n');
-      lines.forEach((line, i) => {
-        const m = line.match(/\$(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']\s*\.\s*\$(\w+)/);
-        if (m) {
-          const indent = ' '.repeat(line.search(/\S/));
-          lines[i] = `${indent}$stmt = $conn->prepare("${m[2]}?");`;
-          lines.splice(i + 1, 0, `${indent}$stmt->bind_param("s", $${m[3]});`);
-          lines.splice(i + 2, 0, `${indent}$stmt->execute();`);
+      for (let i = 0; i < lines.length; i++) {
+        if (typeof _phpBindInPlace === 'function' && _phpBindInPlace(lines, i)) {
           repairs.push({ line: i + 1, fix: 'PHP SQL → prepared statement' });
         }
-      });
+      }
       fixed = lines.join('\n');
     }
 

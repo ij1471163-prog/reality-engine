@@ -76,13 +76,9 @@ var SQLInjectionFixer = (() => {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (!/(?:SELECT|INSERT|UPDATE|DELETE)/i.test(line)) continue;
-      const m = line.match(/\$(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']\s*\.\s*\$(\w+)/i);
-      if (!m) continue;
-      const indent = ' '.repeat(line.search(/\S/));
-      lines[i] = `${indent}$stmt = $conn->prepare("${m[2]}?");`;
-      lines.splice(i + 1, 0, `${indent}$stmt->bind_param("s", $${m[3]});`);
-      lines.splice(i + 2, 0, `${indent}$stmt->execute();`);
-      lines.splice(i + 3, 0, `${indent}$result = $stmt->get_result();`);
+      // [PHP-BIND] كانت هنا نسخةٌ من رقعةِ ‎$conn‎ المكسورة. البابُ الآن
+      // واحدٌ في ‎repair_engine‎، يمتنع إن لم يُعرَف المحرّكُ وموضعُ التنفيذ.
+      if (typeof _phpBindInPlace !== 'function' || !_phpBindInPlace(lines, i)) continue;
       changed = true; i += 4;
     }
 

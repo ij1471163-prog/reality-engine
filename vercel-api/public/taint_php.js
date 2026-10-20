@@ -20,7 +20,13 @@ function analyzeTaintPHP(code, fileName) {
   const SINKS = [
     { re: /(?:mysqli_query|mysql_query|\$\w+->query)\s*\(([^)]+)\)/g,
       type: 'SQL_INJECTION', sev: 'c', sink: 'mysqli_query',
-      fix: (v) => `$stmt = $conn->prepare($sql); $stmt->bind_param("s", ${v});` },
+      // [PHP-BIND] كان نصًّا شكلُه كودٌ يُعرَض زرَّ «تطبيق آمن» عند conf:90،
+      // وفيه ‎$conn‎ و‎$sql‎ لا وجودَ لهما في مِلفِّ المستخدم. ولا بديلَ
+      // حتميًّا من سطرٍ واحد: الربطُ يحتاج كائنَ الاتصالِ والمحرّك. فصار
+      // وصفَ علاجٍ لا رقعةً تُطبَّق.
+      fix: () => 'استعمل جملةً مُحضَّرةً على كائنِ الاتصالِ نفسِه: ' +
+                 'prepare() ثم ربطُ القيمة (bind_param في mysqli أو ' +
+                 'execute([...]) في PDO)، ونفِّذ الجملةَ المُحضَّرةَ لا النصَّ المضموم' },
     { re: /echo\s+(.+)/g,
       type: 'XSS', sev: 'c', sink: 'echo',
       fix: (v) => `echo htmlspecialchars(${v}, ENT_QUOTES, 'UTF-8');` },

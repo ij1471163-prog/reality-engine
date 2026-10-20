@@ -326,13 +326,11 @@ var SmartRepairEngine = (() => {
 
       // ─── PHP ───────────────────────────────────────
       if (ctx.ext === 'php') {
-        const m = t.match(/\$(\w+)\s*=\s*["']([^"']*(?:SELECT|INSERT|UPDATE|DELETE)[^"']*?)["']\s*\.\s*\$(\w+)/i);
-        if (m) {
-          const indent = ' '.repeat(line.search(/\S/));
-          lines[i] = `${indent}$stmt = $conn->prepare("${m[2]}?");`;
-          lines.splice(i + 1, 0, `${indent}$stmt->bind_param("s", $${m[3]});`);
-          lines.splice(i + 2, 0, `${indent}$stmt->execute();`);
-          lines.splice(i + 3, 0, `${indent}$result = $stmt->get_result();`);
+          // [PHP-BIND] كانت هنا نسخةٌ من رقعةِ ‎$conn‎ المكسورة:
+          // كائنُ اتصالٍ مُخترَع، ومتغيّرُ الاستعلامِ يُحذَف تعريفُه ويبقى
+          // استعمالُه، والمسارُ غيرُ الآمنِ هو المُعاد. البابُ الآن واحدٌ
+          // في ‎repair_engine‎، وهو يمتنع إن لم يُعرَف المحرّكُ وموضعُ التنفيذ.
+        if (typeof _phpBindInPlace === 'function' && _phpBindInPlace(lines, i)) {
           repairs.push({ line: i + 1, fix: 'PHP SQL → prepared statement' });
           changed = true;
           i += 4;

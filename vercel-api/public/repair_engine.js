@@ -185,13 +185,12 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
     lines[ln] = bound;
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — parameterized query' };
   } else if (ext === 'php') {
-    const phpM = line.match(/\$(\w+)\s*=\s*["']([^"']+)["']\s*\.\s*\$(\w+)/);
-    if (!phpM) return null;
-    const indent = ' '.repeat(line.search(/\S/));
-    lines[ln] = `${indent}$stmt = $conn->prepare("${phpM[2]}?");`;
-    lines.splice(ln + 1, 0, `${indent}$stmt->bind_param("s", $${phpM[3]});`);
-    lines.splice(ln + 2, 0, `${indent}$stmt->execute();`);
-    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'PHP SQL Injection — prepared statement' };
+    // [PHP-BIND] كان هنا ‎$conn‎ مكتوبةً حرفيًّا ولو لم تكن في النطاق، مع
+    // حذفِ تعريفِ متغيّرِ الاستعلامِ وإبقاءِ استعمالِه، وإبقاءِ المسارِ غيرِ
+    // الآمنِ هو المُعاد. التفصيلُ عند ‎_phpBindStatement‎.
+    const built = _phpBindStatement(lines, ln, code);
+    if (!built) return null;
+    return { fixed: built.code, patch: built.patch, reason: 'PHP SQL Injection — prepared statement' };
   } else if (ext === 'cs') {
     // [CS-BIND] كان الناتجُ مكسورًا من ثلاثِ جهات: الموضعُ يبقى داخلَ
     // اقتباسِ SQL (‎'@param'‎ نصٌّ لا معامِل)، وبقيّةُ الضمِّ ‎+ "'"‎ تبقى،
@@ -1425,8 +1424,8 @@ function _sqlSplitPlus(s) {
  * من تعبيرِ الضمِّ إلى ‎{template, params}‎، أو ‎null‎.
  * ‎mark‎ دالّةٌ تُعطي شكلَ الموضعِ بترتيبِه: ‎?‎ في js/ts، و‎@p0‎ في C#.
  */
-function _sqlParamize(expr, mark) {
-  const parts = _sqlSplitPlus(expr);
+function _sqlParamize(expr, mark, split) {
+  const parts = (split || _sqlSplitPlus)(expr);
   if (!parts || parts.length < 2) return null;
   let text = '', quote = '"', sawExpr = false;
   const params = [];
@@ -1466,6 +1465,140 @@ function _sqlBindCall(line) {
            ', [' + built.params.join(', ') + ']' + line.slice(c.args[0].end);
   }
   return null;
+}
+
+// ─── PHP: جملةٌ مُحضَّرةٌ بكائنِ الاتصالِ الحقيقيّ ────────
+// [PHP-BIND] الفرعُ السابقُ كان يكتب رقعةً **تكسر البرنامجَ ولا تُصلح
+// الثغرة**، وتقبلها البوابة. على
+//     $sql = "SELECT * FROM u WHERE n = " . $name;
+//     return $db->query($sql);
+// كان يُنتج:
+//     $stmt = $conn->prepare("SELECT * FROM u WHERE n = ?");
+//     $stmt->bind_param("s", $name);
+//     $stmt->execute();
+//     return $db->query($sql);
+// وفيه ثلاثةُ أعطاب: ‎$conn‎ متغيّرٌ **مُخترَعٌ** لا وجودَ له في الدالّة،
+// و‎$sql‎ حُذف تعريفُه وبقي استعمالُه في السطرِ التالي، والجملةُ المُحضَّرةُ
+// تُنفَّذ ثم يُطرَح ناتجُها — فالمُعاد هو المسارُ غيرُ الآمنِ نفسُه. ومرّت
+// البوابةُ لأنّ الضمَّ اختفى من السطرِ فاختفى البلاغ.
+//
+// والبديلُ لا يخترع شيئًا: كائنُ الاتصالِ يُؤخَذ من سطرِ التنفيذِ نفسِه،
+// والمحرّكُ يُستدَلُّ عليه من الملفّ (PDO أو mysqli)، والسطرانِ يُعادُ
+// كتابتُهما معًا فيكون المُنفَّذُ هو الجملةَ المُحضَّرة. وما لم يُعرَف فيه
+// المحرّكُ أو موضعُ التنفيذِ ⇒ ‎null‎، فيذهب البلاغُ إلى ‎aiNeeded‎ معلَنًا.
+function _phpSplitDot(s) {
+  const out = [];
+  let depth = 0, start = 0, i = 0;
+  const skipStr = p => {
+    const q = s[p];
+    let j = p + 1;
+    while (j < s.length) {
+      if (s[j] === '\\') { j += 2; continue; }
+      if (s[j] === q) return j + 1;
+      j++;
+    }
+    return -1;
+  };
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '"' || c === "'") { const e = skipStr(i); if (e < 0) return null; i = e; continue; }
+    if (c === '(' || c === '[' || c === '{') { depth++; i++; continue; }
+    if (c === ')' || c === ']' || c === '}') { depth--; i++; continue; }
+    if (c === '.' && depth === 0) {
+      // نقطةٌ بين رقمَين كسرٌ عشريٌّ لا ضمّ — والشكلُ غيرُ مفهومٍ فنمتنع
+      if (/\d/.test(s[i - 1] || '') && /\d/.test(s[i + 1] || '')) return null;
+      out.push(s.slice(start, i)); start = i + 1; i++; continue;
+    }
+    i++;
+  }
+  out.push(s.slice(start));
+  return out.map(x => x.trim()).filter(x => x.length);
+}
+
+// محرّكُ قاعدةِ البيانات كما يُصرّح به الملفُّ نفسُه — لا تخمين
+function _phpDriver(code) {
+  if (/new\s+PDO\b|\bPDO::/.test(code)) return 'pdo';
+  if (/new\s+mysqli\b|mysqli_connect\s*\(|->\s*bind_param\s*\(|->\s*get_result\s*\(/.test(code)) return 'mysqli';
+  return null;
+}
+
+const _PHP_VAR_ONLY = /^\$[A-Za-z_]\w*$/;
+
+// يبني أسطرَ التحضيرِ والربطِ والتنفيذ، أو null إن تعذّر الضمانُ
+function _phpPrepared(indent, recv, textExpr, params, driver, tail) {
+  const out = [];
+  out.push(`${indent}$stmt = ${recv}->prepare(${textExpr});`);
+  if (driver === 'mysqli') {
+    // bind_param يأخذ المراجعَ: تعبيرٌ غيرُ متغيّرٍ خطأٌ قاتلٌ في PHP
+    if (!params.every(p => _PHP_VAR_ONLY.test(p))) return null;
+    out.push(`${indent}$stmt->bind_param("${'s'.repeat(params.length)}", ${params.join(', ')});`);
+    out.push(`${indent}$stmt->execute();`);
+    if (tail) out.push(`${indent}${tail}$stmt->get_result();`);
+  } else {
+    out.push(`${indent}$stmt->execute([${params.join(', ')}]);`);
+    if (tail) out.push(`${indent}${tail}$stmt;`);
+  }
+  return out;
+}
+
+function _phpBindStatement(lines, ln, code) {
+  const driver = _phpDriver(code);
+  if (!driver) return null;                       // لا نُخمّن واجهةَ محرّك
+  const line = lines[ln];
+  const indent = ' '.repeat(line.search(/\S/));
+
+  // (1) الشكلُ المباشر:  [return |$x = ]$recv->query("…" . $v);
+  const direct = line.match(
+    /^\s*(return\s+|\$[A-Za-z_]\w*\s*=\s*)?(\$[A-Za-z_]\w*)\s*->\s*(?:query|exec|real_query)\s*\(\s*(.+?)\s*\)\s*;\s*$/);
+  if (direct) {
+    const built = _sqlParamize(direct[3], null, _phpSplitDot);
+    if (!built) return null;
+    const rows = _phpPrepared(indent, direct[2], built.template, built.params, driver,
+                              direct[1] ? direct[1].replace(/\s+$/, ' ') : null);
+    if (!rows) return null;
+    const next = lines.slice(0, ln).concat(rows, lines.slice(ln + 1));
+    return { code: next.join('\n'), patch: rows[0].trim() };
+  }
+
+  // (2) الشكلُ المُسنَد:  $sql = "…" . $v;  …  [return |$x = ]$recv->query($sql);
+  const assign = line.match(/^\s*\$([A-Za-z_]\w*)\s*=\s*(.+?)\s*;\s*$/);
+  if (!assign) return null;
+  const built = _sqlParamize(assign[2], null, _phpSplitDot);
+  if (!built) return null;
+  const useRx = new RegExp(
+    '^(\\s*)(return\\s+|\\$[A-Za-z_]\\w*\\s*=\\s*)?(\\$[A-Za-z_]\\w*)\\s*->\\s*(?:query|exec|real_query)' +
+    '\\s*\\(\\s*\\$' + assign[1] + '\\s*\\)\\s*;\\s*$');
+  let useLn = -1, m = null;
+  for (let k = ln + 1; k < lines.length; k++) {
+    const hit = useRx.exec(lines[k]);
+    if (hit) { useLn = k; m = hit; break; }
+  }
+  if (useLn < 0) return null;                     // لا موضعَ تنفيذٍ معروف
+  // ولا يُعاد كتابةُ شيءٍ إن كان المتغيّرُ يُستعمَل في مكانٍ آخرَ أيضًا
+  const other = lines.some((t, k) =>
+    k !== ln && k !== useLn && new RegExp('\\$' + assign[1] + '\\b').test(t));
+  if (other) return null;
+  const rows = _phpPrepared(m[1], m[3], '$' + assign[1], built.params, driver,
+                            m[2] ? m[2].replace(/\s+$/, ' ') : null);
+  if (!rows) return null;
+  const next = lines.slice();
+  next[ln] = `${indent}$${assign[1]} = ${built.template};`;
+  next.splice(useLn, 1, ...rows);
+  return { code: next.join('\n'), patch: next[ln].trim() };
+}
+
+// يُعيد كتابةَ مصفوفةِ الأسطرِ في مكانها، أو ‎false‎ فلا يُمَسُّ شيء.
+// بابٌ واحدٌ لكلِّ مَن كان ينسخ رقعةَ ‎$conn‎: ‎smart_repair‎ و
+// ‎emergency_fixes‎ و‎sql_injection_fix‎ — فلا يعود الشكلُ المكسورُ من نسخةٍ
+// نُسيت.
+function _phpBindInPlace(lines, i) {
+  let built = null;
+  try { built = _phpBindStatement(lines, i, lines.join('\n')); } catch (e) { return false; }
+  if (!built) return false;
+  const next = built.code.split('\n');
+  lines.length = 0;
+  Array.prototype.push.apply(lines, next);
+  return true;
 }
 
 // ─── CMD candidate validation ─────────────────────────

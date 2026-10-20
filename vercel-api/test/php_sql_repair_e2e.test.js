@@ -240,11 +240,18 @@ test('[PHP-3] fix_engine_pipeline يكتب الإصلاح في الملف ويُ
   assert.match(out['db.php'], /return \$stmt;/, out['db.php']);
   assert.doesNotMatch(out['db.php'], /"[^"\n]*"\s*\.\s*\$name/, 'التسلسل باقٍ في الملف');
 
-  // سُجِّل مقبولًا، ومصدرُه RepairSQL، وR مُزامَن مع F
+  // سُجِّل مقبولًا، وR مُزامَن مع F.
+  //
+  // المصدرُ كان ‎RepairSQL‎ لأنّ فرعَ php في ‎repair_engine‎ كان يمتنع عن هذا
+  // الشكل، فيصل الدورَ إلى ‎RepairSQL‎. و‎[PHP-BIND]‎ جعل الفرعَ يُنتج
+  // الإصلاحَ الصحيحَ نفسَه — حرفًا: الأسطرُ الثلاثةُ المؤكَّدةُ أعلاه هي
+  // هي — فصار يُسجَّل باسمِ المُصلِحِ الأسبقِ في المسار. وما يهمّ هنا أنّ
+  // المسارَ يكتب إصلاحًا صحيحًا ويُسجّله مقبولًا بمصدرٍ مُسمًّى، لا أيُّ
+  // محرّكٍ سبق إليه.
   const acc = (report.accepted || []).filter(a => a.file === 'db.php' || a.fileName === 'db.php');
   assert.ok(acc.length >= 1, 'لا سجل قبول للملف: ' + JSON.stringify(report.accepted || []));
-  assert.ok(acc.some(a => /RepairSQL/.test(String(a.source))),
-    'المصدر ليس RepairSQL: ' + JSON.stringify(acc.map(a => a.source)));
+  assert.ok(acc.some(a => /RepairSQL|repairCode/.test(String(a.source))),
+    'قُبل بلا مصدرٍ مُسمًّى: ' + JSON.stringify(acc.map(a => a.source)));
   assert.strictEqual(rState, out['db.php'], 'R لا يطابق F بعد الكتابة');
 
   // والبلاغ زال فعلًا — لا مجرّد قبولٍ مُسجَّل
