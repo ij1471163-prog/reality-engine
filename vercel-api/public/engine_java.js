@@ -63,13 +63,30 @@ function analyzeJava(code, fileName) {
   });
 
   // 7. catch فارغ
+  // [JAVA-CATCH-BODY] كان الحكمُ على السطرِ التالي وحدَه، ولا يُنظَر إلى
+  // جسمِ الـcatch على سطرِه. فـ‎} catch (Exception e) { Log.e(…); }‎ يُعَدّ
+  // فارغًا لأن ما بعده ‎}‎ — وهو جسمٌ معالِجٌ تامّ.
+  //
+  // وثمنُه مقيس: ‎fixEmptyCatch‎ يُنتج هذا الجسمَ بالضبط، فلا يزول البلاغُ
+  // فتحكم البوابةُ ‎REJECTED_NO_IMPROVEMENT‎ ويطرح Ghost الدفعةَ كلَّها
+  // (‎GHOST_DISCARDED_BATCH — no_candidate‎) — إصلاحٌ صحيحٌ يُرَدّ لأن
+  // الكاشفَ لا يراه.
+  //
+  // ومنطقُ السطرِ التالي لم يُمَسّ: ما كان يُبلَّغ عنه قبلُ ما زال.
   lines.forEach((line, i) => {
-    if (/catch\s*\(/.test(line)) {
-      const next = lines[i+1]?.trim() || '';
-      if (next === '}' || next === '// ignore' || next === '')
-        issues.push({type:'bug', sev:'m', title:'catch فارغ يخفي الأخطاء', line:i+1, ev:line.trim(),
-          fix:line.replace('catch', 'catch').trim() + '\n    e.printStackTrace();'});
+    const m = /catch\s*\([^)]*\)\s*\{(.*)$/.exec(line);
+    if (!m) { if (/catch\s*\(/.test(line)) { /* قوسٌ غيرُ مكتملٍ على السطر */ } else return; }
+    const push = () => issues.push({type:'bug', sev:'m', title:'catch فارغ يخفي الأخطاء', line:i+1, ev:line.trim(),
+      fix:line.replace('catch', 'catch').trim() + '\n    e.printStackTrace();'});
+    if (m) {
+      const close = m[1].indexOf('}');
+      if (close >= 0) {                      // الجسمُ كلُّه على هذا السطر
+        if (m[1].slice(0, close).trim() === '') push();
+        return;
+      }
     }
+    const next = lines[i+1]?.trim() || '';
+    if (next === '}' || next === '// ignore' || next === '') push();
   });
 
   // 8. MessageDigest ضعيف (MD5/SHA-1/MD2) — كشف فقط، بلا إعادة كتابة آلية
