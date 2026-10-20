@@ -154,16 +154,40 @@ test('[DG-8] ‎$x = $x + 1‎ في PHP تراكمٌ قائمٌ لا عطب', ()
   }
 });
 
-test('[DG-8ب] وما زال البلاغُ الخاطئُ قائمًا في js و py', {
-  todo: 'عطبٌ مقيسٌ لم يُعالَج في هذه الجولة: كاشفا التراكمِ الآخران — ' +
-        '‎detectAccumulation‎ (AST، لـjs) وقاعدةُ ‎analyzePython‎ — يُبلّغان عن ' +
-        '‎x = x + 1‎، واقتراحُ إصلاحِ py هو ‎count += count + 1‎ وهو يُضاعف. ' +
-        'والعطبُ سابقٌ لهذه الجولة ولم يُدخِله ‎[SELF-ACCUM]‎، وموضعُه ملفّان ' +
-        'آخران خارجَ الطابورِ المُتَّفقِ عليه.',
-}, () => {
+test('[DG-8ب] ولا بلاغَ خاطئًا في js و py — الكواشفُ الأربعةُ أُغلقت', () => {
+  // كان هذا ‎todo‎: كاشفا ‎detectAccumulation‎ (AST) و‎analyzePython‎ يُبلّغان
+  // عن ‎x = x + 1‎، واقتراحُ py هو ‎count += count + 1‎ وهو يُضاعف. وقد
+  // أُغلقت المصادرُ الأربعةُ كلُّها في ‎[NO-DOUBLE]‎، فيُثبَّت الحالُ هنا.
   for (const [fn, code] of [SELF_ACC[0], SELF_ACC[1]]) {
     assert.strictEqual(find(code, fn, /تراكم/).length, 0, fn + ': بلاغٌ خاطئ على تراكمٍ صحيح');
   }
+  // ولا من الكاشفِ الخامِ نفسِه، لا من الناتجِ المدموجِ وحدَه
+  for (const [fn, code] of [SELF_ACC[0], SELF_ACC[1]]) {
+    for (const n of ['detectAccumulation', 'analyzePython', 'analyzeAST']) {
+      if (typeof ctx[n] !== 'function') continue;
+      let out = [];
+      try { out = ctx[n](code, fn) || []; } catch (e) { continue; }
+      const hits = (Array.isArray(out) ? out : []).filter(i => /تراكم/.test(String(i.title || '')));
+      assert.strictEqual(hits.length, 0, fn + ' ← ' + n + ': بلاغٌ خام');
+    }
+  }
+});
+
+test('[DG-8ج] والسلوكُ محفوظ: الدورةُ لا تغيّر نتيجةَ تراكمٍ صحيح', () => {
+  const { execFileSync } = require('node:child_process');
+  const runPy = src => {
+    try {
+      return execFileSync('python3', ['-I', '-c', src + '\nprint(f([1, 2, 3, 4, 5]))'],
+        { encoding: 'utf8', timeout: 10000 }).trim();
+    } catch (e) { return null; }
+  };
+  const py = SELF_ACC[1][1];
+  const before = runPy(py);
+  if (before === null) return;                       // لا python3 في البيئة
+  assert.strictEqual(before, '5', 'tripwire: المثالُ لا يُنتج 5');
+  const r = ctx.repairCode(py, ctx.analyzeCode(py, SELF_ACC[1][0]), SELF_ACC[1][0]);
+  assert.strictEqual(runPy(r.repaired), before, 'تغيّرت نتيجةُ البرنامج:\n' + r.repaired);
+  assert.strictEqual(r.repaired, py, 'مُسَّ كودٌ صحيح');
 });
 
 test('[DG-9] وإصلاحُ PHP يُبقي سِمةَ المتغيّر', () => {
