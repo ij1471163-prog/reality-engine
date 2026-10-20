@@ -101,11 +101,21 @@ test('[SD-3] ولا يُسجَّل إسقاطٌ حين يُصلِح المُصل
     ['okHttp.js',  'function f() {\n  return fetch("http://a.example.com/x");\n}\n'],
     ['okPy.py',    'import logging\ndef f(secret):\n    logging.info(secret)\n'],
   ];
+  // العقدُ عن **قناةِ المُصلِح**: لا يُسجَّل ‎FIXER_NO_CHANGE‎ ولا
+  // ‎FIXER_THREW‎ حين ينجح المُصلِح. و‎[EXIT-VISIBLE]‎ أضاف أنواعًا أخرى
+  // تصف بلاغاتٍ **لم يكن لها مُصلِحٌ أصلًا** (‎NO_STRATEGY‎: تلميحٌ كـ
+  // «Call Graph» لا بابَ إصلاحٍ له)، وكانت تختفي بلا أثرٍ قبلَه. وهي
+  // ليست نقضًا للعقد: الملفُّ أُصلح، وهذه بلاغاتٌ أخرى على حالِها.
+  const FIXER_CH = d => d.kind === 'FIXER_NO_CHANGE' || d.kind === 'FIXER_THREW';
   for (const [file, code] of OK) {
     const { out } = repair(ctx, code, file);
     assert.ok((out.repairs || []).length > 0, 'tripwire: لم يُصلَح ' + file);
-    assert.strictEqual(out.dropped.length, 0,
-      'إسقاطٌ مُسجَّلٌ على ملفٍ أُصلح (' + file + '): ' + JSON.stringify(out.dropped));
+    assert.deepStrictEqual(Array.from(out.dropped.filter(FIXER_CH)), [],
+      'إسقاطُ مُصلِحٍ مُسجَّلٌ على ملفٍ أُصلح (' + file + '): ' + JSON.stringify(out.dropped));
+    for (const d of out.dropped) {
+      assert.notStrictEqual(d.kind, 'LINE_ALREADY_REPAIRED',
+        file + ': سطرٌ أُصلح لا يُسجَّل إسقاطًا — أثرُه إصلاحُه');
+    }
   }
 });
 
@@ -165,7 +175,10 @@ test('[SD-5] ورميُ المُصلِحِ يُسجَّل ولا يُسقط بق
   const ok = repair(loadCtx(), code, 'a.js');
   assert.ok(ok.out.repairs.some(r => r.strategy === 'LOG_SECRET'), 'tripwire: LOG_SECRET لا يعمل');
   assert.ok(ok.out.repairs.some(r => r.strategy === 'VAR_USAGE'), 'tripwire: VAR_USAGE لا يعمل');
-  assert.strictEqual(ok.out.dropped.length, 0);
+  // قناةُ المُصلِحِ وحدَها — انظر تعليقَ ‎[SD-3]‎
+  assert.deepStrictEqual(
+    Array.from(ok.out.dropped.filter(d => d.kind === 'FIXER_NO_CHANGE' || d.kind === 'FIXER_THREW')),
+    [], JSON.stringify(ok.out.dropped));
 
   // ② ومع مُصلِحٍ يرمي: الرميُ مقروءٌ، وبقيةُ الإصلاحاتِ تمضي
   const boom = loadCtxWithThrowingFixer('fixLogSecret');

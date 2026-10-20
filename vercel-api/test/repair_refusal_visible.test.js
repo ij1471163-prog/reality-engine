@@ -81,9 +81,12 @@ test('[RV-2] والكاشفاتُ التي لا تضع aiRequired لم تعد ت
     'ضاع بلاغُ XSS: ' + JSON.stringify(r.aiNeeded));
   const LOG = 'function f(password) {\n  console.log("pw", password);\n}\nmodule.exports = { f };\n';
   const r2 = cycle(LOG, 'c.js').r;
-  const dropped = (r2.dropped || []).map(d => String(d.strategy));
-  for (const s of dropped) {
-    assert.ok(announced(r2, s).length >= 1, 'بقي مُسقَطًا بلا إعلان: ' + s);
+  // قناةُ المُصلِحِ وحدَها تُعلَن دائمًا. و‎[EXIT-VISIBLE]‎ أضاف أنواعًا
+  // تصف بلاغاتٍ لم يكن لها مُصلِحٌ أصلًا، وإعلانُها انتقائيٌّ بالشدّة —
+  // العقدُ كاملًا في ‎[EX-3]‎ و‎[EX-4]‎.
+  for (const d of (r2.dropped || []).filter(x => /^FIXER_(NO_CHANGE|THREW)$/.test(String(x.kind)))) {
+    assert.ok(announced(r2, String(d.strategy)).length >= 1,
+      'بقي مُسقَطًا بلا إعلان: ' + d.strategy);
   }
 });
 
@@ -96,6 +99,9 @@ test('[RV-3] وكلُّ مُسقَطٍ له إعلان — لا استثناءَ
         a.line === d.line && String(a.strategy) === String(d.strategy));
       const fixed = (r.repairs || []).some(p =>
         p.line === d.line && String(p.strategy) === String(d.strategy));
+      // امتناعُ المُصلِحِ يُعلَن دائمًا — ولا يتوقّف على ‎aiRequired‎، وهو
+      // بيتُ القصيد هنا. وما ليس من قناةِ المُصلِحِ يحكمه عقدُ ‎[EX-3]‎.
+      if (!/^FIXER_(NO_CHANGE|THREW)$/.test(String(d.kind))) continue;
       assert.ok(hit || fixed, fn + ': مُسقَطٌ بلا إعلانٍ ولا إصلاح — ' + d.strategy + '@' + d.line);
     }
   }

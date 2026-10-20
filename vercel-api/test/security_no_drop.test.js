@@ -140,7 +140,14 @@ test('finding already reported by the repair engine is not duplicated', () => {
   }).run();
   const ai = aiOf(out).filter(e => e.title === F.authM.title);
   assert.strictEqual(ai.length, 1);
-  assert.ok(!ai[0].securityNoDrop, 'the engine entry is kept as is');
+  // the engine's own entry is kept — not replaced, not duplicated
+  assert.strictEqual(ai[0].reason, 'x');
+  assert.strictEqual(ai[0].strategy, 'MISSING_AUTH');
+  // [NO-DROP-MARK] it does gain the marker, because that is what it is: an
+  // unresolved security finding. Leaving a covering entry unmarked dropped
+  // it from every securityNoDrop filter, which is the very loss the
+  // no-drop contract exists to prevent.
+  assert.strictEqual(ai[0].securityNoDrop, true);
 });
 
 test('two identical security findings → two aiNeeded entries', () => {

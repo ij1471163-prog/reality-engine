@@ -682,7 +682,16 @@ var RealityOrchestrator = (() => {
     remaining.forEach(f => {
       if (!_isSecurityFinding(f)) return;
       const idx = out.findIndex((e, k) => !used.has(k) && covers(e, f));
-      if (idx >= 0) { used.add(idx); return; }
+      if (idx >= 0) {
+        used.add(idx);
+        // [NO-DROP-MARK] التغطيةُ وحدَها لا تكفي: العلامةُ هي ما يعرف به
+        // المستهلكون أنّ هذا بلاغٌ أمنيٌّ لم يُحَلَّ ولا يجوز إسقاطُه. وكان
+        // البندُ الذي أنشأه مسارٌ آخرُ يُترَك بلا علامةٍ لمجرّد أنّه سبق،
+        // فيسقط من كلِّ ترشيحٍ على ‎securityNoDrop‎. فتُوضَع على ما يُغطّيه
+        // أيًّا كان مُنشئُه، ولا يُضاف بندٌ ثانٍ لنفسِ البلاغ.
+        if (!out[idx].securityNoDrop) out[idx] = Object.assign({}, out[idx], { securityNoDrop: true });
+        return;
+      }
       used.add(out.length);
       out.push({
         line: f.line, title: f.title, ev: f.ev,

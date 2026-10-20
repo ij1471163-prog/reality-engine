@@ -2195,10 +2195,30 @@ function repairCode(code, issues, fileName, _opts) {
 
   const sorted = [...issues].sort((a, b) => b.line - a.line);
 
+  // [EXIT-VISIBLE] كلُّ مخرجٍ صامتٍ من الحلقةِ يُسجَّل بسببِه المُسمَّى.
+  // كانت أربعةُ ‎return‎ تُخرج البلاغَ بلا أثرٍ في أيِّ قناة: لا ‎repairs‎
+  // ولا ‎rejected‎ ولا ‎dropped‎ ولا ‎aiNeeded‎ — يُعَدُّ في ‎total‎ ثمّ يختفي.
+  // وهكذا ضاع ‎NAMEERROR/py‎ سنةً كاملةً خلف حارسِ ‎stale‎: لا سطرَ واحدٌ
+  // يقول إنّ شيئًا جرى. فالتسجيلُ الآن كاملٌ في ‎dropped‎، والإعلانُ في
+  // ‎aiNeeded‎ لما يُعدُّ فجوةً تستدعي عملًا — لا لكلِّ تلميحٍ إرشاديّ.
+  const quietDrop = (issue, stratKey, kind, why) => {
+    dropped.push({
+      line: issue.line, strategy: stratKey || null, fixer: '', kind,
+      title: issue.title, reason: why,
+      ev: String(codeLines[issue.line - 1] || '').trim(),
+      sev: issue.sev, aiRequired: issue.aiRequired === true,
+    });
+  };
+
   sorted.forEach(issue => {
     const stratKey = detectStrategy(issue, ext);
     const strat = STRATEGIES[stratKey];
-    if (!strat) { return; }
+    if (!strat) {
+      quietDrop(issue, stratKey, 'NO_STRATEGY',
+        'لا استراتيجيّةَ إصلاحٍ لهذا البلاغِ في هذه اللغة — ' +
+        'إمّا أعلن الكاشفُ ألّا إصلاحَ حتميًّا له، وإمّا لم يُطابق عنوانُه بابًا معروفًا');
+      return;
+    }
 
     if (!strat.autoFix || !strat.fn) {
       aiNeeded.push({
@@ -2213,6 +2233,10 @@ function repairCode(code, issues, fileName, _opts) {
     // لا إعادة معالجة: سطر أصلحته مشكلة من نفس المجموعة في هذا التشغيل لا يُعالج مرة ثانية.
     const trackedAt = lineOrigin.indexOf(issue.line - 1);
     if (trackedAt >= 0 && lineGroups[trackedAt] && lineGroups[trackedAt].has(problemGroup(stratKey))) {
+      // لا يُسجَّل شيء: ليست فجوة، وأثرُ البلاغِ قائمٌ — سطرُه أُصلح في
+      // هذه الدورةِ من مجموعةِ المشكلةِ نفسِها، والإصلاحُ مُسجَّلٌ في
+      // ‎repairs‎. وتسجيلُه إسقاطًا يخالف عقدَ ‎[SD-3]‎ ويُضيف ضجيجًا
+      // (36 صفًّا على عيّناتِ المصفوفة) بلا خبرٍ جديد.
       return;
     }
 
@@ -2229,7 +2253,11 @@ function repairCode(code, issues, fileName, _opts) {
       if (issue.astVerified === true && originalText !== undefined &&
           !originalText.includes(evidence)) {
         const anchor = astEvidenceAnchor(evidence);
-        if (!anchor || !anchor.test(originalText)) return;
+        if (!anchor || !anchor.test(originalText)) {
+          quietDrop(issue, stratKey, 'STALE_EVIDENCE',
+            'دليلُ AST لا يُطابق شكلَ السطرِ الأصليّ، فالبلاغُ من تحليلٍ سابق');
+          return;
+        }
         evidence = originalText.trim();
       }
 
@@ -2247,6 +2275,9 @@ function repairCode(code, issues, fileName, _opts) {
       } else if (!currentLine || !String(currentLine).includes(evidence)) {
         // لا يوجد تعديل سابق: mismatch حقيقي = stale issue.
         if (repairedCode === code) {
+          quietDrop(issue, stratKey, 'STALE_EVIDENCE',
+            'دليلُ البلاغِ ليس في سطرِه ولم يُعدَّل شيءٌ قبلَه — ' +
+            'فإمّا أنّ البلاغَ من تحليلٍ سابق، وإمّا أنّ الكاشفَ كتب وصفًا مكانَ نصِّ السطر');
           return;
         }
 
@@ -2256,6 +2287,8 @@ function repairCode(code, issues, fileName, _opts) {
         );
 
         if (matchIndex === -1) {
+          quietDrop(issue, stratKey, 'LINE_NOT_FOUND',
+            'أزاح إصلاحٌ سابقٌ الأسطرَ ولم يُعثَر على دليلِ البلاغِ في الناتج');
           return;
         }
 
@@ -2567,7 +2600,22 @@ function repairCode(code, issues, fileName, _opts) {
   // ليس إصلاحًا، ولا يُحتسَب في أيِّ مصفوفةِ قياس.
   //
   // وعقدُ ‎security_no_drop‎ محفوظ: ما أُصلح على سطرِه لا يظهر هنا.
+  //
+  // وما يُعلَن ليس كلَّ ما يُسجَّل. ‎dropped‎ سجلٌّ تشخيصيٌّ **كامل**: كلُّ
+  // مخرجٍ من الحلقةِ فيه بنوعِه وسببِه، لا يُخفى منه شيء. و‎aiNeeded‎ قناةُ
+  // «هنا عملٌ ينتظر إنسانًا أو نموذجًا»، فيدخلها:
+  //   • ما نُودي له مُصلِحٌ فامتنع أو رمى — فجوةُ قدرةٍ مؤكَّدة.
+  //   • ما ضاع موضعُه — ‎STALE_EVIDENCE‎ و‎LINE_NOT_FOUND‎ — فجوةُ تتبّع.
+  //   • ‎NO_STRATEGY‎ إن كان البلاغُ حرجًا أو عاليًا: مشكلةٌ أمنيّةٌ بلا بابِ
+  //     إصلاحٍ يجب أن يعرفها المستخدم.
+  // ولا يدخلها ‎LINE_ALREADY_REPAIRED‎ — فالسطرُ عُولج، ولا ‎NO_STRATEGY‎
+  // المتوسِّطُ والإرشاديّ: تلميحاتٌ لا إصلاحَ حتميًّا لها، وإدخالُها يُغرق
+  // القناةَ (مقيسٌ على عيّناتِ المصفوفة: 117 بندًا بدل 33) فيضيع فيها
+  // الحرجُ بين التلميحات. وهي مسجّلةٌ في ‎dropped‎ بسببِها على كلِّ حال.
+  const _ANNOUNCE = /^(?:FIXER_NO_CHANGE|FIXER_THREW|STALE_EVIDENCE|LINE_NOT_FOUND)$/;
   for (const d of dropped) {
+    if (!_ANNOUNCE.test(String(d.kind)) &&
+        !(d.kind === 'NO_STRATEGY' && (d.sev === 'c' || d.sev === 'h'))) continue;
     if (repairs.some(p => p.line === d.line && String(p.strategy) === String(d.strategy))) continue;
     if (aiNeeded.some(a => a.line === d.line && String(a.strategy) === String(d.strategy))) continue;
     aiNeeded.push({
@@ -2575,9 +2623,11 @@ function repairCode(code, issues, fileName, _opts) {
       reason: getAIReason(d.strategy) + ' — ' +
               (d.kind === 'FIXER_THREW'
                 ? 'المُصلِحُ رمى خطأً: ' + String(d.reason || '').slice(0, 120)
-                : 'المُصلِحُ' + (d.fixer ? ' «' + d.fixer + '»' : '') +
+               : d.kind === 'FIXER_NO_CHANGE'
+                ? 'المُصلِحُ' + (d.fixer ? ' «' + d.fixer + '»' : '') +
                   ' نُودي فلم يُنتج تعديلًا — نمطُه أضيقُ من نمطِ الكاشف، ' +
-                  'أو السياقُ ناقصٌ فامتنع عن رُقعةٍ قد تكسر البرنامج'),
+                  'أو السياقُ ناقصٌ فامتنع عن رُقعةٍ قد تكسر البرنامج'
+                : String(d.reason || d.kind)),
     });
   }
 
