@@ -42,7 +42,12 @@ function detectAccumulation(code, fileName) {
     if (inLoop) {
       ACCUM_DETECTOR_VARS.forEach(varName => {
         const accumPattern = new RegExp(`\\b${varName}\\s*=(?!=|\\+|-|\\*|\/|>)\\s*\\S`);
-        if (accumPattern.test(t) && !t.match(/(?:let|var|const|int|double|float)\s+/)) {
+        // [NO-DOUBLE] ‎x = x + 1‎ تراكمٌ مكتوبٌ مطوَّلًا لا عطبُ ‎=‎ مكانَ ‎+=‎.
+        // وبناءُ الاقتراحِ أدناه يُبقي الطرفَ الأيمنَ كما هو، فينتج
+        // ‎count += count + 1‎ بثقةِ 90 — أي خلفَ زرِّ «تطبيق آمن». وفي بايثون
+        // مرَّ نظيرُه من البوابةِ فعلًا وغيّر النتيجة (‎f([1..5])‎: 5 ⇒ 31).
+        const selfAccum = new RegExp(`\\b${varName}\\s*=(?!=)\\s*${varName}\\b`).test(t);
+        if (accumPattern.test(t) && !selfAccum && !t.match(/(?:let|var|const|int|double|float)\s+/)) {
           // تحقق إن المتغير معرّف قبلاً بـ 0
           const isDeclared = declaredVars.has(varName) || 
             lines.slice(0, i).some(l => new RegExp(`\\b${varName}\\s*=\\s*0`).test(l));

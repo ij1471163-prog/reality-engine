@@ -228,6 +228,14 @@ function analyzeAccumulation(ast, issues) {
             // ✅ تحقق إن هذا السطر داخل loop فعلاً
             if (!loopRanges.contains(line)) return;
 
+            // [NO-DOUBLE] ‎x = x + 1‎ تراكمٌ مكتوبٌ مطوَّلًا، لا عطبُ ‎=‎ مكانَ
+            // ‎+=‎؛ والطرفُ الأيمنُ يذكر المتغيّرَ نفسَه فالقيمةُ تُجمَع أصلًا.
+            // وقلبُه إلى ‎+=‎ يُضاعف — مقيسٌ بتنفيذِ بايثون على النظير:
+            // ‎f([1..5])‎ كان 5 فصار 31. والفحصُ على الشجرةِ لا على النصّ.
+            let selfRef = false;
+            walkAST(node.right, { Identifier(n) { if (n.name === varName) selfRef = true; } });
+            if (selfRef) return;
+
             const rightText = node.right?.type ?? '...';
             issues.push({
                 type:        'bug',
@@ -236,7 +244,12 @@ function analyzeAccumulation(ast, issues) {
                 strategy: 'ACCUMULATION',
                 line,
                 ev:          `${varName} = ${rightText}`,
-                fix:         `${varName} += ...`,
+                // [NO-PLACEHOLDER] كان ‎`${varName} += ...`‎ — نصٌّ نائبٌ لا رُقعة،
+                // وثقتُه 95 فيُعرَض خلفَ زرِّ «تطبيق آمن»، ولو طُبِّق حرفيًّا
+                // كُتبت ‎...‎ في الملفّ (تردُّه البوابةُ بكسرِ النحو، والزرُّ
+                // يبقى كاذبًا). والإصلاحُ الحقيقيُّ يجري في مسارِ الإصلاح عبر
+                // ‎fixAccumulation‎، فهذا بلاغُ كشفٍ بلا رُقعةٍ جاهزة.
+                fix:         null,
                 astVerified: true,
                 conf:        95,
             });

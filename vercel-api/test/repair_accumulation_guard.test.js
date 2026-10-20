@@ -111,7 +111,11 @@ test('does not change: issue title without a variable name', () => {
 });
 
 // ═══ 3. الملفات الحقيقية: لا تراكم مزيّف ولا syntax مكسور ═══
-const REAL = ['command_injection_fix.js', 'repair_auth.js', 'deep_flow.js', 'accumulation_detector.js',
+// ‎accumulation_detector.js‎ خرج من هذه القائمة: بلاغُه الوحيد كان
+// ‎loopDepth = Math.max(0, loopDepth - 1);‎ — مرجعٌ ذاتيٌّ، أي تحديثٌ كاملٌ
+// لا عطبُ ‎=‎ مكانَ ‎+=‎، وقلبُه إلى ‎+=‎ يُضاعف. أزاله ‎[NO-DOUBLE]‎، ويُثبَّت
+// زوالُه في الاختبارِ المستقلِّ أدناه بدل أن يُحرَس بقاؤه هنا.
+const REAL = ['command_injection_fix.js', 'repair_auth.js', 'deep_flow.js',
   'engine_java.js', 'learning_knowledge.js', 'ml_pattern_finder.js', 'server_engine_registration.js',
   'analyzer.js', 'code_intelligence.js'];
 for (const file of REAL) {
@@ -125,3 +129,16 @@ for (const file of REAL) {
     assert.ok(parses(r.repaired));
   });
 }
+
+test('real file accumulation_detector.js: its only accumulation finding was self-referential and is gone', () => {
+  // ‎loopDepth = Math.max(0, loopDepth - 1);‎ — المتغيّرُ على الطرفين، فهو
+  // تحديثٌ كاملٌ لا تراكمٌ ناقص. ‎[NO-DOUBLE]‎ أسقط البلاغ.
+  const file = 'accumulation_detector.js';
+  const code = fs.readFileSync(path.join(PUBLIC_DIR, file), 'utf8');
+  const acc = ctx.analyzeCode(code, file).filter(i => ctx.detectStrategy(i, 'js') === 'ACCUMULATION');
+  assert.deepStrictEqual(Array.from(acc.map(i => i.line)), [],
+    'عاد بلاغُ تراكمٍ على مرجعٍ ذاتيّ');
+  // والملفُّ ما زال يمرّ بالدورةِ كاملةً بلا تغيير
+  const r = ctx.repairCode(code, ctx.analyzeCode(code, file), file);
+  assert.ok(parses(r.repaired));
+});

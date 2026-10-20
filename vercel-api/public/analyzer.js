@@ -1052,7 +1052,14 @@ function analyzePython(code, issues) {
             const varName = t.match(/^(\w+)\s*=/)?.[1];
             if (varName) {
                 const zeroRe = new RegExp('\\b' + escapeRegex(varName) + '\\s*=\\s*0\\b');
-                if (zeroRe.test(code)) {
+                // [NO-DOUBLE] ‎x = x + 1‎ تراكمٌ مكتوبٌ مطوَّلًا، لا عطبُ ‎=‎ مكانَ
+                // ‎+=‎. وبناءُ الاقتراحِ هنا ينقل الطرفَ الأيمنَ كما هو، فينتج
+                // ‎count += count + 1‎ — ويُضاعف. مقيسٌ بتنفيذِ بايثون:
+                // ‎f([1..5])‎ كان 5 فصار 31، والبوابةُ قبلته لأن عدَّ البلاغاتِ
+                // نقص. فلا بلاغَ أصلًا حيث الطرفُ الأيمنُ يبدأ بالمتغيّرِ نفسِه.
+                const selfRe = new RegExp('^\\s*' + escapeRegex(varName) +
+                                          '\\s*=\\s*' + escapeRegex(varName) + '\\b');
+                if (zeroRe.test(code) && !selfRe.test(t)) {
                     const fix = line.replace(/^(\s*)(\w+)\s*=\s*(.+)/, '$1$2 += $3').trim();
                     issues.push({ type:'bug', sev:'c', title:'خطأ في التراكم: = بدل +=', line:i+1, ev:t, fix });
                 }
@@ -1130,8 +1137,12 @@ function analyzeJS(code, fileName, ext, issues) {
         const inLoop = loopDepths.length > 0;
 
         // = بدل += داخل loop
+        // [NO-DOUBLE] نفسُ الحارسِ هنا: الطرفُ الأيمنُ الذي يبدأ بالمتغيّرِ
+        // نفسِه تراكمٌ قائمٌ، واقتراحُ ‎+=‎ عليه يُضاعف.
+        const _selfAcc = /^\s*(\w+)\s*=\s*\1\b/.test(line.replace(/^\s+/, ' '));
         if (inLoop
             && PATTERNS.jsAccum.test(line)
+            && !_selfAcc
             && !/==/.test(line)
             && !/^\s*(let|var|const)\s+/.test(line)) {
             const fix = line.replace(/(\s*)(\w+)\s*=\s*(.+)/, '$1$2 += $3').trim();
