@@ -738,8 +738,17 @@ var FixVerifier = (() => {
       afterByKey.get(k).push(i);
     });
 
+    // [SEVERITY-TRADE] شدّةُ ما أُزيل تُحسَب كما تُحسَب شدّةُ ما أُضيف.
+    // كانت ‎addedHighSeverity‎ وحدَها محسوبة، ولا تدخل القرارَ أصلًا.
+    const beforeByKey = new Map();
+    (beforeIssues || []).forEach(i => {
+      const k = issueKey(i, fallbackFile);
+      if (!beforeByKey.has(k)) beforeByKey.set(k, []);
+      beforeByKey.get(k).push(i);
+    });
+
     const worsened = [], improved = [];
-    let removedCount = 0, addedCount = 0, addedHighSeverity = 0;
+    let removedCount = 0, addedCount = 0, addedHighSeverity = 0, removedHighSeverity = 0;
 
     keys.forEach(k => {
       const b = before.get(k) || 0;
@@ -753,12 +762,15 @@ var FixVerifier = (() => {
         addedHighSeverity += high;
       } else if (a < b) {
         const delta = b - a;
-        improved.push({ key: k, before: b, after: a, removed: delta });
+        const sample = (beforeByKey.get(k) || []).slice(0, delta);
+        const high = sample.filter(isHighSeverity).length;
+        improved.push({ key: k, before: b, after: a, removed: delta, removedHighSeverity: high });
         removedCount += delta;
+        removedHighSeverity += high;
       }
     });
 
-    return { worsened, improved, removedCount, addedCount, addedHighSeverity };
+    return { worsened, improved, removedCount, addedCount, addedHighSeverity, removedHighSeverity };
   }
 
   // ═══════════════════════════════════════════════
@@ -887,11 +899,36 @@ var FixVerifier = (() => {
         return (afterCounts.get(k) || 0) < (beforeCounts.get(k) || 0);
       });
 
-      if (diff.worsened.length > 0) {
+      // ═══════════════════════════════════════════════════
+      // [SEVERITY-TRADE] كان ظهورُ **أيِّ** صنفٍ جديدٍ تدهورًا، ولو كان
+      // بلاغًا إرشاديًّا ‎sev:'l'‎، في مقابلِ ثغراتٍ حرجةٍ أُزيلت. ومقيسٌ
+      // أن ذلك طرح إصلاحَ السرِّ المُضمَّنِ في ‎.ts‎ كلَّه: أُزيلت ثلاثةُ
+      // بلاغاتٍ أمنيّة (🟠 سرّ · 🔴 كلمة مرور · 🔴 CWE-798) وأُضيف اقتراحُ
+      // ‎?.‎ واحد، فكان الحكمُ ‎ISSUES_WORSENED (+1)‎.
+      //
+      // والتحقّقُ لا يُضعَّف: أيُّ بلاغٍ حرجٍ أو عالٍ يُضيفه التعديلُ يبقى
+      // رفضًا قاطعًا، وكذلك إن لم يُزِل التعديلُ شيئًا أصلًا، وكذلك إن لم
+      // يُزِل إلا ما هو من درجةِ ما أضاف. فالمقايضةُ لا تُقبل إلا إذا
+      // أزالت **حرجًا أو عاليًا** وأضافت **إرشاديًّا** وحدَه.
+      //
+      // وإثباتاتُ الإشارة (SQL و SECRET و XSS و CMD و CRYPTO و EVAL) تجري
+      // بعد هذا الحكمِ مستقلّةً، فمَن يُخفي بلاغًا حرجًا دون علاجٍ يُرَدُّ
+      // هناك. فالطبقةُ لم تُفتَح.
+      // ═══════════════════════════════════════════════════
+      const onlyLowAdded = diff.worsened.length > 0 && diff.addedHighSeverity === 0;
+      const tradeUp = onlyLowAdded && diff.removedHighSeverity > 0;
+
+      if (diff.worsened.length > 0 && !tradeUp) {
         result.valid = false;
         result.reason = "ISSUES_WORSENED (+" + diff.addedCount + "): "
           + diff.worsened.slice(0, 3).map(w => w.key + " " + w.before + "→" + w.after).join(" | ")
           + (diff.addedHighSeverity ? " [منها " + diff.addedHighSeverity + " خطيرة أضافها هذا التعديل]" : "");
+      } else if (tradeUp) {
+        result.improved = true;
+        result.reason = "✅ أزال " + diff.removedHighSeverity + " بلاغًا خطيرًا مقابل "
+          + diff.addedCount + " إرشاديًّا: "
+          + diff.improved.slice(0, 2).map(w => w.key + " " + w.before + "→" + w.after).join(" | ")
+          + " | أُضيف: " + diff.worsened.slice(0, 2).map(w => w.key).join(" , ");
       } else if (diff.removedCount > 0) {
         result.improved = true;
         result.reason = "✅ حُل " + diff.removedCount + " مشكلة: "

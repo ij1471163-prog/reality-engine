@@ -103,18 +103,49 @@ test('[EV-4] والمسارُ الكامل: السرُّ يُنقَل فعلًا
   }
 });
 
-test('[EV-5] والبوابةُ ما زالت تَعُدُّ أيَّ بلاغٍ جديدٍ تدهورًا مهما خفَّت درجتُه', {
-  todo: 'سببٌ مستقلٌّ لم يُعالَج في هذه الدفعة، وموضعُه ‎fix_verifier.js‎: ' +
-        '‎REJECTED_ISSUES_WORSENED‎ يُطلق على ظهورِ أيِّ صنفٍ جديدٍ ولو كان ' +
-        '‎sev:"l"‎ إرشاديًّا، في مقابلِ بلاغاتٍ حرجةٍ أُزيلت. والبوابةُ تحسب ' +
-        '‎addedHighSeverity‎ في ‎diff‎ ولا يدخل القرار. وقد زال أثرُه على ' +
-        'هذه الحالةِ بمعالجةِ مصدرِ البلاغ، لكنّ القاعدةَ نفسَها كما هي — ' +
-        'فالحالةُ غيرُ آمنةٍ لمصادرَ أخرى.',
-}, () => {
-  const before = 'export const K = "ZZfakeSecretValue123";\n';
-  // بلاغٌ إرشاديٌّ مُصطنَعٌ على السطرِ الجديد، ومعه إزالةُ ثلاثةِ بلاغاتٍ أمنيّة
-  const after = 'export const K = process.env.K;\nconst n = user.profile.name;\n';
-  const v = ctx.FixVerifier.verifyFix(before, after, 'f.ts', ctx.analyzeCode);
+test('[EV-5] وأيُّ بلاغٍ جديدٍ لم يعد تدهورًا مهما خفَّت درجتُه — إن أُزيل حرجٌ مقابله', () => {
+  // ‎[SEVERITY-TRADE]‎: القرارُ صار يميّز. وما يُقبَل: إزالةُ حرجٍ أو عالٍ
+  // مقابلَ إضافةِ إرشاديٍّ وحدَه.
+  const before = 'export const API_KEY = "ZZfakeApiKeyValue456";\n';
+  const after = 'export const API_KEY = process.env.API_KEY;\nconst n = user.profile.name;\n';
+  const v = ctx.FixVerifier.verifyFix(before, after, 'g.ts', ctx.analyzeCode);
   assert.strictEqual(v.accepted, true,
-    'طُرح إصلاحٌ أزال ثلاثةَ بلاغاتٍ أمنيّةٍ لأجلِ بلاغٍ إرشاديّ: ' + v.reason);
+    'طُرح إصلاحٌ أزال بلاغاتٍ أمنيّةً لأجلِ بلاغٍ إرشاديّ: ' + v.reason);
+});
+
+test('[EV-6] ولم يُضعَّف التحقّق: الإضافةُ الخطيرةُ ما زالت رفضًا', () => {
+  const NOT = [
+    ['إرشاديٌّ مُضافٌ بلا إزالة', 'h.ts',
+     'export function f() { return 1; }\n',
+     'export function f() { return 1; }\nconst n = user.profile.name;\n'],
+    ['إزالةٌ إرشاديّةٌ وإضافةٌ إرشاديّة', 'i.ts',
+     'export function f(o: any) { return o.data.items; }\n',
+     'export function f(o: any) { return o.x?.y; }\nconst n = user.profile.name;\n'],
+    ['يُضيف بلاغًا حرجًا', 'j.js',
+     'function f(s) {\n  return s;\n}\nmodule.exports = { f };\n',
+     'function f(s) {\n  return eval(s);\n}\nmodule.exports = { f };\n'],
+  ];
+  for (const [label, fn, before, after] of NOT) {
+    const v = ctx.FixVerifier.verifyFix(before, after, fn, ctx.analyzeCode);
+    assert.strictEqual(v.accepted, false, label + ': قُبل — ' + v.reason);
+  }
+});
+
+test('[EV-7] والمقايضةُ لا تُغني عن إثباتِ الإشارة', () => {
+  // إخفاءُ بلاغٍ حرجٍ دون علاجِه يُرَدّ في طبقةِ الإثبات، لا في عدِّ الشدّة.
+  const before = 'export const API_KEY = "ZZfakeApiKeyValue456";\n';
+  const afterDeleted = 'const n = user.profile.name;\n';          // حُذف السطرُ حذفًا
+  const v = ctx.FixVerifier.verifyFix(before, afterDeleted, 'k.ts', ctx.analyzeCode);
+  assert.strictEqual(v.accepted, false, 'قُبل حذفٌ بلا علاج: ' + v.reason);
+  assert.match(String(v.reason), /SECRET_FIX_UNPROVEN|ISSUES_WORSENED/);
+});
+
+test('[EV-8] و‎diff‎ يحمل شدّةَ ما أُزيل كما يحمل شدّةَ ما أُضيف', () => {
+  const before = 'export const API_KEY = "ZZfakeApiKeyValue456";\n';
+  const after = 'export const API_KEY = process.env.API_KEY;\nconst n = user.profile.name;\n';
+  const v = ctx.FixVerifier.verifyFix(before, after, 'l.ts', ctx.analyzeCode);
+  assert.ok(v.diff, 'لا diff');
+  assert.strictEqual(v.diff.addedHighSeverity, 0);
+  assert.ok(v.diff.removedHighSeverity > 0,
+    'شدّةُ ما أُزيل غيرُ محسوبة: ' + JSON.stringify(v.diff.removedHighSeverity));
 });
