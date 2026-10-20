@@ -432,6 +432,157 @@ var XSSFixer = (() => {
            n.property.type === "Identifier" && n.property.name === "length";
   }
 
+  // ═════════════════════════════════════════════════════
+  // مصنّف سياق HTML (مشترك بين JS وPHP)
+  // ═════════════════════════════════════════════════════
+  // يقرأ النص الثابت المتراكم حتى نقطة الإدراج (وليس المقطع السابق فقط) ويُرجِع في أيّ
+  // سياق سيقع الناتج الديناميكي. التعقيم بالـHTML-escape يُسمح به في سياقين فقط:
+  //   • نص HTML عادي (وRCDATA: textarea/title)
+  //   • attribute مقتبس عام (ليس URL ولا handler ولا style ولا srcdoc)
+  //   • وURL مقتبس بشرط بادئة ثابتة تمنع تغيير المخطط والمضيف (/x… أو #… أو ?…)
+  // كل ما عدا ذلك غير مدعوم ⇒ يُترك الكود ويُسجَّل في unresolved.
+  // افتراضات معلنة: البدء من حالة "نص"؛ ومخرجات غير معروفة (استدعاءات/HTML جاهز) تُعتبر
+  // أجزاء متوازنة إن كانت الحالة "نص"، وإلا يُعتبر السياق مفقودًا (lost) فلا نعدّل بعدها.
+  const URL_ATTRS = new Set(["href", "src", "action", "formaction", "data", "poster", "background",
+    "cite", "longdesc", "manifest", "icon", "codebase", "archive", "classid", "profile", "usemap",
+    "srcset", "imagesrcset", "ping", "xlink:href", "lowsrc", "dynsrc", "code", "object"]);
+  const RAW_TAGS = new Set(["script", "style", "iframe", "noembed", "noframes", "noscript", "xmp", "plaintext"]);
+  const RCDATA_TAGS = new Set(["textarea", "title"]);
+  const URL_UNSAFE_TAGS = new Set(["script", "iframe", "frame", "frameset", "embed", "object",
+    "base", "link", "meta", "applet", "portal"]);
+  const CTX_REASONS = {
+    "script":        "داخل <script> (سياق JavaScript) — HTML-escape لا يحمي هذا السياق",
+    "style":         "داخل <style> (سياق CSS) — HTML-escape لا يحمي هذا السياق",
+    "raw-other":     "داخل عنصر نصّه خام (iframe/noscript/xmp…) — سياق غير مدعوم",
+    "tag-name":      "اسم وسم ديناميكي — لا يمكن تعقيمه بالـescape",
+    "attr-name":     "اسم attribute ديناميكي (أو موضع attribute جديد) — لا يمكن تعقيمه بالـescape",
+    "attr-unquoted": "قيمة attribute بلا اقتباس — الـescape لا يمنع إضافة attributes (مسافة)",
+    "attr-handler":  "داخل معالج حدث on*= (سياق JavaScript) — HTML-escape لا يحمي هذا السياق",
+    "attr-css":      "داخل style=\"\" (سياق CSS) — HTML-escape لا يحمي هذا السياق",
+    "attr-srcdoc":   "داخل srcdoc= (مستند HTML كامل) — يحتاج تعقيمًا مختلفًا",
+    "attr-url":      "قيمة URL (href/src/…) بلا بادئة ثابتة آمنة — الـescape لا يمنع javascript:/data: أو تغيير المضيف؛ يلزم allowlist للمخطط",
+    "comment":       "داخل تعليق HTML — سياق غير مدعوم",
+    "markup-other":  "داخل بنية HTML غير عادية (end tag / declaration) — سياق غير مدعوم",
+    "lost":          "تعذّر إثبات السياق: مخرجات سابقة غير معروفة تركت وسمًا مفتوحًا"
+  };
+
+  function makeHtmlScanner() {
+    const S = { st: "data", tag: "", attr: "", val: "", raw: "", rbuf: "", cbuf: "", lost: false };
+    const isWs = c => c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f";
+    const isAlpha = c => /[A-Za-z]/.test(c);
+    function closeTag() {
+      S.attr = ""; S.val = "";
+      if (RAW_TAGS.has(S.tag) || RCDATA_TAGS.has(S.tag)) { S.st = "raw"; S.raw = S.tag; S.rbuf = ""; }
+      else S.st = "data";
+    }
+    function feed(s) {
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charAt(i);
+        switch (S.st) {
+          case "data": if (c === "<") S.st = "tagopen"; break;
+          case "tagopen":
+            if (isAlpha(c)) { S.st = "tagname"; S.tag = c.toLowerCase(); S.attr = ""; S.val = ""; }
+            else if (c === "/") S.st = "endopen";
+            else if (c === "!") { S.st = "decl"; S.cbuf = ""; }
+            else if (c === "?") S.st = "bogus";
+            else S.st = c === "<" ? "tagopen" : "data";
+            break;
+          case "endopen": S.st = isAlpha(c) ? "endtag" : (c === ">" ? "data" : "bogus"); break;
+          case "endtag": case "bogus": if (c === ">") S.st = "data"; break;
+          case "decl":
+            S.cbuf += c;
+            if (S.cbuf === "--") { S.st = "comment"; S.cbuf = ""; }
+            else if (S.cbuf !== "-") S.st = c === ">" ? "data" : "bogus";
+            break;
+          case "comment":
+            S.cbuf = (S.cbuf + c).slice(-3);
+            if (S.cbuf === "-->") S.st = "data";
+            break;
+          case "tagname":
+            if (isWs(c) || c === "/") S.st = "beforeattr";
+            else if (c === ">") closeTag();
+            else S.tag += c.toLowerCase();
+            break;
+          case "beforeattr":
+            if (isWs(c) || c === "/") break;
+            if (c === ">") closeTag(); else { S.st = "attrname"; S.attr = c.toLowerCase(); }
+            break;
+          case "attrname":
+            if (isWs(c)) S.st = "afterattr";
+            else if (c === "=") S.st = "beforeval";
+            else if (c === ">") closeTag();
+            else if (c === "/") S.st = "beforeattr";
+            else S.attr += c.toLowerCase();
+            break;
+          case "afterattr":
+            if (isWs(c)) break;
+            if (c === "=") S.st = "beforeval";
+            else if (c === ">") closeTag();
+            else if (c === "/") S.st = "beforeattr";
+            else { S.st = "attrname"; S.attr = c.toLowerCase(); }
+            break;
+          case "beforeval":
+            if (isWs(c)) break;
+            if (c === '"') { S.st = "dq"; S.val = ""; }
+            else if (c === "'") { S.st = "sq"; S.val = ""; }
+            else if (c === ">") closeTag();
+            else { S.st = "uq"; S.val = c; }
+            break;
+          case "dq": if (c === '"') S.st = "beforeattr"; else S.val += c; break;
+          case "sq": if (c === "'") S.st = "beforeattr"; else S.val += c; break;
+          case "uq":
+            if (isWs(c)) S.st = "beforeattr";
+            else if (c === ">") closeTag();
+            else S.val += c;
+            break;
+          case "raw":
+            S.rbuf = (S.rbuf + c).slice(-24);
+            if ((c === ">" || c === "/" || isWs(c)) && S.rbuf.toLowerCase().endsWith("</" + S.raw + c)) {
+              S.st = c === ">" ? "data" : "endtag";
+            }
+            break;
+          default: S.st = "data";
+        }
+      }
+    }
+    function markUnknown() { if (S.st !== "data") S.lost = true; }
+    function context() {
+      if (S.lost) return { ctx: "lost" };
+      switch (S.st) {
+        case "data": return { ctx: "text" };
+        case "raw":
+          if (S.raw === "script") return { ctx: "script" };
+          if (S.raw === "style") return { ctx: "style" };
+          return RCDATA_TAGS.has(S.raw) ? { ctx: "text" } : { ctx: "raw-other" };
+        case "tagopen": case "tagname": return { ctx: "tag-name" };
+        case "beforeattr": case "attrname": case "afterattr": return { ctx: "attr-name" };
+        case "beforeval": case "uq": return { ctx: "attr-unquoted" };
+        case "dq": case "sq": {
+          const a = S.attr;
+          if (/^on/.test(a)) return { ctx: "attr-handler" };
+          if (a === "style") return { ctx: "attr-css" };
+          if (a === "srcdoc") return { ctx: "attr-srcdoc" };
+          if (URL_ATTRS.has(a) || (S.tag === "meta" && a === "content")) return { ctx: "attr-url", tag: S.tag, val: S.val };
+          return { ctx: "attr-quoted" };
+        }
+        case "comment": return { ctx: "comment" };
+        default: return { ctx: "markup-other" };
+      }
+    }
+    return { feed, markUnknown, context };
+  }
+
+  /** @returns {{ok: boolean, ctx: string, reason?: string}} */
+  function contextVerdict(info) {
+    const ctx = info.ctx;
+    if (ctx === "text" || ctx === "attr-quoted") return { ok: true, ctx };
+    if (ctx === "attr-url" && !URL_UNSAFE_TAGS.has(info.tag) &&
+        (/^\/[^\/\\\s&]/.test(info.val) || /^[#?]/.test(info.val))) {
+      return { ok: true, ctx };
+    }
+    return { ok: false, ctx, reason: "سياق " + ctx + ": " + (CTX_REASONS[ctx] || "غير مدعوم") };
+  }
+
   /** عناصر سلسلة + بالترتيب (بدون الدخول في القوالب). */
   function plusOperands(n, out) {
     if (n.type === "BinaryExpression" && n.operator === "+") {
@@ -444,48 +595,56 @@ var XSSFixer = (() => {
   }
 
   /**
-   * يحلّل قيمة تُمرَّر إلى HTML sink.
-   * @returns {{mode: "none"|"text"|"escape"|"complex", wrap?: Array, trusted?: Array, reason?: string}}
+   * يحلّل قيمة تُمرَّر إلى HTML sink. rhs: عقدة واحدة، أو مصفوفة وسائط تُدمَج بالترتيب (document.write).
+   * @returns {{mode: "none"|"text"|"escape"|"complex", wrap?: Array, trusted?: Array, reason?: string, ctx?: string}}
    *   trusted: عناصر تُبنى كـHTML (لا تُعقَّم ولا تُحوَّل لـtextContent) — تُسجَّل في unresolved.
+   *   mode "escape" لا يُرجَع إلا إذا كان كل موضع ديناميكي في سياق يكفيه الـescape (contextVerdict).
    */
   function planValue(code, rhs, allowText, env) {
-    const operands = plusOperands(rhs, []);
-
-    // x + y + "…" : الجمع الرقمي يسبق أول نصّ، فتغليف كل عنصر بـ__escapeHTML
-    // يحوّل 1+2+"x" من "3x" إلى "12x". نشترط أن يكون أحد أول عنصرين نصًّا.
-    if (operands.length >= 2) {
-      const stringy = o => isStringLit(o) || o.type === "TemplateLiteral";
-      if (!stringy(operands[0]) && !stringy(operands[1])) {
-        return { mode: "complex", reason: "سلسلة + قد تكون جمعًا رقميًا (لا عنصر نصّي في أول عنصرين)" };
+    const operands = [];
+    for (const g of (Array.isArray(rhs) ? rhs : [rhs])) {
+      const ops = plusOperands(g, []);
+      // x + y + "…" : الجمع الرقمي يسبق أول نصّ، فتغليف كل عنصر بـ__escapeHTML
+      // يحوّل 1+2+"x" من "3x" إلى "12x". نشترط أن يكون أحد أول عنصرين نصًّا.
+      if (ops.length >= 2) {
+        const stringy = o => isStringLit(o) || o.type === "TemplateLiteral";
+        if (!stringy(ops[0]) && !stringy(ops[1])) {
+          return { mode: "complex", reason: "سلسلة + قد تكون جمعًا رقميًا (لا عنصر نصّي في أول عنصرين)" };
+        }
       }
+      operands.push.apply(operands, ops);
     }
 
     const dyn = [];       // مصدره غير معروف ⇒ يُعامل كنص
     const trusted = [];   // يُبنى كـHTML ⇒ لا يُلمس
+    const parts = [];     // الترتيب الفعلي للمقاطع: s=ثابت، d=ديناميكي، o=آمن مجهول المحتوى، x=HTML مبني
     let markup = false;
     let complexReason = null;
 
     function leaf(n) {
-      if (isStringLit(n)) { if (hasMarkupChars(n.value)) markup = true; return; }
-      if (isStaticLit(n)) return;
-      if (isSafeCall(code, n) || isLengthMember(n)) return;
+      if (isStringLit(n)) { if (hasMarkupChars(n.value)) markup = true; parts.push({ k: "s", t: n.value }); return; }
+      if (isStaticLit(n)) { parts.push({ k: "s", t: String(n.value) }); return; }
+      if (isSafeCall(code, n) || isLengthMember(n)) { parts.push({ k: "o" }); return; }
       const k = env.originKind(n);
-      if (k === "safe") return;                       // رقم / نصّ ثابت / مُعقَّم مسبقًا
-      if (k === "html") { trusted.push(n); return; }  // بُني كـHTML
+      if (k === "safe") { parts.push({ k: "o" }); return; }          // رقم / نصّ ثابت / مُعقَّم مسبقًا
+      if (k === "html") { trusted.push(n); parts.push({ k: "x" }); return; }  // بُني كـHTML
       if (!isSimpleData(n)) {
         complexReason = complexReason ||
           "قيمة ناتجة عن استدعاء/تعبير معقّد — لا يُعرف إن كانت HTML موثوقة أم بيانات";
         return;
       }
       dyn.push(n);
+      parts.push({ k: "d", n });
     }
 
     for (const o of operands) {
       if (o.type === "TemplateLiteral") {
-        for (const q of o.quasis) {
-          if (hasMarkupChars(q.value.cooked || q.value.raw || "")) markup = true;
+        for (let i = 0; i < o.quasis.length; i++) {
+          const q = o.quasis[i].value.cooked || o.quasis[i].value.raw || "";
+          if (hasMarkupChars(q)) markup = true;
+          parts.push({ k: "s", t: q });
+          if (i < o.expressions.length) leaf(o.expressions[i]);
         }
-        for (const e of o.expressions) leaf(e);
       } else {
         leaf(o);
       }
@@ -499,6 +658,19 @@ var XSSFixer = (() => {
     if (dyn.length === 0) return { mode: "none", trusted };
 
     if (allowText && !markup) return { mode: "text" };
+
+    // mode "escape": كل موضع ديناميكي يجب أن يقع في سياق يكفيه الـescape، وإلا تُترك القيمة كلها
+    const sc = makeHtmlScanner();
+    for (const p of parts) {
+      if (p.k === "s") sc.feed(p.t);
+      else if (p.k === "o") sc.feed("0");
+      else if (p.k === "x") sc.markUnknown();
+      else {
+        const v = contextVerdict(sc.context());
+        if (!v.ok) return { mode: "complex", ctx: v.ctx, ctxUnsupported: true, reason: v.reason, trusted };
+        sc.feed("x");
+      }
+    }
     return { mode: "escape", wrap: dyn, trusted };
   }
 
@@ -633,8 +805,9 @@ var XSSFixer = (() => {
       if ((name === "write" || name === "writeln") &&
           c.object.type === "Identifier" && c.object.name === "document") {
         const edits = [];
-        for (const a of args) {
-          const plan = planValue(code, a, false, env);
+        if (args.length) {
+          // الوسائط تُحلَّل معًا: document.write('<a href="', u, '">') سياقها متصل
+          const plan = planValue(code, args, false, env);
           noteTrusted(node, plan);
           if (plan.mode === "complex") { note("HTML_SINK_COMPLEX", node, plan.reason); return; }
           if (plan.mode === "escape") plan.wrap.forEach(n => edits.push(wrapEdit(n)));
@@ -652,6 +825,7 @@ var XSSFixer = (() => {
       if (name === "html" && args.length === 1 &&
           (args[0].type === "BinaryExpression" || args[0].type === "TemplateLiteral")) {
         const plan = planValue(code, args[0], false, env);
+        if (plan.mode === "complex" && plan.ctxUnsupported) { note("HTML_SINK_COMPLEX", node, plan.reason); return; }
         if (plan.mode === "escape") {
           const hasLitMarkup = plusOperands(args[0], []).some(o =>
             (isStringLit(o) && hasMarkupChars(o.value)) ||
@@ -844,6 +1018,7 @@ var XSSFixer = (() => {
   function findPhpSites(code) {
     const sites = [];
     const notes = [];
+    const islands = [];    // [{start,end}] — حدود كل <?…?> (لتحديد نصّ HTML الخارجي)
     const n = code.length;
     let i = 0;
     let inPhp = false;
@@ -855,6 +1030,7 @@ var XSSFixer = (() => {
         const open = code.indexOf("<?", i);
         if (open < 0) break;
         islandStart = open;
+        islands.push({ start: open, end: n });
         if (code.startsWith("<?=", open)) {
           sites.push({ kind: "short", argsStart: open + 3, islandStart: open, kwStart: open, adjacent: true });
           i = open + 3;
@@ -871,7 +1047,7 @@ var XSSFixer = (() => {
       const ch = code.charAt(i);
       const two = code.substr(i, 2);
 
-      if (two === "?>") { inPhp = false; i += 2; continue; }
+      if (two === "?>") { inPhp = false; i += 2; islands[islands.length - 1].end = i; continue; }
       if (ch === "'" || ch === '"') {
         const e = skipPhpString(code, i);
         if (e < 0) break;
@@ -926,7 +1102,7 @@ var XSSFixer = (() => {
       }
       i++;
     }
-    return { sites, notes };
+    return { sites, notes, islands };
   }
 
   /**
@@ -1010,25 +1186,15 @@ var XSSFixer = (() => {
     return "complex";
   }
 
-  /** سياق HTML قبل الموقع: script/style ⇒ js ، on*="" / style="" ⇒ js ، =بلا اقتباس ⇒ unquoted. */
-  function htmlContextBefore(htmlText, adjacent) {
-    const lower = htmlText.toLowerCase();
-    if (lower.lastIndexOf("<script") > lower.lastIndexOf("</script")) return "js";
-    if (lower.lastIndexOf("<style") > lower.lastIndexOf("</style")) return "js";
-    // قيمة attribute لا تُحكَم إلا إن كان الإخراج ملاصقًا للنص الذي قبله
-    if (adjacent === false) return "ok";
-
-    // هل نحن داخل وسم لم يُغلق (< بلا > بعده)؟ ثم أيّ attribute نحن في قيمته؟
-    const lt = htmlText.lastIndexOf("<");
-    if (lt < 0 || htmlText.indexOf(">", lt) >= 0) return "ok";
-    const tag = htmlText.slice(lt);
-    // آخر attribute: قيمته مفتوحة بـ" (قد تحوي ') أو بـ' (قد تحوي ") أو بلا اقتباس
-    const m = /([A-Za-z_:][\w:.-]*)\s*=\s*(?:"[^"]*|'[^']*|([^\s"'<>=`]*))$/.exec(tag);
-    if (!m) return "ok";
-    const name = m[1].toLowerCase();
-    if (/^on/.test(name) || name === "style") return "js";
-    if (m[2] !== undefined) return "unquoted";   // لا اقتباس مفتوح
-    return "ok";
+  /** النص الذي يطبعه مقطع PHP ثابت (بين اقتباسين) — فكّ الهروب الشائع فقط. */
+  function phpStaticText(t) {
+    if (!/^['"]/.test(t)) return t;       // رقم / PHP_EOL
+    const q = t.charAt(0);
+    return t.slice(1, -1).replace(/\\(.)/g, (m, c) => {
+      if (c === "\\" || c === q) return c;
+      if (q === '"') { if (c === "n") return "\n"; if (c === "t") return "\t"; if (c === "r") return "\r"; if (c === "$") return "$"; }
+      return m;
+    });
   }
 
   function strContent(t) {
@@ -1036,47 +1202,57 @@ var XSSFixer = (() => {
   }
 
   function fixPHP(code) {
-    const { sites, notes } = findPhpSites(code);
+    const { sites, notes, islands } = findPhpSites(code);
     const unresolved = notes.slice();
     const reports = [];
     const edits = [];
     let seq = 0;
 
+    // HTML خارج الجزر بالترتيب، يُغذّى به المصنّف قبل كل موقع: السياق عند نقطة الإخراج
+    // يُحسب من كامل النص المتراكم (HTML خارجي + ما طبعته عبارات echo السابقة + الثوابت داخل العبارة)
+    const outside = [];
+    let prevEnd = 0;
+    for (const isl of islands) { outside.push({ start: prevEnd, end: isl.start }); prevEnd = isl.end; }
+    outside.push({ start: prevEnd, end: code.length });
+    let segIdx = 0;
+    const sc = makeHtmlScanner();
+
     for (const s of sites) {
+      while (segIdx < outside.length && outside[segIdx].end <= s.kwStart) {
+        const seg = outside[segIdx++];
+        if (seg.end > seg.start) sc.feed(code.slice(seg.start, seg.end));
+      }
       const line = lineAt(code, s.kwStart);
       const parsed = parseEchoArgs(code, s.argsStart);
       const mk = (kind, reason) => unresolved.push({
         kind, line, reason, snippet: code.slice(s.kwStart, Math.min(code.length, s.kwStart + 100)).replace(/\s+/g, " ") });
-      if (!parsed) { mk("PHP_ECHO_UNPARSEABLE", "تعذّر تقطيع وسائط echo بأمان"); continue; }
+      if (!parsed) { mk("PHP_ECHO_UNPARSEABLE", "تعذّر تقطيع وسائط echo بأمان"); sc.markUnknown(); continue; }
 
-      // سياق ما قبل الجزيرة (HTML خارجي) — يُستخدم للمقطع الأول
-      const outerHtml = code.slice(0, s.islandStart != null ? s.islandStart : s.kwStart);
       const wraps = [];
       let bad = null;
-      let prevStatic = "";
 
       for (let idx = 0; idx < parsed.parts.length; idx++) {
         const r = trimmedRange(code, parsed.parts[idx]);
         const cls = classifyPhpPart(r.text);
-        if (cls === "static") { prevStatic = strContent(r.text); continue; }
-        if (cls === "safe")   { prevStatic = ""; continue; }
+        if (cls === "static") { sc.feed(phpStaticText(r.text)); continue; }
+        if (cls === "safe")   { sc.feed("0"); continue; }
         if (cls === "var") {
-          // السياق: النص الثابت الذي يسبق المقطع مباشرة، أو (للمقطع الأول) HTML الخارجي
-          const before = prevStatic !== "" ? prevStatic : (idx === 0 ? outerHtml : null);
-          const ctx = before === null ? "ok"
-            : htmlContextBefore(before, prevStatic !== "" ? true : s.adjacent);
-          if (ctx !== "ok") { bad = { kind: "PHP_UNSAFE_CONTEXT",
-            reason: ctx === "js"
-              ? "داخل <script>/<style> أو on*=/style= — htmlspecialchars لا يحمي هذا السياق"
-              : "قيمة attribute بلا اقتباس — htmlspecialchars لا يكفي" }; break; }
-          wraps.push(r);
-          prevStatic = "";
+          const v = contextVerdict(sc.context());
+          if (!v.ok) {
+            if (!bad) bad = { kind: "PHP_UNSAFE_CONTEXT", reason: v.reason + " — htmlspecialchars وحده لا يكفي" };
+            sc.markUnknown();      // ناتج هذا المقطع (غير المعقَّم) قد يغيّر السياق
+          } else {
+            wraps.push(r);
+            sc.feed("x");
+          }
           continue;
         }
-        bad = cls === "htmlish"
-          ? { kind: "PHP_POSSIBLY_HTML_VAR", reason: "اسم المتغيّر يوحي بـHTML جاهز — التعقيم سيعرضه نصًّا؛ يحتاج قرارًا" }
-          : { kind: "PHP_COMPLEX_EXPR", reason: "مقطع غير مدعوم (استدعاء مجهول / interpolation / عملية) — العبارة كلها تُترك" };
-        break;
+        if (!bad) {
+          bad = cls === "htmlish"
+            ? { kind: "PHP_POSSIBLY_HTML_VAR", reason: "اسم المتغيّر يوحي بـHTML جاهز — التعقيم سيعرضه نصًّا؛ يحتاج قرارًا" }
+            : { kind: "PHP_COMPLEX_EXPR", reason: "مقطع غير مدعوم (استدعاء مجهول / interpolation / عملية) — العبارة كلها تُترك" };
+        }
+        sc.markUnknown();
       }
 
       if (bad) { mk(bad.kind, bad.reason); continue; }
