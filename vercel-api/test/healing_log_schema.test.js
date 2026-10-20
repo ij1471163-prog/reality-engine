@@ -469,12 +469,50 @@ test('[ISO-2] policy بلا schema يفشل بوضوح لا بصمت', () => {
   const ctx = vm.createContext({ console });
   assert.throws(() => vm.runInContext(fs.readFileSync(path.join(PUBLIC_DIR, 'healing_log_policy.js'), 'utf8'), ctx), /healing_log_schema/);
 });
-test('[ISO-3] غير مربوطين: لا index.html ولا المحرك ولا الخادم يشير إليهما (عدّل هذا الاختبار عند الربط عمدًا)', () => {
-  const files = ['index.html', 'public/index.html', 'public/self_healing_engine.js', 'public/healing_store.js', 'public/server_repair_adapter.js'];
-  for (const f of files) {
+test('[ISO-3] ربط عمدي: المخزن والمحوّل لا يشيران للمخطط/السياسة، والمحرك وحده يستعملهما (حُدِّث عند الربط)', () => {
+  // المخزن يبقى وحدة مستقلة قائمة بذاتها (لا اعتماد على المخطط/السياسة)، والمحوّل غير معني بهما.
+  for (const f of ['public/healing_store.js', 'public/server_repair_adapter.js']) {
     const p = path.join(__dirname, '..', f);
     if (!fs.existsSync(p)) continue;
-    assert.ok(!/healing_log_(schema|policy)/.test(fs.readFileSync(p, 'utf8')), f + ' يشير إلى الملفين الجديدين');
+    assert.ok(!/healing_log_(schema|policy)/.test(fs.readFileSync(p, 'utf8')), f + ' يشير إلى المخطط/السياسة');
+  }
+  // المحرك هو نقطة الربط الوحيدة: يطلب الوحدات الثلاث بأسمائها
+  const eng = fs.readFileSync(path.join(__dirname, '..', 'public/self_healing_engine.js'), 'utf8');
+  for (const n of ['healing_log_schema.js', 'healing_log_policy.js', 'healing_store.js']) {
+    assert.ok(eng.includes(n), 'المحرك لا يطلب ' + n);
+  }
+});
+function loadOrder(src) {
+  // أسماء ملفات .js بالترتيب كما وردت في قائمة تحميل (يقبل ' أو ")
+  return Array.from(src.matchAll(/['"]([\w.\-\/]+\.js)['"]/g)).map(m => m[1]);
+}
+test('[ISO-5] كل قائمة خادم تُحمّل المحرك تُحمّل قبله: المخطط ← السياسة ← المخزن (وإلا انحدر لسلوك قديم بصمت)', () => {
+  const lists = ['api/analyze.js', 'api/patterns/save.js', 'public/engine_self_diagnosis.js'];
+  for (const f of lists) {
+    const names = loadOrder(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'));
+    const at = n => names.indexOf(n);
+    assert.ok(at('self_healing_engine.js') >= 0, f + ' لا تحمّل المحرك');
+    assert.ok(at('healing_log_schema.js') >= 0 && at('healing_log_schema.js') < at('healing_log_policy.js'), f + ': المخطط قبل السياسة');
+    assert.ok(at('healing_log_policy.js') < at('healing_store.js'), f + ': السياسة قبل المخزن');
+    assert.ok(at('healing_store.js') < at('self_healing_engine.js'), f + ': المخزن قبل المحرك');
+  }
+});
+test('[ISO-6] الواجهة: إن حُمّل المحرك في index.html فالوحدات الثلاث قبله؛ وإن لم يُحمَّل فلا تُحمَّل وحدها', () => {
+  for (const f of ['index.html', 'public/index.html']) {
+    const p = path.join(__dirname, '..', f);
+    if (!fs.existsSync(p)) continue;
+    const html = fs.readFileSync(p, 'utf8');
+    const srcs = Array.from(html.matchAll(/<script[^>]*\ssrc="\/?([^"]+)"/g)).map(m => m[1]);
+    const at = n => srcs.indexOf(n);
+    if (at('self_healing_engine.js') < 0) {
+      for (const n of ['healing_log_schema.js', 'healing_log_policy.js', 'healing_store.js']) {
+        assert.ok(at(n) < 0, f + ' يحمّل ' + n + ' بلا المحرك (كود ميت)');
+      }
+    } else {
+      assert.ok(at('healing_log_schema.js') >= 0 && at('healing_log_schema.js') < at('healing_log_policy.js') &&
+                at('healing_log_policy.js') < at('healing_store.js') && at('healing_store.js') < at('self_healing_engine.js'),
+                f + ': ترتيب الوحدات قبل المحرك خاطئ');
+    }
   }
 });
 test('[ISO-4] حجم كل ملف معقول للصيانة (< 400 سطر)', () => {

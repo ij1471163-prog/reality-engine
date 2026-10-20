@@ -85,7 +85,7 @@ var EngineSelfDiagnosis = (() => {
     "threat_detector.js",
     "dependency_analyzer.js",
     "repair_engine.js", "fallback_fixes.js", "emergency_fixes.js",
-    "smart_repair.js", "fixers_orchestrator.js", "repair_sql.js", "self_healing_engine.js",
+    "smart_repair.js", "fixers_orchestrator.js", "repair_sql.js", "healing_log_schema.js", "healing_log_policy.js", "healing_store.js", "self_healing_engine.js",
     "repair_html.js", "repair_advanced.js", "fix_verifier.js",
     "ghost_mode.js", "learning_validation.js", "learning_knowledge.js", "learning_engine.js", "fix_engine_pipeline.js",
   ]);

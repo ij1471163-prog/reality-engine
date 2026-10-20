@@ -112,7 +112,7 @@ const ENGINES = [
   'secret_detector.js', 'taint_core.js', 'taint_js.js',
   'taint_py.js', 'taint_php.js', 'context_analyzer.js',
   'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
-  'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'self_healing_engine.js',
+  'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'healing_log_schema.js', 'healing_log_policy.js', 'healing_store.js', 'self_healing_engine.js',
 ];
 
 let analyzeCode = null;

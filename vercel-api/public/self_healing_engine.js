@@ -23,6 +23,7 @@
 // ═══════════════════════════════════════════════════════
 
 const SH_VERSION = "2.0.0";
+const LEGACY_LOG_VERSION = "1.0.0";   // مخطط السجل القديم (بلا محاولات ولا أختام) — يُستعمل فقط إن لم يُحمَّل المخطط الجديد
 const MAX_LOG    = 200;
 const MAX_SNAPS  = 50;
 
@@ -38,6 +39,51 @@ const HealingResult = Object.freeze({
   FAIL:    "FAIL",
   SKIPPED: "SKIPPED",
 });
+
+// ═══════════════════════════════════════════════════════
+// وحدات السجل الاختيارية: المخطط (أدلة/أختام) · السياسة (أسرار/احتفاظ/تدقيق) · المخزن (حفظ دائم)
+// ═══════════════════════════════════════════════════════
+//
+// تُقرأ من global (المتصفح وvm الخادم: تُحمَّل قبل هذا الملف)، وفي Node تُحمَّل بـrequire عند أول حاجة.
+// غيابها لا يكسر المحرك: يعمل بسلوكه القديم (بلا أدلة)، و summary().evidence يقول ذلك صراحةً.
+// أما الحفظ الدائم فيرفض العمل بلا السياسة (لا نكتب سجلًّا غير محجوب الأسرار).
+
+const Mods = {
+  _tried: {},
+  _get(name, file) {
+    if (global[name]) return global[name];
+    if (!this._tried[name] && typeof require === "function") {
+      this._tried[name] = true;
+      try { require("./" + file); } catch (_) { /* غير متاح */ }
+    }
+    return global[name] || null;
+  },
+  schema() { return this._get("HealingLogSchema", "healing_log_schema.js"); },
+  policy() { return this.schema() ? this._get("HealingLogPolicy", "healing_log_policy.js") : null; },
+  store()  { return this._get("HealingStore", "healing_store.js"); },
+};
+
+const nowIso = () => new Date().toISOString();
+
+// إصدار ملف السجل المُصدَّر/المحفوظ: يتبع المخطط عند تحميله، وإلا القديم
+function logVersion() { const S = Mods.schema(); return S ? S.SCHEMA_VERSION : LEGACY_LOG_VERSION; }
+
+// سجل التدقيق (سلسلة هاشات في الذاكرة). فشله لا يُسقط الدورة لكنه يُعَدّ ويظهر في summary().
+const Audit = {
+  _trail: null,
+  errors: 0,
+  _t() {
+    const P = Mods.policy();
+    if (!P) return null;
+    if (!this._trail) this._trail = P.createAuditTrail();
+    return this._trail;
+  },
+  run(fn) {
+    try { const t = this._t(); return t ? fn(t) : null; }
+    catch (_) { this.errors++; return null; }
+  },
+  append(action, data) { return this.run(t => t.append(action, data)); },
+};
 
 // ═══════════════════════════════════════════════════════
 // Storage
@@ -63,14 +109,61 @@ function storeSet(key, val)  { _store.set(key, val); }
 const Log = {
   _key: "sh_log",
 
+  _sink: null,          // HealingStore.createStore(...) عند attachStore فقط؛ افتراضيًا ذاكرة فقط كما كان
+  _archive: [],         // أرشيف السياسة (سجلات مضغوطة بلا كود) — يُحفظ مع السجل الحي عند وجود _sink
+  _policy: null,        // تجاوز اختياري لـDEFAULT_POLICY (يُمرَّر من attachStore)
+  _lastPersist: null,   // نتيجة آخر محاولة حفظ دائم: { ok, at, ... } — لا نعلن نجاحًا لم يحدث
+
   _all()       { return storeGet(this._key) || []; },
-  _save(list)  { storeSet(this._key, list); },
+  _save(list)  {
+    storeSet(this._key, list);
+    if (this._sink) this._persist(list);
+  },
+
+  // تنظيف الأسرار ← احتفاظ/أرشفة ← حفظ. أي فشل يُسجَّل في _lastPersist ولا يعطّل المحرك.
+  _persist(list) {
+    const P = Mods.policy();
+    const rec = { ok: false, at: nowIso(), error: null, saved: 0, skipped: [], trimmedIds: [], archivedIds: [], purgedIds: [] };
+    this._lastPersist = rec;
+    if (!P) { rec.error = "سياسة السجل غير محمَّلة — لا حفظ دائم بلا إخفاء أسرار"; return rec; }
+    try {
+      const views = list.map(e => P.sanitizeEntry(e)).filter(Boolean);       // بلا patchedCode وبلا أسرار
+      const r = P.applyRetention(views, this._archive, this._policy, Date.now());
+      if (r.archived.length) {                                                // الذاكرة تتبع الاحتفاظ كي لا يُؤرشف الشيء مرتين
+        const gone = new Set(r.archived.map(a => a.id));
+        storeSet(this._key, list.filter(e => !gone.has(e.id)));
+      }
+      this._archive = r.archive;
+      rec.archivedIds = r.archived.map(a => a.id);
+      rec.purgedIds = r.purged.slice();
+      const res = this._sink.save(r.live, r.archive);
+      rec.ok = !!(res && res.ok);
+      rec.error = rec.ok ? null : ((res && res.error) || "فشل الحفظ");
+      rec.saved = (res && res.saved) || 0;
+      rec.skipped = (res && res.skipped) || [];
+      rec.trimmedIds = (res && res.trimmedIds) || [];
+      rec.partial = rec.ok && rec.skipped.length > 0;   // نجح الحفظ لكن بعض الحوادث لم تدخل
+    } catch (e) {
+      rec.ok = false; rec.error = "الحفظ الدائم رمى: " + (e && e.message || e);
+    }
+    if (rec.archivedIds.length) {
+      Audit.append("retention.archived", { note: rec.archivedIds.length + " حادثة أُرشفت" });
+    }
+    if (rec.skipped.length && typeof console !== "undefined" && console.warn) {
+      console.warn("[SelfHealing] " + rec.skipped.length + " حادثة لم تُحفظ دائمًا (غير صالحة للمخزن):",
+        rec.skipped.map(s => (s.id || "?") + ": " + s.error).join(" | "));
+    }
+    return rec;
+  },
 
   add(entry) {
     const all = this._all();
-    const full = { ...entry, timestamp: new Date().toISOString() };
+    const ts = nowIso();
+    const full = { ...entry, timestamp: ts };
+    if (Mods.schema()) full.updatedAt = ts;
     all.unshift(full);
-    if (all.length > MAX_LOG) all.length = MAX_LOG;
+    // مع الحفظ الدائم تتولّى السياسة السقف (وتحمي المعلّق)؛ بدونه يبقى القصّ القديم كما كان
+    if (!(this._sink && Mods.policy()) && all.length > MAX_LOG) all.length = MAX_LOG;
     this._save(all);
     return full;
   },
@@ -78,19 +171,51 @@ const Log = {
   update(id, patch) {
     const all = this._all();
     const idx = all.findIndex(e => e.id === id);
-    if (idx >= 0) { Object.assign(all[idx], patch); this._save(all); }
+    if (idx >= 0) {
+      Object.assign(all[idx], patch);
+      if (Mods.schema()) all[idx].updatedAt = nowIso();
+      this._save(all);
+    }
   },
 
   getAll()     { return this._all(); },
   getById(id)  { return this._all().find(e => e.id === id) || null; },
   getPending() { return this._all().filter(e => e.status === Status.PENDING_REVIEW); },
 
-  // ✅ Export للحفظ اليدوي
+  // ✅ Export للحفظ اليدوي — بلا patchedCode وبلا أسرار عند توفر السياسة.
+  // يُرجع { text, skipped }؛ skipped = حوادث لم تدخل الملف لأن المخزن رفضها (لا إسقاط صامت).
+  exportDetailed() {
+    const S = Mods.schema(), P = Mods.policy(), HS = Mods.store();
+    if (S && P) {
+      const views = this._all().map(e => P.sanitizeEntry(e)).filter(Boolean);
+      if (HS && typeof HS.serializeDetailed === "function") {
+        const d = HS.serializeDetailed(views, { engineVersion: SH_VERSION }, this._archive, {});
+        return { text: d.text, skipped: d.skipped };
+      }
+      return {
+        text: JSON.stringify({
+          _meta:   { version: logVersion(), engineVersion: SH_VERSION, exportedAt: nowIso() },
+          entries: views,
+          archive: this._archive,
+        }, null, 2),
+        skipped: [],
+      };
+    }
+    return {
+      text: JSON.stringify({
+        _meta:   { version: logVersion(), engineVersion: SH_VERSION, exportedAt: nowIso() },
+        entries: this._all(),
+      }, null, 2),
+      skipped: [],
+    };
+  },
   exportJSON() {
-    return JSON.stringify({
-      _meta:   { version: SH_VERSION, exportedAt: new Date().toISOString() },
-      entries: this._all(),
-    }, null, 2);
+    const d = this.exportDetailed();
+    if (d.skipped.length && typeof console !== "undefined" && console.warn) {
+      console.warn("[SelfHealing] exportLog: " + d.skipped.length + " حادثة لم تُصدَّر (غير صالحة):",
+        d.skipped.map(s => (s.id || "?") + ": " + s.error).join(" | "));
+    }
+    return d.text;
   },
 };
 
@@ -707,6 +832,9 @@ const SelfHealing = {
     const id = `SH_${Date.now()}_${Math.random().toString(36).slice(2,6).toUpperCase()}`;
     const { type, engine, fileName, code, detail } = problem;
 
+    const S = Mods.schema();
+    const baseCode = typeof code === "string" ? code : "";
+
     // 1. Log المشكلة
     Log.add({
       id,
@@ -718,7 +846,9 @@ const SelfHealing = {
       healingResult: HealingResult.SKIPPED,
       testResults:   null,
       patch:         null,
+      ...(S ? { attempts: [] } : {}),
     });
+    Audit.append("incident.created", { incidentId: id, to: Status.PENDING_REVIEW, note: String(type || "") });
 
     // 2. Snapshot
     Snapshots.create(id, { [fileName || "code"]: code || "" });
@@ -746,6 +876,14 @@ const SelfHealing = {
     const diff = Snapshots.diff(code, patchedCode);
     Snapshots.attachPatch(id, { diff, patchedCode, reason });
 
+    // محاولة إصلاح بمعرّف ثابت وأختام SHA-256 للكود الأصلي والمعدَّل (الأختام من النصّين اللذين سيُختبران)
+    let attempt = null;
+    if (S) {
+      attempt = S.makeAttempt({ incidentId: id, n: 1, baseCode, patchedCode, reason });
+      Log.update(id, { attempts: [attempt], currentAttemptId: attempt.attemptId });
+      Audit.append("attempt.started", { incidentId: id, attemptId: attempt.attemptId });
+    }
+
     // 5. اختبارات على النسخة الاختبارية
     // نمرر المشكلة المستهدفة حتى لا يُعدّ اختفاؤها regression
     const targetIssues = problem.targetIssues || [problem];
@@ -767,8 +905,18 @@ const SelfHealing = {
     }
     const passed = Tests.allPassed(testResults);
 
+    // النتيجة تُختم بما اختُبر فعلًا (ختم المحاولة) — لا تُنسب لاحقًا لكود آخر
+    if (attempt) {
+      attempt = S.recordTestRun(attempt, testResults, { passed });
+      Log.update(id, { attempts: [attempt], currentAttemptId: attempt.attemptId });
+      Audit.append("tests.recorded", { incidentId: id, attemptId: attempt.attemptId,
+                                       reasons: [passed ? "PASS" : "FAIL"] });
+    }
+
     if (!passed) {
       // Rollback — لا نطبق التغيير
+      Audit.run(t => t.recordRollback(Log.getById(id), { attemptId: attempt && attempt.attemptId,
+                                                         note: "الاختبارات فشلت" }));
       Log.update(id, {
         status:        Status.ROLLED_BACK,
         healingResult: HealingResult.FAIL,
@@ -810,7 +958,18 @@ const SelfHealing = {
     };
   },
 
-  approve(id, patchedCode, applyCallback) {
+  // opts.actor (اختياري): من قرّر — يُسجَّل في سجل التدقيق فقط، ولا يمنح صلاحية.
+  approve(id, patchedCode, applyCallback, opts) {
+    const actor = opts && typeof opts.actor === "string" ? opts.actor : undefined;
+    // كل رفض يُسجَّل في التدقيق (إن عُرف المعرّف) ثم يُرجَع بنفس الشكل القديم
+    const deny = (obj, reasons, attemptId) => {
+      if (typeof id === "string" && id) {
+        Audit.append("approval.denied", { actor, incidentId: id, attemptId: attemptId || null,
+                                          reasons: reasons || ["DENIED"] });
+      }
+      return obj;
+    };
+
     // ✅ تحقق أن id موجود
     if (!id) return { id, status: "REJECTED", error: "id غير موجود" };
 
@@ -818,10 +977,11 @@ const SelfHealing = {
 
     // ✅ تحقق أن الـ entry موجود وحالته PENDING_REVIEW
     if (!entry) {
-      return { id, status: "REJECTED", error: "لا يوجد entry بهذا الـ id" };
+      return deny({ id, status: "REJECTED", error: "لا يوجد entry بهذا الـ id" }, ["NO_ENTRY"]);
     }
     if (entry.status !== Status.PENDING_REVIEW) {
-      return { id, status: "REJECTED", error: `الحالة ${entry.status} — لا يمكن اعتماد غير PENDING_REVIEW` };
+      return deny({ id, status: "REJECTED", error: `الحالة ${entry.status} — لا يمكن اعتماد غير PENDING_REVIEW` },
+                  ["STATUS_" + entry.status]);
     }
 
     // [ESD-SEAM-3] لا اعتماد لحادثة بلا patch مُختبَر.
@@ -836,18 +996,41 @@ const SelfHealing = {
     // يُعيد دالة approve أصلًا، فالطريق الوحيد نداءٌ مباشر بمعرّف من السجل —
     // وهو بالضبط ما توثّقه هذه الواجهة ويستعمله مُشخِّص المحرك.
     if (entry.healingResult !== HealingResult.PASS || typeof entry.patchedCode !== "string") {
-      return { id, status: "REJECTED",
-               error: `لا patch مُختبَر لهذه الحادثة (${entry.healingResult}) — لا شيء يُعتمد` };
+      return deny({ id, status: "REJECTED",
+                    error: `لا patch مُختبَر لهذه الحادثة (${entry.healingResult}) — لا شيء يُعتمد` },
+                  ["NO_TESTED_PATCH"]);
     }
 
     // ✅ تحقق أن patchedCode يطابق ما تم اختباره في الـ Log
     const loggedPatchedCode = entry.patchedCode;
     if (loggedPatchedCode !== undefined && patchedCode !== loggedPatchedCode) {
-      return {
+      return deny({
         id,
         status: "REJECTED",
         error:  "patchedCode لا يطابق ما تم اختباره — رُفض لأسباب أمنية",
-      };
+      }, ["PATCH_DIFFERS_FROM_TESTED"]);
+    }
+
+    // ✅ دليل الاختبار يجب أن يخص هذا الزوج (الأصل، المعدَّل) بالذات: نعيد حساب الأختام من النصّين الفعليين.
+    // يُلتقط هنا ما لا تلتقطه المقارنة أعلاه: تعديل entry.patchedCode في الذاكرة بعد الاختبار،
+    // أو لقطة أصل تغيّرت، أو دليل محاولة أقدم/غير مرتبط/موروث من v1 (لا يصلح دليل اعتماد).
+    let evidence = null;
+    if (Mods.schema()) {
+      const snap = Snapshots.getById(id);
+      const files = snap && snap.files ? Object.values(snap.files) : [];
+      const baseCode = files.length === 1 && typeof files[0] === "string" ? files[0] : null;
+      if (baseCode === null) {
+        return deny({ id, status: "REJECTED", reasons: ["BASE_CODE_UNAVAILABLE"],
+                      error: "الكود الأصلي لهذه الحادثة غير متاح (لقطة مفقودة) — لا يمكن إثبات ما اختُبر" },
+                    ["BASE_CODE_UNAVAILABLE"]);
+      }
+      evidence = Mods.schema().approvalCheck(entry, baseCode, patchedCode);
+      if (!evidence.ok) {
+        return deny({ id, status: "REJECTED", reasons: evidence.reasons.slice(),
+                      error: "دليل الاختبار لا يطابق الكود — رُفض: " + evidence.reasons.join(", ") },
+                    evidence.reasons, evidence.attemptId);
+      }
+      evidence.baseCode = baseCode;
     }
 
     // ✅ نُشغّل applyCallback أولاً — APPROVED فقط إذا نجح
@@ -856,7 +1039,9 @@ const SelfHealing = {
         applyCallback(patchedCode);
       } catch (e) {
         // ❌ فشل التطبيق → نبقى PENDING_REVIEW ونسجل الخطأ
-        Log.update(id, { applyError: e.message, applyFailedAt: new Date().toISOString() });
+        Log.update(id, { applyError: e.message, applyFailedAt: nowIso() });
+        Audit.append("approval.denied", { actor, incidentId: id, attemptId: evidence && evidence.attemptId,
+                                          reasons: ["APPLY_FAILED"], note: String(e && e.message || e) });
         return {
           id,
           status: Status.PENDING_REVIEW,
@@ -866,11 +1051,14 @@ const SelfHealing = {
     }
 
     // ✅ نغير الحالة إلى APPROVED بعد نجاح التطبيق فقط
-    Log.update(id, { status: Status.APPROVED, approvedAt: new Date().toISOString() });
+    if (evidence) Audit.run(t => t.recordApproval(entry, evidence.baseCode, patchedCode, { actor }));
+    else Audit.append("approval.granted", { actor, incidentId: id, from: entry.status, to: Status.APPROVED });
+    Log.update(id, { status: Status.APPROVED, approvedAt: nowIso() });
     return { id, status: Status.APPROVED };
   },
 
-  reject(id) {
+  reject(id, opts) {
+    const actor = opts && typeof opts.actor === "string" ? opts.actor : undefined;
     if (!id) return { id, status: "ERROR", error: "id غير موجود" };
 
     const entry = Log.getById(id);
@@ -885,7 +1073,8 @@ const SelfHealing = {
       };
     }
 
-    Log.update(id, { status: Status.REJECTED, rejectedAt: new Date().toISOString() });
+    Audit.run(t => t.recordRejection(entry, { actor }));
+    Log.update(id, { status: Status.REJECTED, rejectedAt: nowIso() });
     return { id, status: Status.REJECTED };
   },
 
@@ -984,7 +1173,83 @@ const SelfHealing = {
   getPending()     { return Log.getPending(); },
   getById(id)      { return Log.getById(id); },
   getSnapshot(id)  { return Snapshots.getById(id); },
-  exportLog()      { return Log.exportJSON(); },   // ✅ لحفظ يدوي
+  exportLog()      { return Log.exportJSON(); },   // ✅ لحفظ يدوي (بلا patchedCode وبلا أسرار عند توفر السياسة)
+  // نفس التصدير مع قائمة الحوادث التي لم تدخل الملف (غير صالحة للمخزن) — لا إسقاط صامت
+  exportLogDetailed() { const d = Log.exportDetailed(); Audit.append("log.exported", { note: d.skipped.length + " skipped" }); return d; },
+  getArchive()     { return Log._archive.slice(); },
+
+  // ── سجل التدقيق (سلسلة هاشات في الذاكرة؛ كشف عبث لا منع عبث، ولا يُحفظ دائمًا بعد) ──
+  exportAudit()    { return Audit.run(t => t.export()) || { anchorHash: null, events: [] }; },
+  verifyAudit()    { return Audit.run(t => t.verify()) || { ok: false, index: -1, reason: "سياسة السجل غير محمَّلة" }; },
+
+  // ── تخزين دائم اختياري (healing_store.js) ─────────────
+  // لا يُفعَّل تلقائيًا. السجل المستعاد تاريخ فقط: بلا patchedCode، فـapprove() عليه يُرفض.
+  // الترتيب عند كل حفظ: إخفاء الأسرار ← احتفاظ/أرشفة (المعلّق محمي) ← store.save. يتطلب السياسة؛ بدونها نرفض.
+  // opts.policy: تجاوز جزئي لسياسة الاحتفاظ.
+  attachStore(store, opts) {
+    if (!store || typeof store.load !== "function" || typeof store.save !== "function") {
+      return { ok: false, reason: "store غير صالح (يلزم load/save من HealingStore.createStore)" };
+    }
+    if (!Mods.policy()) {
+      return { ok: false, reason: "سياسة السجل (إخفاء الأسرار/الاحتفاظ) غير محمَّلة — رُفض الربط كي لا يُكتب سجل غير محجوب" };
+    }
+    const loaded = store.load();
+    if (!loaded.ok) {
+      // نربط الكتابة رغم فشل القراءة؟ لا: قد نكتب فوق سجل لم نستطع قراءته.
+      return { ok: false, reason: "تعذّر تحميل السجل المحفوظ: " + loaded.error, quarantined: !!loaded.quarantined };
+    }
+    const cur = Log.getAll();
+    const have = new Set(cur.map(e => e.id));
+    const merged = cur.concat(loaded.entries.filter(e => !have.has(e.id)));
+    merged.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+    Log._policy = opts && opts.policy ? Object.assign({}, opts.policy) : null;
+    Log._archive = Array.isArray(loaded.archive) ? loaded.archive.slice() : [];
+    storeSet(Log._key, merged);
+    Log._sink = store;
+    const rec = Log._persist(merged);        // قد يُؤرشف جزء من الذاكرة هنا وفق السياسة
+    if (!rec.ok) {
+      Log._sink = null;                      // لا ندّعي تخزينًا لم يحدث
+      return { ok: false, reason: "فشل أول حفظ: " + rec.error, restored: loaded.entries.length, persist: rec };
+    }
+    return { ok: true, restored: loaded.entries.length, dropped: loaded.dropped.length, total: Log.getAll().length,
+             saved: rec, archived: Log._archive.length };
+  },
+  detachStore() { const had = !!Log._sink; Log._sink = null; return { ok: true, wasAttached: had }; },
+  storeStatus() {
+    return { attached: !!Log._sink, kind: Log._sink ? Log._sink.kind : null,
+             lastError: Log._sink ? Log._sink.lastError : null,
+             lastPersist: Log._lastPersist, archiveCount: Log._archive.length };
+  },
+
+  // استيراد يدوي لملف سجل (نص JSON) — تاريخ فقط، يُدمج بلا تكرار ولا يُعيد أي patch قابل للاعتماد.
+  // persisted: true فقط إن كان هناك مخزن وتم الحفظ فعلًا؛ null بلا مخزن؛ false إن فشل.
+  importLog(text) {
+    const HS = Mods.store();
+    if (!HS) return { ok: false, reason: "healing_store.js غير محمَّل" };
+    const r = HS.parse(text, MAX_LOG);
+    if (!r.ok) return { ok: false, reason: r.error };
+    const cur = Log.getAll();
+    const have = new Set(cur.map(e => e.id));
+    const add = r.entries.filter(e => !have.has(e.id));
+    const merged = cur.concat(add);
+    merged.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+    if (!(Log._sink && Mods.policy()) && merged.length > MAX_LOG) merged.length = MAX_LOG;
+    const archIds = new Set(Log._archive.map(a => a.id));
+    const newArch = (r.archive || []).filter(a => a && !archIds.has(a.id));
+    Log._archive = Log._archive.concat(newArch);
+    Log._save(merged);
+    Audit.append("log.imported", { note: add.length + " imported, " + (r.entries.length - add.length) + " duplicates" });
+    const persisted = Log._sink ? !!(Log._lastPersist && Log._lastPersist.ok) : null;
+    return { ok: true, imported: add.length, skippedDuplicates: r.entries.length - add.length, dropped: r.dropped.length,
+             total: Log.getAll().length, archiveImported: newArch.length, persisted,
+             persistError: persisted === false && Log._lastPersist ? Log._lastPersist.error : null };
+  },
+
+  // ما الذي يعمل فعلًا في هذه البيئة؟ (غياب وحدة = سلوك قديم أضعف، ولا يكون صامتًا)
+  features() {
+    return { evidence: !!Mods.schema(), policy: !!Mods.policy(), store: !!Mods.store(),
+             logVersion: logVersion(), storeAttached: !!Log._sink };
+  },
 
   engines()        { return Engines.available(); },
 
@@ -1003,6 +1268,9 @@ const SelfHealing = {
       rolledBack: rolled,
       lastEvent:  all[0]?.timestamp || null,
       engines:    Engines.available(),
+      logVersion: logVersion(),
+      evidence:   !!Mods.schema(),
+      auditErrors: Audit.errors,
     };
   },
 };
