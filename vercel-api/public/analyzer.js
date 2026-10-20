@@ -496,7 +496,14 @@ function analyzeCode(code, fileName) {
         if (_execQ.test(code) && !queryBound) {
             const qLine = code.split('\n').findIndex(l => _execQ.test(l)) + 1;
             if (qLine > 0) {
-                issues.push({ type:'py', sev:'c', line:qLine, ev:'cursor.execute(query, ...)',
+                // [EV-IS-EVIDENCE] كان الدليلُ هنا وصفًا عامًّا —
+                // ‎'cursor.execute(query, ...)'‎ — لا نصَّ السطر. وحارسُ
+                // ‎stale-line‎ في ‎repairCode‎ يشترط ‎currentLine.includes(ev)‎،
+                // فلا يتحقّق أبدًا على سطرٍ كـ‎return cur.execute(query)‎،
+                // فيُحكَم على البلاغِ بأنّه قديمٌ ويُترَك بصمتٍ قبل أن يصل
+                // المُصلِحُ إليه. و‎fixNameError‎ قائمٌ ويُنتج الإصلاحَ الصحيحَ
+                // متى نودي. فالدليلُ صار نصَّ السطرِ كما تقتضيه القاعدة.
+                issues.push({ type:'py', sev:'c', line:qLine, ev:String(code.split('\n')[qLine - 1] || '').trim(),
                     title:'🔴 NameError: query غير معرّف — أزل # من query',
                     fix:'query = "SELECT * FROM ... WHERE id=?"',
                     conf:95, cIcon:'🔴', cAct:'NameError' });
