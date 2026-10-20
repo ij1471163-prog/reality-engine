@@ -161,6 +161,10 @@ function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
 
     if (typeof candidate !== 'string' || candidate === before) return false;
 
+    // [COUNTS] تمريرةٌ = مُرشَّحٌ وصل البوابة. تُعَدُّ قبل أيِّ حكم، فالرقمُ
+    // يصف المحاولاتِ لا النجاحات.
+    report.enginePasses = (report.enginePasses | 0) + 1;
+
     // الرفضُ القاطعُ السابقُ يُحترَم قبل أيِّ حكمِ بوابة: انخفاضُ عددِ
     // البلاغاتِ لا يُبطل رفضًا كان عن المشكلةِ نفسِها.
     const _kept = _honorRefusals(before, candidate,
@@ -477,7 +481,7 @@ function fixAllEnginePipeline() {
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
 
     // [P2] learnedOutcomes: حكم لكل نمط أسهم في إصلاح متعلَّم — تسجيل لا حكم.
-    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [], learnedOutcomes: [], refusals: [] };
+    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [], learnedOutcomes: [], refusals: [], enginePasses: 0 };
     const aiByFile = {};   // aiNeeded من repairCode لكل ملف — يُفلتر على الحالة النهائية في الآخر
 
     if (typeof detectDangerousTypos !== 'undefined') {
@@ -746,14 +750,34 @@ function fixAllEnginePipeline() {
     _collectFinalAiNeeded(F, aiByFile, report);
 
     // ─── التقرير ───
-    // totalFixed يعكس ما أزالته البوابة فعليًا، لا ما ادّعته المحركات.
-    const rejectedCount = report.rejected.length;
-    let msg = '✅ تم إصلاح ' + report.totalFixed + ' مشكلة';
-    if (rejectedCount > 0) {
+    // [COUNTS] خمسةُ أرقامٍ مفصولة، لكلٍّ معناه — كان رقمٌ واحدٌ يحمل
+    // معنيين فيُقرأ خطأً. ‎totalFixed‎ عددُ **البلاغاتِ التي زالت**، لا
+    // عددُ المشكلاتِ المُصلَحة: إصلاحٌ واحدٌ في الكود قد يُزيل عدّةَ
+    // بلاغاتٍ متداخلة (مقيس: 7 إصلاحات ⇒ 14 بلاغًا زال). و‎accepted‎
+    // عددُ **الرقعِ المقبولة**، وهي تمريراتُ محرّكاتٍ لا مشكلاتٌ أيضًا.
+    // فمن قرأ «أُصلحت 2» كان يقرأ طولَ ‎accepted‎.
+    //
+    // وليس في المجموعة رقمٌ اسمُه «ثبت نجاحُه وظيفيًّا»: البوابةُ لا تشغّل
+    // البرنامج. أقصى ما تُثبته أنّ النحوَ سليمٌ وأنّ إشارةً أمنيّةً لم
+    // تختفِ بلا دليلِ علاج — وذلك ما يسمّيه ‎syntaxVerified‎ لا أكثر.
+    report.counts = {
+      enginePasses:    report.enginePasses | 0,          // مُرشَّحاتٌ وصلت البوابة
+      patchesAccepted: report.accepted.length,           // رقعٌ قُبلت وكُتبت
+      patchesRejected: report.rejected.length,           // رقعٌ رُدَّت
+      issuesRemoved:   report.totalFixed,                // بلاغاتٌ زالت بقياسِ البوابة
+      syntaxVerified:  report.accepted.filter(a => a.syntaxStatus === 'verified').length,
+      refusalsHonored: (report.refusals || []).length,   // رفضٌ قاطعٌ حُمل إلى ما بعده
+      needsHuman:      report.aiNeeded.length,           // يحتاج إنسانًا أو نموذجًا
+    };
+
+    const c = report.counts;
+    let msg = '✅ زال ' + c.issuesRemoved + ' بلاغًا بـ' + c.patchesAccepted + ' رقعة';
+    if (c.patchesRejected > 0) {
       const firstReject = report.rejected[0] || {};
-      msg += ' • ' + rejectedCount + ' تعديل مرفوض: ' + (firstReject.reason || 'UNKNOWN');
+      msg += ' • ' + c.patchesRejected + ' مرفوضة: ' + (firstReject.reason || 'UNKNOWN');
     }
-    if (report.aiNeeded.length > 0) msg += ' • ' + report.aiNeeded.length + ' تحتاج AI';
+    if (c.refusalsHonored > 0) msg += ' • ' + c.refusalsHonored + ' رفضٌ أمنيٌّ محفوظ';
+    if (c.needsHuman > 0) msg += ' • ' + c.needsHuman + ' تحتاج مراجعة';
     toast(msg);
 
     if (typeof globalThis !== 'undefined') globalThis.lastPipelineReport = report;
