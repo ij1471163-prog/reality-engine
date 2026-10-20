@@ -2413,11 +2413,47 @@ function repairCode(code, issues, fileName, _opts) {
     });
   }
 
+  // [REFUSAL-VISIBLE] الرفضُ يُعلَن، لا يُبتلَع.
+  //
+  // ‎[SILENT-DROP]‎ جعل الفجوةَ **مقروءةً للتشخيص** في حقلٍ جانبيٍّ عمدًا،
+  // ولم يمسَّ المخرَجات. فبقي البابُ إلى ‎aiNeeded‎ معلَّقًا على شرطٍ واحد:
+  //     if (issue.aiRequired === true) aiNeeded.push(…)
+  // و‎aiRequired‎ علامةٌ يضعها بعضُ الكاشفاتِ ولا يضعها أكثرُها. فصار
+  // ظهورُ الرفضِ للمستخدمِ تابعًا لعلامةٍ في الكاشفِ لا لما جرى فعلًا:
+  //     SQL_INJECTION/php  🔴  ⇒  {total:1, fixed:0, needsAI:0}
+  //     SQL_INJECTION/cs   🔴  ⇒  {total:1, fixed:0, needsAI:0}
+  //     XSS_INNER_HTML     🔴  ⇒  لا سطرَ في أيِّ قناةٍ يراها المستخدم
+  // ثغرةٌ حرجةٌ اكتُشفت، ووُجِّهت إلى استراتيجيّتها، وردَّها المُصلِحُ ردًّا
+  // صحيحًا لنقصِ السياق — ثم اختفت من المخرَج. والمستخدمُ يقرأ «مشكلةٌ
+  // واحدة، لا إصلاح، ولا شيءَ يحتاج مراجعة» فلا يعرف أنّ عليه شيئًا.
+  //
+  // فكلُّ ما نُودي له مُصلِحٌ فلم يُنتج تعديلًا — أو رمى — يُعلَن في
+  // ‎aiNeeded‎ بسببِه واسمِ مُصلِحِه. والقرارات كما هي حرفًا: ‎repairs‎ و
+  // ‎rejected‎ لا يتغيّران، و‎score‎ يبقى ‎repairs/total‎. و‎needsAI‎ يرتفع
+  // لأنّ الرقمَ الصادقَ أعلى، لا لأنّ المحرّكَ أصلح أكثر: رفضٌ مُعلَنٌ
+  // ليس إصلاحًا، ولا يُحتسَب في أيِّ مصفوفةِ قياس.
+  //
+  // وعقدُ ‎security_no_drop‎ محفوظ: ما أُصلح على سطرِه لا يظهر هنا.
+  for (const d of dropped) {
+    if (repairs.some(p => p.line === d.line && String(p.strategy) === String(d.strategy))) continue;
+    if (aiNeeded.some(a => a.line === d.line && String(a.strategy) === String(d.strategy))) continue;
+    aiNeeded.push({
+      line: d.line, title: d.title, strategy: d.strategy, ev: d.ev,
+      reason: getAIReason(d.strategy) + ' — ' +
+              (d.kind === 'FIXER_THREW'
+                ? 'المُصلِحُ رمى خطأً: ' + String(d.reason || '').slice(0, 120)
+                : 'المُصلِحُ' + (d.fixer ? ' «' + d.fixer + '»' : '') +
+                  ' نُودي فلم يُنتج تعديلًا — نمطُه أضيقُ من نمطِ الكاشف، ' +
+                  'أو السياقُ ناقصٌ فامتنع عن رُقعةٍ قد تكسر البرنامج'),
+    });
+  }
+
   return {
     original: code, repaired: repairedCode,
     repairs, aiNeeded, rejected,
     // [SILENT-DROP] حقلٌ إضافيٌّ للتشخيص وحده: ما نُودي له مُصلِحٌ فلم يُنتج
-    // شيئًا. لا يدخل ‎summary‎ ولا يغيّر ‎score‎ — فالعدُّ كما كان حرفًا.
+    // شيئًا. يُقرأ مع ‎aiNeeded‎ بعد ‎[REFUSAL-VISIBLE]‎: هذا يحمل التفصيلَ
+    // التقنيّ، وذاك يحمل الإعلانَ للمستخدم. ولا يدخل ‎score‎ في الحالتين.
     dropped,
     summary: {
       total: issues.length,
