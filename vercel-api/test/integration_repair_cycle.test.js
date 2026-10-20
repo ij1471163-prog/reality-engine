@@ -249,12 +249,36 @@ test('التسجيل: totalFixed = مجموع ما أزالته البوابة،
   }
 });
 
+// العيّنةُ كانت ‎hashlib.md5(x)‎، والمحرّكُ المعزولُ يصل إليها لأنّ
+// ‎repairCode‎ يرفضها ‎WEAK_CRYPTO_INPUT_FROM_CALLER‎ ثمّ يطبّقها اللاحقُ
+// متجاوزًا الرفض. وقد أُغلق ذلك المسارُ في ‎[REFUSAL-LEDGER]‎، فلم يبقَ
+// للعيّنةِ محرّكٌ معزولٌ يصل إليها أصلًا — أي أنّ تغطيةَ هذين الاختبارين
+// كانت قائمةً على الثغرةِ نفسِها.
+//
+// وموضوعُهما ليس md5 بل **نسبةُ الادّعاء** في ‎_runIsolatedEngine‎: مجموعٌ
+// على عدّةِ ملفاتٍ لا يُنسب لكلِّ ملف، ويُنسب حين يتغيّر ملفٌ واحد. فيُقاس
+// ذلك مباشرةً بمحرّكٍ معزولٍ مُركَّبٍ مكانَ ‎Emergency‎: يُصلح ما لا يُصلحه
+// ‎repairCode‎ (حقنُ ‎$where‎ — بلا استراتيجيّة) ويُرجع مجموعًا، فيمرّ
+// بالبوابةِ الحقيقيّةِ وبمنطقِ النسبةِ الحقيقيّ بلا اعتمادٍ على تجاوز.
+const NOSQL = f => 'function ' + f + '(db, q) {\n' +
+  '  return db.users.find({ $where: "this.n == \'" + q + "\'" });\n' +
+  '}\nmodule.exports = { ' + f + ' };\n';
+function stubIsolatedEngine(ctx) {
+  vm.runInContext(
+    'applyEmergencyToAll = function (tF, tR) {\n' +
+    '  var n = 0;\n' +
+    '  Object.keys(tF).forEach(function (k) {\n' +
+    '    var s = tF[k].replace(/db\\.users\\.find\\(\\{ \\$where: [^;]*\\}\\);/, "db.users.find({ n: q });");\n' +
+    '    if (s !== tF[k]) { tF[k] = s; if (tR[k]) tR[k].code = s; n++; }\n' +
+    '  });\n' +
+    '  return { totalFixed: n };\n' +
+    '};', ctx);
+}
+
 test('[P4-3] ادّعاء المحرك لا يُضاعَف: مجموعٌ على ملفين لا يُنسب لكل ملف', () => {
   const ctx = loadCtx();
-  const { report } = runPipe(ctx, {
-    'a.py': 'import hashlib\ndef f(x):\n    return hashlib.md5(x).hexdigest()\n',
-    'b.py': 'import hashlib\ndef g(y):\n    return hashlib.md5(y).hexdigest()\n',
-  });
+  stubIsolatedEngine(ctx);
+  const { report } = runPipe(ctx, { 'a.js': NOSQL('a'), 'b.js': NOSQL('b') });
   const iso = (report.accepted || []).filter(a => /Emergency|SmartRepair|Fallback/.test(a.source));
   assert.ok(iso.length >= 2, 'محرك معزول لم يصلح ملفين ⇒ تغطية خاوية: ' +
     JSON.stringify((report.accepted || []).map(a => a.file + '/' + a.source)));
@@ -267,7 +291,8 @@ test('[P4-3] ادّعاء المحرك لا يُضاعَف: مجموعٌ على 
 
 test('[P4-3] وعند تغيّر ملف واحد يُنسب الادّعاء كما هو', () => {
   const ctx = loadCtx();
-  const { report } = runPipe(ctx, { 'a.py': 'import hashlib\ndef f(x):\n    return hashlib.md5(x).hexdigest()\n' });
+  stubIsolatedEngine(ctx);
+  const { report } = runPipe(ctx, { 'a.js': NOSQL('a') });
   const iso = (report.accepted || []).filter(a => /Emergency|SmartRepair|Fallback/.test(a.source));
   assert.ok(iso.length === 1, 'المطلوب ملف واحد متغيّر: ' + JSON.stringify(iso.map(a => a.file)));
   assert.ok(typeof iso[0].claimedCount === 'number' && iso[0].claimedCount >= 1,

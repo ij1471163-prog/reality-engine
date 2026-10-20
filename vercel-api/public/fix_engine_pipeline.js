@@ -118,10 +118,56 @@ function _safeSync(code, fn, prevEntry, report) {
  * @param {number} claimedCount عدد الإصلاحات التي يدّعيها المحرك
  * @returns {boolean} هل قُبل التعديل وكُتب فعلاً
  */
+
+// [REFUSAL-LEDGER] يُعيد المُرشَّحَ بعد ردِّ ما تجاوز رفضًا قاطعًا، أو ‎null‎
+// إن تعذّر الردُّ بأمان فيُرَدّ المُرشَّحُ كلُّه.
+//
+// المِفتاحُ نصُّ السطرِ وقتَ الرفض، لا رقمُه: الأرقامُ تُزاح بين المحرّكات.
+// وإن لم يعد النصُّ موجودًا في الكودِ المُعتمَدِ الحاليّ فالموضعُ تغيّر
+// بعد الرفض — أدلّةٌ جديدة — فلا يُطبَّق التجميد، ويحكم على المُرشَّحِ
+// بالبوابةِ وحدَها كالمعتاد.
+//
+// والردُّ سطريٌّ لا كُلّيّ: يُعاد السطرُ المرفوضُ وحدَه ويمضي سائرُ
+// الرقعة، فلا تسقط إصلاحاتٌ آمنةٌ في الملفِّ نفسِه. وحين تختلف أعدادُ
+// الأسطرِ (إزاحةٌ بنيويّة) لا يُخمَّن موضعٌ: يُرَدُّ المُرشَّحُ كلُّه، وهو
+// الجانبُ الآمن.
+function _honorRefusals(before, candidate, entries, fn, source, report) {
+    if (!entries || !entries.length) return candidate;
+    const B = before.split('\n');
+    let C = candidate.split('\n');
+    const blocked = [];
+    for (const e of entries) {
+        const text = e && e.text;
+        if (typeof text !== 'string' || !text) continue;
+        if (B.indexOf(text) === -1) continue;        // تغيّر الموضعُ منذ الرفض
+        if (C.indexOf(text) !== -1) continue;        // المُرشَّحُ لم يمسّه
+        if (C.length !== B.length) {
+            report.rejected.push({ file: fn, source,
+                reason: 'REFUSAL_BYPASS_BLOCKED — ' + e.reason });
+            return null;
+        }
+        C = C.slice();
+        C[B.indexOf(text)] = text;
+        blocked.push(e);
+    }
+    if (!blocked.length) return candidate;
+    blocked.forEach(e => report.rejected.push({ file: fn, source,
+        reason: 'REFUSAL_BYPASS_BLOCKED — ' + e.reason }));
+    return C.join('\n');
+}
+
 function _gateAndCommit(F, R, fn, candidate, source, report, claimedCount) {
     const before = F[fn];
 
     if (typeof candidate !== 'string' || candidate === before) return false;
+
+    // الرفضُ القاطعُ السابقُ يُحترَم قبل أيِّ حكمِ بوابة: انخفاضُ عددِ
+    // البلاغاتِ لا يُبطل رفضًا كان عن المشكلةِ نفسِها.
+    const _kept = _honorRefusals(before, candidate,
+        (report.refusals || []).filter(r => r.file === fn), fn, source, report);
+    if (_kept === null) return false;
+    candidate = _kept;
+    if (candidate === before) return false;
 
     // Fail-Closed: بلا بوابة لا نكتب شيئًا إطلاقًا
     const _fv = _getFixVerifier();
@@ -431,7 +477,7 @@ function fixAllEnginePipeline() {
     Object.keys(F).forEach(fn => { origF[fn] = F[fn]; });
 
     // [P2] learnedOutcomes: حكم لكل نمط أسهم في إصلاح متعلَّم — تسجيل لا حكم.
-    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [], learnedOutcomes: [] };
+    const report = { totalFixed: 0, accepted: [], rejected: [], deferred: [], warnings: [], aiNeeded: [], learnedOutcomes: [], refusals: [] };
     const aiByFile = {};   // aiNeeded من repairCode لكل ملف — يُفلتر على الحالة النهائية في الآخر
 
     if (typeof detectDangerousTypos !== 'undefined') {
@@ -473,6 +519,27 @@ function fixAllEnginePipeline() {
                 result = repairCode(beforeCode, issues, fn);
                 if (result && Array.isArray(result.aiNeeded)) {
                     aiByFile[fn] = (aiByFile[fn] || []).concat(result.aiNeeded);
+                }
+                // [REFUSAL-LEDGER] ‎result.rejected‎ كان يُرمى هنا، و‎aiNeeded‎
+                // وحدَه يُلتقَط. فرفضٌ مُبرَّرٌ من ‎repairCode‎ لا يصل أيَّ طبقةٍ
+                // بعده، والبوابةُ تحكم على مُرشَّحِ المحرّكِ التالي وحدَه —
+                // فيمرّ التحويلُ المرفوضُ لأنّ عددَ البلاغاتِ انخفض. يُحفَظ
+                // الرفضُ **القاطع** وحدَه، ومعه نصُّ سطرِه وقتَ الرفض: هو
+                // مِفتاحُ «هل ما زال الموضعُ كما كان؟».
+                if (result && Array.isArray(result.rejected)) {
+                    const _bl = beforeCode.split('\n');
+                    result.rejected.forEach(rj => {
+                        if (typeof isCategoricalRefusal !== 'function' ||
+                            !isCategoricalRefusal(rj && rj.reason)) return;
+                        const text = _bl[(rj.line | 0) - 1];
+                        if (typeof text !== 'string' || !text.trim()) return;
+                        if (report.refusals.some(x => x.file === fn && x.text === text &&
+                                                      x.reason === rj.reason)) return;
+                        report.refusals.push({
+                            file: fn, line: rj.line, strategy: rj.strategy,
+                            reason: String(rj.reason), text,
+                        });
+                    });
                 }
                 if (typeof AdvancedRepair !== 'undefined') {
                     const ar = AdvancedRepair.fix(result.repaired || beforeCode, fn);
