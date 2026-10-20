@@ -35,15 +35,15 @@ var ExtendedPatterns = (() => {
     { pattern: /ignoreExpiration\s*:\s*true/, sev: 'h', title: '🟠 JWT Expiration Ignored', type: 'JWT_EXPIRED' },
 
     // NoSQL Injection
-    { pattern: /\$where\s*:/, sev: 'c', title: '🔴 NoSQL Injection via $where', type: 'NOSQL_INJECTION' },
-    { pattern: /\$regex\s*:.*req\./, sev: 'c', title: '🔴 NoSQL ReDoS via $regex', type: 'NOSQL_INJECTION' },
-    { pattern: /\$ne\s*:\s*null/, sev: 'h', title: '🟠 NoSQL Bypass via $ne:null', type: 'NOSQL_INJECTION' },
-    { pattern: /\.find\s*\(\s*req\.body/, sev: 'c', title: '🔴 NoSQL Injection — Direct req.body في find()', type: 'NOSQL_INJECTION' },
+    { pattern: /\$where\s*:/, sev: 'c', title: '🔴 NoSQL Injection via $where', type: 'NOSQL_INJECTION', strategy: null },
+    { pattern: /\$regex\s*:.*req\./, sev: 'c', title: '🔴 NoSQL ReDoS via $regex', type: 'NOSQL_INJECTION', strategy: null },
+    { pattern: /\$ne\s*:\s*null/, sev: 'h', title: '🟠 NoSQL Bypass via $ne:null', type: 'NOSQL_INJECTION', strategy: null },
+    { pattern: /\.find\s*\(\s*req\.body/, sev: 'c', title: '🔴 NoSQL Injection — Direct req.body في find()', type: 'NOSQL_INJECTION', strategy: null },
 
     // CORS
     { pattern: /Access-Control-Allow-Origin.*\*/, sev: 'h', title: '🟠 CORS Wildcard Origin', type: 'CORS' },
     { pattern: /origin\s*:\s*true/, sev: 'h', title: '🟠 CORS Allow All Origins', type: 'CORS' },
-    { pattern: /credentials\s*:\s*true.*origin\s*:\s*\*|origin\s*:\s*\*.*credentials\s*:\s*true/, sev: 'c', title: '🔴 CORS Credentials + Wildcard', type: 'CORS' },
+    { pattern: /credentials\s*:\s*true.*origin\s*:\s*\*|origin\s*:\s*\*.*credentials\s*:\s*true/, sev: 'c', title: '🔴 CORS Credentials + Wildcard', type: 'CORS', strategy: null },
 
     // Mass Assignment
     { pattern: /\.save\s*\(\s*req\.body/, sev: 'h', title: '🟠 Mass Assignment via .save(req.body)', type: 'MASS_ASSIGN' },
@@ -64,7 +64,7 @@ var ExtendedPatterns = (() => {
     { pattern: /console\.(log|info|warn)\s*\(.*(?:password|token|secret|credit|ssn|dob|cvv)/i, sev: 'h', title: '🟠 Sensitive Data in Console Log', type: 'DATA_EXPOSURE' },
     { pattern: /localStorage\.setItem\s*\(.*(?:token|password|secret)/i, sev: 'h', title: '🟠 Sensitive Data in localStorage', type: 'DATA_EXPOSURE' },
     { pattern: /sessionStorage\.setItem\s*\(.*(?:token|password|secret)/i, sev: 'h', title: '🟠 Sensitive Data in sessionStorage', type: 'DATA_EXPOSURE' },
-    { pattern: /document\.cookie\s*=.*(?:secure|httpOnly)(?!\s*=\s*true)/, sev: 'h', title: '🟠 Cookie بدون Secure/HttpOnly', type: 'INSECURE_COOKIE' },
+    { pattern: /document\.cookie\s*=.*(?:secure|httpOnly)(?!\s*=\s*true)/, sev: 'h', title: '🟠 Cookie بدون Secure/HttpOnly', type: 'INSECURE_COOKIE', strategy: null },
 
     // XSS Advanced
     { pattern: /dangerouslySetInnerHTML/, sev: 'h', title: '🟠 React dangerouslySetInnerHTML', type: 'XSS' },
@@ -73,7 +73,7 @@ var ExtendedPatterns = (() => {
 
     // Timing Attacks
     { pattern: /===\s*(?:password|token|secret|hash)|(?:password|token|secret|hash)\s*===/, sev: 'h', title: '🟠 Timing Attack — استخدم crypto.timingSafeEqual', type: 'TIMING_ATTACK' },
-    { pattern: /==\s*(?:password|token|hash)|(?:password|token|hash)\s*==/, sev: 'h', title: '🟠 Timing Attack via == comparison', type: 'TIMING_ATTACK' },
+    { pattern: /==\s*(?:password|token|hash)|(?:password|token|hash)\s*==/, sev: 'h', title: '🟠 Timing Attack via == comparison', type: 'TIMING_ATTACK', strategy: null },
 
     // Buffer Issues
     { pattern: /Buffer\.allocUnsafe\s*\(/, sev: 'h', title: '🟠 Buffer.allocUnsafe — بيانات غير مهيأة', type: 'BUFFER' },
@@ -242,6 +242,10 @@ var ExtendedPatterns = (() => {
           type: p.type, sev: p.sev, line: ln, ev: t,
           conf: p.sev === 'c' ? 92 : p.sev === 'h' ? 80 : 65,
           title: p.title,
+          // [EXT-ROUTE] الحقلُ لم يكن يُمرَّر، فكلُّ بلاغٍ هنا يُوجَّه
+          // باستنتاجِ العنوان وحدَه. و‎undefined‎ يُبقي الاستنتاجَ كما كان
+          // حرفًا لمن لا يُعلن، و‎null‎ يمنعه لمن أُعلن عنه أعلاه.
+          strategy: p.strategy,
           cIcon: p.sev === 'c' ? '🔴' : p.sev === 'h' ? '🟠' : '🟡',
           cAct: p.type,
           source: 'ExtendedPatterns',

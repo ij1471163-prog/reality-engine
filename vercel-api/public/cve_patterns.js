@@ -6,6 +6,30 @@
 
 var CVEPatterns = (() => {
 
+  // [CVE-ROUTE] ‎strategy‎ يُعلَن حيث يُضلّل العنوان.
+  //
+  // نمطٌ بلا ‎strategy‎ يُوجَّه باستنتاجِ ‎detectStrategy‎ من كلماتِ عنوانِه،
+  // وفي ستّةِ أنماطٍ كان الاستنتاجُ يقع على مُصلِحٍ يعالج **المشكلةَ
+  // المعاكسة** أو مشكلةً أخرى بالكامل:
+  //   CWE-778  «No Audit Logging»            ← log  ⇒ LOG_SECRET
+  //        وهما ضدّان: البلاغُ «لا يُسجَّل شيء»، والمُصلِحُ يحذف المُسجَّل.
+  //   CWE-759  «Weak Password Hash»          ← password ⇒ HARDCODED_PASS
+  //   CWE-916  «Weak Password Hashing»       ← password ⇒ HARDCODED_PASS
+  //        والمُصلِحُ يستبدل نصًّا حرفيًّا بـ‎process.env‎؛ والخوارزميّةُ
+  //        الضعيفةُ لا تُعالَج بذلك، وعلاجُها ‎KDF‎ لا تبديلُ تجزئة.
+  //   CWE-640  «Review Password Reset Logic» ← password ⇒ HARDCODED_PASS
+  //        تلميحُ مراجعةٍ ثقتُه 0.50، لا موضعَ إصلاحٍ حتميٍّ فيه.
+  //   CWE-943  ×2 «NoSQL Injection»          ← sql ⇒ SQL_INJECTION
+  //        ومُصلِحُ SQL يبني ‎query("… ?", [v])‎ ولا معنى له في مُعامِلِ
+  //        Mongo.
+  // ولم يُكتَب من ذلك تعديلٌ ضارٌّ قطّ — المُصلِحاتُ امتنعت أو ردَّتها
+  // البوابة — لكنّ الوجهةَ خاطئةٌ وهشّة، وبيانُ الامتناعِ كان يسمّي
+  // مُصلِحًا لا شأنَ له بالبلاغ.
+  //
+  // فأُعلن ‎strategy: null‎ في الستّة: لا إصلاحَ حتميًّا لها، وتُعرَض
+  // بلاغًا صريحًا. وبلاغُ ‎WEAK_CRYPTO‎ العامُّ على السطرِ نفسِه باقٍ
+  // بقناتِه الصحيحة، فلم يَضِع تحذيرُ التعميةِ الضعيفة.
+  //
   // ─── OWASP Top 10 2021 ────────────────────────────
   const OWASP = {
 
@@ -28,7 +52,7 @@ var CVEPatterns = (() => {
       { id: 'CWE-330', lang: 'js',  pattern: /Math\.random\s*\(\s*\).*(?:token|secret|key|id|otp|code)/i, conf: 0.95, title: '🔴 Weak Random (CWE-330)' },
       { id: 'CWE-798', lang: 'any', pattern: /(?:password|passwd|secret|key|token)\s*[:=]\s*['"][^'"]{6,}['"]/i, conf: 0.88, title: '🔴 Hardcoded Credential (CWE-798)' },
       { id: 'CWE-312', lang: 'any', pattern: /console\.(?:log|info|warn)\s*\(.*(?:password|token|secret|key)/i, conf: 0.90, title: '🟠 Sensitive Data in Log (CWE-312)' },
-      { id: 'CWE-759', lang: 'any', pattern: /hashlib\.(?:md5|sha1)\s*\(/i, conf: 0.95, title: '🔴 Weak Password Hash (CWE-759)' },
+      { id: 'CWE-759', lang: 'any', pattern: /hashlib\.(?:md5|sha1)\s*\(/i, conf: 0.95, title: '🔴 Weak Password Hash (CWE-759)', strategy: null },
       { id: 'CWE-780', lang: 'js',  pattern: /RSA.*PKCS1v15|PKCS#1.*v1\.5/i, conf: 0.85, title: '🟠 RSA PKCS1v15 Padding (CWE-780)' },
     ],
 
@@ -51,7 +75,7 @@ var CVEPatterns = (() => {
 
     // A04: Insecure Design
     A04: [
-      { id: 'CWE-916', lang: 'any', pattern: /hashlib\.md5|hashlib\.sha1/i, conf: 0.95, title: '🔴 Weak Password Hashing (CWE-916)' },
+      { id: 'CWE-916', lang: 'any', pattern: /hashlib\.md5|hashlib\.sha1/i, conf: 0.95, title: '🔴 Weak Password Hashing (CWE-916)', strategy: null },
       { id: 'CWE-307', lang: 'any', pattern: /login.*(?:for|while)\s*\(|brute.?force/i, conf: 0.70, title: '🟠 No Brute Force Protection (CWE-307)' },
       { id: 'CWE-208', lang: 'js',  pattern: /if\s*\(\s*password\s*===?\s*\w+\s*\)/i, conf: 0.85, title: '🟠 Timing Attack (CWE-208)' },
     ],
@@ -77,7 +101,7 @@ var CVEPatterns = (() => {
       { id: 'CWE-287', lang: 'js',  pattern: /jwt\.sign\s*\((?![^)]*expiresIn)[^)]+\)/i, conf: 0.85, title: '🟠 JWT No Expiry (CWE-287)' },
       { id: 'CWE-306', lang: 'js',  pattern: /app\.(get|post|put|delete)\s*\(['"][^'"]+['"]\s*,\s*(?:async\s*)?\([^)]*req[^)]*\)\s*=>/i, conf: 0.60, title: '🟡 Endpoint May Lack Auth (CWE-306)', strategy: 'MISSING_AUTH' },
       { id: 'CWE-521', lang: 'any', pattern: /password.{0,20}(?:length|len)\s*[<>=]+\s*[1-5]\b/i, conf: 0.85, title: '🟠 Weak Password Policy (CWE-521)' },
-      { id: 'CWE-640', lang: 'js',  pattern: /reset.*password.*email|forgot.*password/i, conf: 0.50, title: '🟡 Review Password Reset Logic (CWE-640)' },
+      { id: 'CWE-640', lang: 'js',  pattern: /reset.*password.*email|forgot.*password/i, conf: 0.50, title: '🟡 Review Password Reset Logic (CWE-640)', strategy: null },
     ],
 
     // A08: Software Integrity Failures
@@ -89,7 +113,7 @@ var CVEPatterns = (() => {
     // A09: Logging Failures
     A09: [
       { id: 'CWE-532', lang: 'any', pattern: /console\.(?:log|info)\s*\(.*(?:password|token|secret|credit|ssn|dob)/i, conf: 0.92, title: '🟠 Sensitive Data Logged (CWE-532)' },
-      { id: 'CWE-778', lang: 'js',  pattern: /app\.(?:get|post|put|delete)\s*\([^)]+\)\s*(?!.*(?:log|audit|track))/i, conf: 0.55, title: '🟡 No Audit Logging (CWE-778)' },
+      { id: 'CWE-778', lang: 'js',  pattern: /app\.(?:get|post|put|delete)\s*\([^)]+\)\s*(?!.*(?:log|audit|track))/i, conf: 0.55, title: '🟡 No Audit Logging (CWE-778)', strategy: null },
     ],
 
     // A10: SSRF
@@ -143,8 +167,8 @@ var CVEPatterns = (() => {
     { id: 'CWE-200', lang: 'py', pattern: /return\s+jsonify\s*\(\s*user\.__dict__/i, conf: 0.85, title: '🟠 Object Dict Exposure (CWE-200)' },
 
     // NoSQL Injection
-    { id: 'CWE-943', lang: 'js', pattern: /\.find\s*\(\s*\{\s*\$where/i, conf: 0.95, title: '🔴 NoSQL Injection ($where) (CWE-943)' },
-    { id: 'CWE-943', lang: 'js', pattern: /\$regex.*req\.|req\..*\$regex/i, conf: 0.90, title: '🔴 NoSQL ReDoS Injection (CWE-943)' },
+    { id: 'CWE-943', lang: 'js', pattern: /\.find\s*\(\s*\{\s*\$where/i, conf: 0.95, title: '🔴 NoSQL Injection ($where) (CWE-943)', strategy: null },
+    { id: 'CWE-943', lang: 'js', pattern: /\$regex.*req\.|req\..*\$regex/i, conf: 0.90, title: '🔴 NoSQL ReDoS Injection (CWE-943)', strategy: null },
 
     // GraphQL
     { id: 'CWE-400', lang: 'js', pattern: /depth.*limit|introspection.*true/i, conf: 0.65, title: '🟡 GraphQL Security - Verify Limits (CWE-400)' },
