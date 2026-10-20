@@ -444,3 +444,24 @@ test('[UI-7] تظهر مرّةً واحدة، ولا ترمي حين يُحجب 
   assert.doesNotThrow(() => run(blocked, 'closeWelcome()'), 'closeWelcome ترمي عند حجب التخزين');
   assert.strictEqual(disp(blocked), 'none', 'لم تُغلَق');
 });
+
+test('[UI-3g] ومسارُ applyFix لا يكتب رُقعةً تُضاعف القيمة', () => {
+  // ‎[NO-DOUBLE-GATE]‎ في البوابة، و‎applyFix‎ لا يكتب إلا ما تُقرّه. فحتى
+  // لو وصل الزرَّ اقتراحٌ يقلب ‎x = x + 1‎ إلى ‎x += x + 1‎ — من كاشفٍ جديد
+  // أو من خارجِ المحرّك، وبأيِّ درجةِ ثقة — يبقى الملفُّ كما هو.
+  const ctx = loadPage();
+  const src = ['function f(xs) {', '  let count = 0;',
+               '  for (const x of xs) { count = count + 1; }', '  return count;', '}'].join('\n');
+  run(ctx, 'F["acc.js"] = ' + JSON.stringify(src) + ';' +
+           'R["acc.js"] = { code: F["acc.js"], issues: analyzeCode(F["acc.js"], "acc.js") };');
+  const v = JSON.parse(run(ctx,
+    'JSON.stringify((function(){var r = FixVerifier.verifyFix(F["acc.js"],' +
+    ' F["acc.js"].replace("count = count + 1", "count += count + 1"), "acc.js", analyzeCode, {});' +
+    ' return { accepted: r.accepted, reason: String(r.reason || "") };})())'));
+  assert.strictEqual(v.accepted, false, 'البوابةُ قبلت رُقعةَ تضاعف');
+  assert.match(v.reason, /^REJECTED_ACCUM_DOUBLES/);
+
+  run(ctx, 'applyFix("acc.js", 2, ' + JSON.stringify('  for (const x of xs) { count = count + 1; }') +
+           ', ' + JSON.stringify('  for (const x of xs) { count += count + 1; }') + ', 0)');
+  assert.strictEqual(run(ctx, 'F["acc.js"]'), src, 'كُتبت رُقعةٌ تُضاعف القيمة');
+});

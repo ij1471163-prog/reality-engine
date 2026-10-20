@@ -1433,6 +1433,7 @@ var FixVerifier = (() => {
     'REJECTED_QUICKCHECK',              // فحوص بنيوية سريعة سقطت
     'REJECTED_SYNTAX_BROKEN',           // الفاحص متاح وحكم بالكسر
     'REJECTED_ISSUES_WORSENED',         // أضاف بلاغات
+    'REJECTED_ACCUM_DOUBLES',           // قلب ‎x = x op r‎ إلى ‎x op= x op r‎ فضاعف
     'REJECTED_PY_UNREACHABLE_CODE',     // أدخل كودًا غير قابل للوصول
     'REJECTED_MINIFIED_VENDOR',         // هدفٌ لا يُصلَح تلقائيًا
     // أسباب سجل الإشارة/الإثبات — نقصُ بلاغٍ بلا دليل على إصلاحه
@@ -1906,6 +1907,58 @@ var FixVerifier = (() => {
     };
   }
 
+
+  // ═══════════════════════════════════════════════════════════════════
+  // [NO-DOUBLE-GATE] رُقعةٌ تقلب ‎x = x op r‎ إلى ‎x op= x op r‎ تُطبّق
+  // العامِلَ مرّتين، فتُضاعف. ولا يُمسكها عدُّ البلاغاتِ لأن البلاغَ يختفي
+  // (‎+=‎ ليست ‎=‎)، فتُقرأ تحسّنًا. مقيسٌ بتنفيذِ CPython:
+  //     count = count + 1  ⇒  count += count + 1
+  //     f([1,2,3,4,5]) : 5  ⇒  31
+  // وقد عولجت المصادرُ الأربعةُ داخلَ المحرّك في ‎[NO-DOUBLE]‎، وهذا يُغلق
+  // البابَ على أيِّ مصدرٍ آخر — كاشفٍ جديد، أو رُقعةٍ تصل من خارج.
+  //
+  // والشرطُ ضيّقٌ عمدًا فلا يُرفَض إصلاحٌ صحيح: الطرفُ الأيمنُ **كما هو**،
+  // وما تغيّر إلا ‎=‎ إلى ‎op=‎، والطرفُ الأيمنُ ما زال يذكر المتغيّر.
+  // فالتحويلُ الصحيحُ ‎total = total + x ⇒ total += x‎ لا يُمَسّ: طرفُه
+  // الأيمنُ تغيّر ولم يعد يذكر ‎total‎.
+  // ═══════════════════════════════════════════════════════════════════
+  const _ACCUM_COMPOUND_RX = /^(\s*)([A-Za-z_$][\w$]*)\s*([+\-*/%]|\*\*|<<|>>)=\s*(.+?)\s*;?\s*$/;
+
+  /** يُرجع سببَ الرفضِ إن كانت الرُقعةُ تُضاعف، أو null. */
+  function accumDoublingProblem(beforeCode, afterCode) {
+    const B = String(beforeCode == null ? '' : beforeCode).split('\n');
+    const A = String(afterCode == null ? '' : afterCode).split('\n');
+    const bSet = new Set(B.map(l => l.trim()));
+    for (let i = 0; i < A.length; i++) {
+      const line = A[i];
+      if (bSet.has(line.trim())) continue;           // سطرٌ لم يتغيّر
+      // العبارةُ قد لا تنفرد بسطرِها: ‎for (…) { t += t + x; }‎. فتُقسَّم
+      // على الفواصلِ المنطقيّةِ ثم يُطبَّق النمطُ على كلِّ جزء.
+      let m = null;
+      for (const piece of line.split(/[;{}]/)) {
+        const hit = _ACCUM_COMPOUND_RX.exec(piece);
+        if (hit) { m = hit; break; }
+      }
+      if (!m) continue;
+      const name = m[2], op = m[3], rhs = m[4];
+      // الطرفُ الأيمنُ ما زال يذكر المتغيّرَ نفسَه؟
+      const refRx = new RegExp('(?:^|[^\\w$.])' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w$])');
+      if (!refRx.test(rhs)) continue;
+      // وهل كان في الأصلِ إسنادٌ عاديٌّ بنفسِ الطرفِ الأيمنِ تمامًا؟
+      const plainRx = new RegExp('^\\s*' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+                                 '\\s*=\\s*(.+?)\\s*;?\\s*$');
+      const wasPlain = B.some(b => b.split(/[;{}]/).some(piece => {
+        const pm = plainRx.exec(piece);
+        return !!pm && pm[1].trim() === rhs.trim();
+      }));
+      if (wasPlain) {
+        return 'REJECTED_ACCUM_DOUBLES — line ' + (i + 1) + ': "' + name + ' = ' + rhs +
+               '" أصبح "' + name + ' ' + op + '= ' + rhs + '" فيُطبَّق العامل مرتين';
+      }
+    }
+    return null;
+  }
+
   function verifyFix(beforeCode, afterCode, fileName, _analyzeFunc, opts) {
     opts = opts || {};
     const allowUnverifiedLanguages = opts.allowUnverifiedLanguages === true;
@@ -1982,6 +2035,14 @@ var FixVerifier = (() => {
     if (syntaxStatus === "unknown") { // حارس دفاعي: حالة غير محسومة = رفض
       return { accepted: false, reason: "REJECTED_SYNTAX_STATE_UNRESOLVED",
                syntaxStatus: "unknown", language: syn.language, afterIssues: null, quick };
+    }
+
+    // (2ب) [NO-DOUBLE-GATE] رُقعةٌ تُضاعف القيمة: تُرفَض قبل عدِّ البلاغات،
+    // لأن العدَّ يراها تحسّنًا — البلاغُ يختفي والقيمةُ تتضاعف.
+    const dbl = accumDoublingProblem(beforeCode, afterCode);
+    if (dbl) {
+      return { accepted: false, reason: dbl, syntaxStatus,
+               language: syn.language, afterIssues: null, quick };
     }
 
     // (3) التحقق العميق

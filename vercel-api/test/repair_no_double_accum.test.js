@@ -154,16 +154,55 @@ test('[ND-6] وجافاسكربت: الإصلاحُ الحقيقيُّ يُصح�
   assert.strictEqual(runJs(okOut), runJs(ok), 'تغيّرت نتيجةُ تراكمٍ صحيح:\n' + okOut);
 });
 
-test('[ND-7] والبوابةُ ترفض رُقعةَ التضاعفِ لو جاءت من أيِّ مصدر', {
-  todo: 'حدٌّ مقيسٌ لم يُعالَج في هذه الدفعة: البوابةُ تقبل ' +
-        '‎count = count + 1 ⇒ count += count + 1‎ لأن عدَّ البلاغاتِ ينقص ' +
-        'ولا مِعيارَ سلوكيًّا لديها. والمصادرُ الأربعةُ التي كانت تُنتج هذه ' +
-        'الرُقعةَ عولجت، فلم يبقَ لها منفذٌ من داخلِ المحرّك — لكنّ البوابةَ ' +
-        'نفسَها ما زالت تقبلها لو وردت من خارجِه. سببٌ مستقلٌّ بملفٍّ آخر ' +
-        '(fix_verifier.js) ولا يُخلَط بهذه الدفعة.',
-}, () => {
+test('[ND-7] والبوابةُ ترفض رُقعةَ التضاعفِ لو جاءت من أيِّ مصدر', () => {
+  // ‎[NO-DOUBLE-GATE]‎: المصادرُ الأربعةُ داخلَ المحرّكِ عولجت، وهذا يُغلق
+  // البابَ على كاشفٍ جديدٍ أو رُقعةٍ تصل من خارج.
   const before = 'def f(xs):\n    count = 0\n    for x in xs:\n        count = count + 1\n    return count\n';
   const after = before.replace('count = count + 1', 'count += count + 1');
   const v = ctx.FixVerifier.verifyFix(before, after, 'g.py', ctx.analyzeCode);
   assert.strictEqual(v.accepted, false, 'قُبلت رُقعةٌ تُضاعف: ' + v.reason);
+  assert.match(String(v.reason), /^REJECTED_ACCUM_DOUBLES/, 'رُفضت لسببٍ عارضٍ لا لكونِها تُضاعف');
+});
+
+test('[ND-8] والحارسُ يُمسك العاملَ أيًّا كان، والعبارةَ غيرَ المنفردةِ بسطرِها', () => {
+  const CASES = [
+    ['a.js', 'function f(xs) {\n  let t = 0;\n  for (const x of xs) { t = t + x; }\n  return t;\n}\n', 't = t + x', 't += t + x'],
+    ['b.js', 'function f(xs) {\n  let t = 10;\n  for (const x of xs) { t = t - x; }\n  return t;\n}\n', 't = t - x', 't -= t - x'],
+    ['c.py', 'def f(xs):\n    s = ""\n    for x in xs:\n        s = s + str(x)\n    return s\n', 's = s + str(x)', 's += s + str(x)'],
+  ];
+  for (const [fn, code, from, to] of CASES) {
+    const v = ctx.FixVerifier.verifyFix(code, code.replace(from, to), fn, ctx.analyzeCode);
+    assert.strictEqual(v.accepted, false, fn + ': قُبلت رُقعةٌ تُضاعف');
+    assert.match(String(v.reason), /^REJECTED_ACCUM_DOUBLES/, fn + ': ' + v.reason);
+  }
+});
+
+test('[ND-9] ولا يُرفَض التحويلُ الصحيحُ ولا الإصلاحُ الحقيقيّ', () => {
+  // ‎total = total + x ⇒ total += x‎: الطرفُ الأيمنُ تغيّر ولم يعد يذكر
+  // المتغيّر، فليس تضاعفًا. وقد يُرَدّ لسببٍ آخرَ (لا بلاغَ فلا تحسّن)،
+  // والمهمُّ ألّا يكون السببُ ‎ACCUM_DOUBLES‎.
+  const ok = 'function f(xs) {\n  let t = 0;\n  for (const x of xs) { t = t + x; }\n  return t;\n}\n';
+  const v1 = ctx.FixVerifier.verifyFix(ok, ok.replace('t = t + x', 't += x'), 'd.js', ctx.analyzeCode);
+  assert.doesNotMatch(String(v1.reason || ''), /ACCUM_DOUBLES/, 'رُفض تحويلٌ صحيحٌ كأنه تضاعف');
+
+  const real = 'function f(ps) {\n  let total = 0;\n  for (const p of ps) { total = p.score; }\n  return total;\n}\n';
+  const v2 = ctx.FixVerifier.verifyFix(real, real.replace('total = p.score', 'total += p.score'), 'e.js', ctx.analyzeCode);
+  assert.strictEqual(v2.accepted, true, 'رُفض إصلاحُ التراكمِ الحقيقيّ: ' + v2.reason);
+});
+
+test('[ND-10] ورفضُ رُقعةِ التضاعفِ لا يُسقط إصلاحاتِ الملفِّ الأخرى', () => {
+  const code = [
+    'function f(db, name, flag) {',
+    '  var n = 1;',
+    '  if (flag == 1) { n = 2; }',
+    '  return db.query("SELECT * FROM u WHERE n = " + name) && n;',
+    '}',
+    'module.exports = { f };',
+    '',
+  ].join('\n');
+  const issues = ctx.analyzeCode(code, 'z.js') || [];
+  const r = ctx.repairCode(code, issues.map(x => Object.assign({}, x)), 'z.js');
+  assert.doesNotMatch(r.repaired, /\bvar\s/, 'var لم يُصلَح');
+  assert.match(r.repaired, /flag === 1/, '== لم يُصلَح');
+  assert.match(r.repaired, /\?", \[name\]/, 'SQL لم يُصلَح');
 });
