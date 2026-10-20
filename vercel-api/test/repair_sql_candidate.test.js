@@ -153,13 +153,19 @@ test('repairCode: GameServer-style SQL candidate is rejected; the other fixes ar
   assert.equal(sqlCount(r.repaired, 'g.js'), sqlCount(MIXED, 'g.js'), 'SQL injection is still reported — not hidden');
 });
 
-test('repairCode: when the first SQL candidate is bad, a valid legacy candidate is still used', () => {
+test('repairCode: the primary SQL fixer binds the value itself, with no bad candidate first', () => {
+  // كان ‎fixSQLInjection‎ يُنتج ‎db.query("… = ?")‎ بلا قيمةٍ مربوطة، فيُرَدّ
+  // بـ‎SQL_PLACEHOLDERS_UNBOUND‎، ثم يأتي الناتجُ الصحيحُ من مسارٍ احتياطيّ.
+  // و‎[SQL-BIND]‎ جعله يبني الاستدعاءَ المُعامَلَ من أوّلِ مرّة، فالنتيجةُ
+  // هي هي ولا مُرشَّحَ مردودًا قبلها.
   const code = 'function f(db, id) {\n  db.query("SELECT * FROM users WHERE id = " + id);\n}\n';
   const r = ctx.repairCode(code, ctx.analyzeCode(code, 'a.js'), 'a.js');
   assert.equal(r.repaired.split('\n')[1], '  db.query("SELECT * FROM users WHERE id = ?", [id]);');
   assert.equal(sqlCount(r.repaired, 'a.js'), 0);
   assert.ok(r.repairs.some(x => x.strategy === 'SQL_INJECTION'));
-  assert.match(r.rejected[0].reason, /^SQL_PLACEHOLDERS_UNBOUND/);
+  assert.deepStrictEqual(
+    Array.from((r.rejected || []).filter(x => x.strategy === 'SQL_INJECTION').map(x => x.reason)), [],
+    'عاد المُرشَّحُ السيّئُ يُولَد قبل الصحيح');
 });
 
 test('repairCode + FixVerifier: the approved file never contains the broken SQL', () => {

@@ -167,11 +167,22 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
     // Python SQL: السياق والdriver غير معروفَين — نترك للمراجعة اليدوية
     return null;
   } else if (ext === 'js' || ext === 'ts') {
-    let fixedLine = line
-      .replace(/"([^"']*)'"\s*\+\s*\w+\s*\+\s*"'([^"]*)"/g, '"$1?$2"')
-      .replace(/"([^"]*)"\s*\+\s*(\w+)/g, '"$1?"');
-    if (fixedLine === line) return null;
-    lines[ln] = fixedLine + ' // use: db.query(sql, [param])';
+    // [SQL-BIND] كان هنا استبدالٌ نصّيٌّ يقلب الضمَّ إلى ‎?‎ **ويحذف الوسيطَ
+    // نهائيًّا**، فينتج استعلامٌ بعلامةٍ نائبةٍ بلا قيمةٍ تُربَط بها:
+    //     db.query("… n = '" + name + "'")  ⇒  db.query("… n = ?")
+    // وهو برنامجٌ مكسورٌ لا إصلاح. والبوابةُ كانت تردُّه بحقٍّ
+    // (‎SQL_PLACEHOLDERS_UNBOUND‎ و‎SQL_NOT_PARAMETERIZED‎)، ومقيسٌ أن
+    // المسارَ القديمَ لم يُنتج ولا إصلاحًا مقبولًا واحدًا على 78 ملفًا
+    // فيها بلاغُ SQL. فالعطبُ في المُصلِحِ لا في البوابة.
+    //
+    // والبديلُ يبني الاستدعاءَ المُعامَلَ كاملًا: النصُّ بعلاماتٍ نائبة،
+    // والتعبيراتُ المحذوفةُ تُنقَل إلى مصفوفةِ القيمِ بترتيبِها.
+    // وما لا يُحسَم — قالبُ نصّ، أو وسيطٌ متغيّرٌ لا ضمَّ فيه، أو نداءٌ
+    // ليس استعلامًا، أو استدعاءٌ له وسائطُ أخرى — يُرجِع ‎null‎ فيذهب
+    // البلاغُ إلى ‎aiNeeded‎ صادقًا بدل رُقعةٍ تُفقد القيمة.
+    const bound = _sqlBindCall(line);
+    if (!bound) return null;
+    lines[ln] = bound;
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'SQL Injection — parameterized query' };
   } else if (ext === 'php') {
     const phpM = line.match(/\$(\w+)\s*=\s*["']([^"']+)["']\s*\.\s*\$(\w+)/);
@@ -1321,6 +1332,80 @@ function sqlCandidateProblem(beforeCode, afterCode, fileName, ext) {
     } catch (e) {
       return 'SQL_ANALYSIS_FAILED — could not verify the SQL candidate';
     }
+  }
+  return null;
+}
+
+
+// ─── [SQL-BIND] بناءُ استدعاءِ استعلامٍ مُعامَل ───────────────────────────
+// يُرجع السطرَ بعد تحويلِ ‎recv.query("… " + e + " …")‎ إلى
+// ‎recv.query("… ? …", [e])‎، أو ‎null‎ إن لم يكن الشكلُ محسومًا.
+const _SQL_QUERY_METH = /^(?:query|execute|run|all|get)$/i;
+const _SQL_KEYWORD_RX = /\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|VALUES|SET)\b/i;
+
+/** تقسيمُ تعبيرٍ على ‎+‎ في المستوى الأعلى، مع احترامِ النصوصِ والأقواس. */
+function _sqlSplitPlus(s) {
+  const out = [];
+  let depth = 0, start = 0, i = 0;
+  const skipStr = p => {
+    const q = s[p];
+    let j = p + 1;
+    while (j < s.length) {
+      if (s[j] === '\\') { j += 2; continue; }
+      if (s[j] === q) return j + 1;
+      j++;
+    }
+    return -1;
+  };
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '"' || c === "'" || c === '`') { const e = skipStr(i); if (e < 0) return null; i = e; continue; }
+    if (c === '(' || c === '[' || c === '{') { depth++; i++; continue; }
+    if (c === ')' || c === ']' || c === '}') { depth--; i++; continue; }
+    if (c === '+' && depth === 0) { out.push(s.slice(start, i)); start = i + 1; i++; continue; }
+    i++;
+  }
+  out.push(s.slice(start));
+  return out.map(x => x.trim()).filter(x => x.length);
+}
+
+/** من تعبيرِ الضمِّ إلى ‎{template, params}‎، أو ‎null‎. */
+function _sqlParamize(expr) {
+  const parts = _sqlSplitPlus(expr);
+  if (!parts || parts.length < 2) return null;
+  let text = '', quote = '"', sawExpr = false;
+  const params = [];
+  const MARK = '\u0000';
+  for (const t of parts) {
+    if (t[0] === '`') return null;                    // قالبُ نصٍّ: شكلٌ آخر
+    if ((t[0] === '"' || t[0] === "'") && t.length >= 2 && t[t.length - 1] === t[0]) {
+      quote = t[0];
+      text += t.slice(1, -1);
+    } else {
+      // اقتباسُ SQL حول الموضع يُزال: ‎n = '?'‎ خطأ، والصوابُ ‎n = ?‎
+      if (text.endsWith("'")) text = text.slice(0, -1);
+      text += MARK;
+      params.push(t);
+      sawExpr = true;
+    }
+  }
+  if (!sawExpr) return null;
+  text = text.split(MARK + "'").join(MARK).split(MARK).join('?');
+  if (!_SQL_KEYWORD_RX.test(text)) return null;
+  if (text.includes(quote)) return null;              // اقتباسٌ يكسر النصَّ الناتج
+  return { template: quote + text + quote, params };
+}
+
+function _sqlBindCall(line) {
+  if (typeof repairEditTextCalls !== 'function') return null;
+  let calls;
+  try { calls = repairEditTextCalls(line) || []; } catch (e) { return null; }
+  for (const c of calls) {
+    if (!_SQL_QUERY_METH.test(c.meth) || c.args.length !== 1) continue;
+    const built = _sqlParamize(line.slice(c.args[0].start, c.args[0].end));
+    if (!built) continue;
+    return line.slice(0, c.args[0].start) + built.template +
+           ', [' + built.params.join(', ') + ']' + line.slice(c.args[0].end);
   }
   return null;
 }
