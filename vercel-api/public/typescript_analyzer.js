@@ -102,7 +102,15 @@ function analyzeTypeScript(code, fileName) {
     }
 
     // ─── 10. Optional chaining missing ────────────────
-    if (/\w+\.\w+\.\w+/.test(t) && !/\?\./g.test(t) && !/\/\//.test(t)) {
+    // [ENV-ROOT] جذرُ البيئةِ موجودٌ دائمًا في زمنِ التشغيل، فاقتراحُ
+    // ‎process.env?.KEY‎ ضوضاءٌ لا احتياط. وثمنُ البلاغِ لم يكن ضوضاءً فقط:
+    // إصلاحُ السرِّ المُضمَّنِ في ‎.ts‎ ينتج ‎process.env.KEY‎، فيولد هذا
+    // البلاغُ الإرشاديُّ 🔵 على السطرِ الجديد، فتحكم البوابةُ
+    // ‎REJECTED_ISSUES_WORSENED (+1)‎ وتطرح إصلاحًا أزال ثلاثةَ بلاغاتٍ
+    // أمنيّة (‎HARDCODED_SECRET‎ و‎CWE-798‎ و«كلمة مرور مُضمَّنة»). مقيسٌ على
+    // ‎HARDCODED_SECRET/ts‎ و‎API_KEY/ts‎.
+    const _envRoot = /\b(?:process\.env|import\.meta\.env)\s*[.[]/.test(t);
+    if (/\w+\.\w+\.\w+/.test(t) && !_envRoot && !/\?\./g.test(t) && !/\/\//.test(t)) {
       const chain = t.match(/(\w+\.\w+\.\w+)/);
       if (chain) {
         issues.push({
