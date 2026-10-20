@@ -1256,10 +1256,21 @@ var FixVerifier = (() => {
     }
 
     if (ext === 'cs') {
+      // [CS-NEWCMD] الشرطُ الثاني كان يطلب حرفيًّا ‎CommandText=‎ أو
+      // ‎query=‎ أو ‎command=‎، ونصُّ الأمرِ في C# يكون كذلك وسيطًا أوّلَ
+      // لمُنشئٍ: ‎var cmd = new SqlCommand("…", conn);‎ — وهو الشكلُ
+      // الأشيع. فكان إصلاحٌ صحيحٌ تمامًا يُرَدّ بـ
+      // ‎REJECTED_SQL_NOT_PARAMETERIZED‎ رغم أن المحلّلَ لا يرى فيه بلاغًا.
+      // والاشتراطُ الحاملُ — ربطٌ فعليٌّ عبر ‎Parameters.Add‎ — لم يُمَسّ،
+      // فهذه صيغةُ إثباتٍ أُضيفت لا إثباتٌ خُفِّف.
+      //
+      // والمنعُ الثالثُ وُسِّع ليشمل تسميةَ المواضعِ المرقَّمة: موضعٌ داخلَ
+      // اقتباسِ SQL يليه ضمٌّ نصٌّ لا معامِل، سواءٌ سُمِّي ‎@param‎ أو ‎@p0‎.
       return (
         /\.Parameters\.Add(?:WithValue)?\s*\(/.test(afterCode) &&
-        /(?:CommandText|query|command)\s*=/.test(afterCode) &&
-        !/['"`][^'"`]*@param[^'"`]*['"`]\s*\+/.test(afterCode)
+        (/(?:CommandText|query|command)\s*=/.test(afterCode) ||
+         /new\s+[A-Za-z_]\w*Command\s*\(/.test(afterCode)) &&
+        !/['"`][^'"`]*@p(?:aram|\d+)[^'"`]*['"`]\s*\+/.test(afterCode)
       );
     }
 

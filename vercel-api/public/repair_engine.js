@@ -193,11 +193,19 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
     lines.splice(ln + 2, 0, `${indent}$stmt->execute();`);
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'PHP SQL Injection — prepared statement' };
   } else if (ext === 'cs') {
-    const m = line.match(/"([^"]+)"\s*\+\s*(\w+)/);
-    if (!m) return null;
-    lines[ln] = line.replace(/"([^"]+)"\s*\+\s*(\w+)/, '"$1@param"');
-    const indent = ' '.repeat(line.search(/\S/));
-    lines.splice(ln + 1, 0, `${indent}cmd.Parameters.AddWithValue("@param", ${m[2]});`);
+    // [CS-BIND] كان الناتجُ مكسورًا من ثلاثِ جهات: الموضعُ يبقى داخلَ
+    // اقتباسِ SQL (‎'@param'‎ نصٌّ لا معامِل)، وبقيّةُ الضمِّ ‎+ "'"‎ تبقى،
+    // ويُشار إلى ‎cmd‎ وهو **متغيّرٌ غيرُ موجودٍ في النطاق** فلا يُترجَم
+    // الملفّ. والمحلّلُ يظلّ يرى الحقنَ فتردُّه البوابةُ بحقّ
+    // (‎SQL_INJECTION_STILL_REPORTED‎). فالعطبُ في المُصلِحِ لا فيها.
+    //
+    // والبديلُ لا يخترع كائنَ أمر: لا يعمل إلا حيث يكون الكائنُ مُسمًّى
+    // في السطرِ نفسِه — إنشاءُ أمرٍ مُسنَدٌ إلى متغيّر، أو إسنادٌ إلى
+    // ‎CommandText‎ — وما عدا ذلك ‎null‎ فيذهب البلاغُ إلى ‎aiNeeded‎.
+    const csFix = _csBindCommand(line);
+    if (!csFix) return null;
+    lines[ln] = csFix.line;
+    csFix.adds.forEach((a, k) => lines.splice(ln + 1 + k, 0, a));
     return { fixed: lines.join('\n'), patch: lines[ln], reason: 'C# SQL Injection — SqlParameter' };
   }
   return null;
@@ -1337,6 +1345,50 @@ function sqlCandidateProblem(beforeCode, afterCode, fileName, ext) {
 }
 
 
+
+// ─── [CS-BIND] أمرُ C# مُعامَلٌ باسمِ كائنِه الحقيقيّ ────────────────────
+// شكلان وحدَهما، وفيهما الكائنُ مُسمًّى:
+//   var cmd = new SqlCommand("… " + x, conn);
+//   cmd.CommandText = "… " + x;
+const _CS_NEW_CMD_RX = /^\s*(?:var|using\s*\(\s*var|[A-Za-z_][\w.<>]*)\s+([A-Za-z_]\w*)\s*=\s*new\s+[A-Za-z_]\w*Command\s*\(/;
+const _CS_CMDTEXT_RX = /^\s*([A-Za-z_]\w*)\s*\.\s*CommandText\s*=\s*/;
+
+function _csBindCommand(line) {
+  if (typeof repairEditTextCalls !== 'function') return null;
+  const indent = ' '.repeat(line.search(/\S/));
+  const mark = i => '@p' + i;
+
+  // (أ) ‎cmd.CommandText = "…" + x;‎
+  const ct = _CS_CMDTEXT_RX.exec(line);
+  if (ct) {
+    const rhs = line.slice(ct[0].length).replace(/;\s*$/, '');
+    const built = _sqlParamize(rhs, mark);
+    if (!built) return null;
+    return {
+      line: indent + ct[1] + '.CommandText = ' + built.template + ';',
+      adds: built.params.map((p, i) =>
+        indent + ct[1] + '.Parameters.AddWithValue("' + mark(i) + '", ' + p + ');'),
+    };
+  }
+
+  // (ب) ‎var cmd = new SqlCommand("…" + x, conn);‎
+  const nc = _CS_NEW_CMD_RX.exec(line);
+  if (!nc) return null;
+  let calls;
+  try { calls = repairEditTextCalls(line) || []; } catch (e) { return null; }
+  for (const c of calls) {
+    if (!/Command$/.test(c.meth) || !c.args.length) continue;
+    const built = _sqlParamize(line.slice(c.args[0].start, c.args[0].end), mark);
+    if (!built) continue;
+    return {
+      line: line.slice(0, c.args[0].start) + built.template + line.slice(c.args[0].end),
+      adds: built.params.map((p, i) =>
+        indent + nc[1] + '.Parameters.AddWithValue("' + mark(i) + '", ' + p + ');'),
+    };
+  }
+  return null;
+}
+
 // ─── [SQL-BIND] بناءُ استدعاءِ استعلامٍ مُعامَل ───────────────────────────
 // يُرجع السطرَ بعد تحويلِ ‎recv.query("… " + e + " …")‎ إلى
 // ‎recv.query("… ? …", [e])‎، أو ‎null‎ إن لم يكن الشكلُ محسومًا.
@@ -1369,8 +1421,11 @@ function _sqlSplitPlus(s) {
   return out.map(x => x.trim()).filter(x => x.length);
 }
 
-/** من تعبيرِ الضمِّ إلى ‎{template, params}‎، أو ‎null‎. */
-function _sqlParamize(expr) {
+/**
+ * من تعبيرِ الضمِّ إلى ‎{template, params}‎، أو ‎null‎.
+ * ‎mark‎ دالّةٌ تُعطي شكلَ الموضعِ بترتيبِه: ‎?‎ في js/ts، و‎@p0‎ في C#.
+ */
+function _sqlParamize(expr, mark) {
   const parts = _sqlSplitPlus(expr);
   if (!parts || parts.length < 2) return null;
   let text = '', quote = '"', sawExpr = false;
@@ -1390,7 +1445,10 @@ function _sqlParamize(expr) {
     }
   }
   if (!sawExpr) return null;
-  text = text.split(MARK + "'").join(MARK).split(MARK).join('?');
+  text = text.split(MARK + "'").join(MARK);
+  const place = typeof mark === 'function' ? mark : (() => '?');
+  let seq = 0;
+  text = text.split(MARK).reduce((acc, part, idx) => idx === 0 ? part : acc + place(seq++) + part, '');
   if (!_SQL_KEYWORD_RX.test(text)) return null;
   if (text.includes(quote)) return null;              // اقتباسٌ يكسر النصَّ الناتج
   return { template: quote + text + quote, params };
