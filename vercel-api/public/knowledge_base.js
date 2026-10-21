@@ -354,7 +354,121 @@ var KnowledgeBase = (() => {
       });
     });
 
-    return issues;
+    // [XSS-ESCAPED] قاعدة innerHTML أعلاه تبلّغ عن **كل** إسناد (‎\s*‎ يتراجع فيُسقط شرط الاقتباس)،
+    // فتعجز عن التمييز بين الثغرة ونسخها المُصلحة. يُستثنى بلاغ واحد فقط حين يُثبت الـAST أنه
+    // مُصلَح: انظر _kbEscapedTextSink. كل ما عدا ذلك — ومنه النص الثابت — يبقى مُبلَّغًا كما كان.
+    return issues.filter(x => !(x.type === 'XSS' && /\.(?:inner|outer)HTML\s*=(?!=)/.test(String(x.ev)) &&
+                                _kbEscapedTextSink(code, x.line)));
+  }
+
+  // ─── [XSS-ESCAPED] إثبات أن إسناد innerHTML/outerHTML في السطر مُهرَّب في سياق نص HTML ───
+  // الشروط كلها معًا (أي شك ⇒ يبقى البلاغ):
+  //   1. الملف يعرّف __escapeHTML مرة واحدة في المستوى الأعلى، ونصّه مطابق للدالة المعيارية التي يُدخلها
+  //      xss_fix.js (تهرّب & < > " ' `) — لا ثقة في الاسم وحده، ولا إسناد آخر لهذا الاسم في الملف.
+  //   2. الطرف الأيمن كاملًا (ولو امتد على أسطر) سلسلة + أو template من نصوص ثابتة ونداءات __escapeHTML(x)
+  //      فقط، وفيه نداء واحد على الأقل.
+  //   3. كل نداء يقع في سياق نص HTML: لا داخل وسم أو قيمة سمة، ولا داخل script/style/textarea/title/تعليق.
+  const _KB_ESCAPER = 'function__escapeHTML(v){returnString(v).replace(/[&<>"\'`]/g,function(c){switch(c){case"&":return"&amp;";' +
+                      'case"<":return"&lt;";case">":return"&gt;";case\'"\':return"&quot;";case"\'":return"&#39;";default:return"&#96;";}});}';
+  const _KB_RAW = /^(?:script|style|textarea|title|noscript|iframe|noembed|noframes|xmp|plaintext)$/i;
+  let _kbAstCache = { code: null, ast: null };
+  function _kbParse(code) {
+    if (_kbAstCache.code === code) return _kbAstCache.ast;
+    let A = null, ast = null;
+    try { A = (typeof acorn !== 'undefined' && acorn && typeof acorn.parse === 'function') ? acorn : null; } catch (e) { A = null; }
+    // وحدة Node (require) لا ترى acorn عامًّا: نفس مسار _proofAcorn في fix_verifier.js
+    if (!A) { try { if (typeof require === 'function') { const a = require('./acorn.min.js'); if (a && typeof a.parse === 'function') A = a; } } catch (e) { A = null; } }
+    if (A) {
+      const o = { ecmaVersion: 'latest', locations: true, allowReturnOutsideFunction: true, allowHashBang: true };
+      try { ast = A.parse(code, Object.assign({ sourceType: 'script' }, o)); }
+      catch (e) { try { ast = A.parse(code, Object.assign({ sourceType: 'module' }, o)); } catch (e2) { ast = null; } }
+    }
+    _kbAstCache = { code, ast };
+    return ast;
+  }
+  function _kbWalk(n, fn) {
+    if (!n || typeof n.type !== 'string') return;
+    fn(n);
+    for (const k of Object.keys(n)) {
+      if (k === 'loc') continue;
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach(c => c && typeof c.type === 'string' && _kbWalk(c, fn));
+      else if (v && typeof v.type === 'string') _kbWalk(v, fn);
+    }
+  }
+  // حالة HTML بعد نص ثابت: 'text' أو 'tag' (داخل وسم/سمة) أو 'raw' (script/style…) أو 'comment'
+  function _kbHtmlState(html) {
+    let st = 'text', raw = null, i = 0;
+    while (i < html.length) {
+      if (st === 'comment') { const e = html.indexOf('-->', i); if (e < 0) return 'comment'; st = 'text'; i = e + 3; continue; }
+      if (st === 'raw') {
+        const re = new RegExp('</' + raw + '\\s*>', 'i'); const m = re.exec(html.slice(i));
+        if (!m) return 'raw'; st = 'text'; i += m.index + m[0].length; continue;
+      }
+      if (st === 'tag') {
+        // داخل الوسم: نتخطى قيم السمات المقتبسة حتى >
+        const c = html[i];
+        if (c === '"' || c === "'") { const e = html.indexOf(c, i + 1); if (e < 0) return 'tag'; i = e + 1; continue; }
+        if (c === '>') { st = raw ? 'raw' : 'text'; i++; continue; }
+        i++; continue;
+      }
+      // text
+      if (html.startsWith('<!--', i)) { st = 'comment'; i += 4; continue; }
+      if (html[i] === '<' && /[A-Za-z\/!?]/.test(html[i + 1] || '')) {
+        const m = /^<([A-Za-z][\w-]*)/.exec(html.slice(i));
+        raw = m && _KB_RAW.test(m[1]) ? m[1] : null;
+        st = 'tag'; i++; continue;
+      }
+      i++;
+    }
+    return st;
+  }
+  function _kbEscapedTextSink(code, lineNo) {
+    const ast = _kbParse(code);
+    if (!ast) return false;
+    // 1. الدالة المساعدة
+    const decls = [];
+    let rebound = false;
+    _kbWalk(ast, n => {
+      if (n.type === 'FunctionDeclaration' && n.id && n.id.name === '__escapeHTML') decls.push(n);
+      if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === '__escapeHTML') rebound = true;
+      if (n.type === 'AssignmentExpression' && n.left.type === 'Identifier' && n.left.name === '__escapeHTML') rebound = true;
+      if (/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type) &&
+          n.params.some(p => p.type === 'Identifier' && p.name === '__escapeHTML')) rebound = true;
+    });
+    if (rebound || decls.length !== 1 || !ast.body.includes(decls[0])) return false;
+    if (code.slice(decls[0].start, decls[0].end).replace(/\s+/g, '') !== _KB_ESCAPER) return false;
+    // 2. الإسناد في السطر
+    const sinks = [];
+    _kbWalk(ast, n => {
+      if (n.type === 'AssignmentExpression' && n.operator === '=' && n.left.type === 'MemberExpression' && !n.left.computed &&
+          /^(?:inner|outer)HTML$/.test(n.left.property.name) && n.left.property.loc.start.line === lineNo) sinks.push(n);
+    });
+    if (sinks.length !== 1) return false;
+    const parts = [];
+    let ok = true;
+    const leaf = x => {
+      if (!ok) return;
+      if (x.type === 'BinaryExpression' && x.operator === '+') { leaf(x.left); leaf(x.right); return; }
+      if (x.type === 'Literal' && typeof x.value === 'string') { parts.push({ s: x.value }); return; }
+      if (x.type === 'TemplateLiteral') {
+        x.quasis.forEach((q, k) => { parts.push({ s: q.value.cooked == null ? null : q.value.cooked }); if (k < x.expressions.length) leaf(x.expressions[k]); });
+        return;
+      }
+      if (x.type === 'CallExpression' && x.callee.type === 'Identifier' && x.callee.name === '__escapeHTML' && x.arguments.length === 1) {
+        parts.push({ esc: true }); return;
+      }
+      ok = false;
+    };
+    leaf(sinks[0].right);
+    if (!ok || !parts.some(p => p.esc) || parts.some(p => p.s === null)) return false;
+    // 3. السياق: كل نداء في نص HTML
+    let html = '';
+    for (const p of parts) {
+      if (p.esc) { if (_kbHtmlState(html) !== 'text') return false; html += 'x'; }
+      else html += p.s;
+    }
+    return true;
   }
 
   // ─── Helpers ──────────────────────────────────────
@@ -402,6 +516,9 @@ var KnowledgeBase = (() => {
     SECRET_PATTERNS,
     CMD_PATTERNS,
     CRYPTO_PATTERNS,
+    // [XSS-ESCAPED] إثبات مشترك: الكواشف السطرية الأخرى (security_scanner) تستعمله كي لا يحكم كاشفان
+    // على السطر نفسه حكمين مختلفين (إخفاء أحدهما يُظهر الآخر).
+    escapedTextSink: _kbEscapedTextSink,
   };
 })();
 

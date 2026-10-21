@@ -442,46 +442,28 @@ var SmartRepairEngine = (() => {
     return { fixed, repairs };
   }
 
-  // 5. eval — يصلح بأمان
+  // 5. eval — لا تعديل هنا.
+  // كان: JSON.parse إن «بدا» اسم المعامل JSON، وإلا حذف الاستدعاء بتعليق؛ وفي Python
+  // ast.literal_eval لكل eval. كلها تخمين يغيّر السلوك أو يحذف وظيفة (والبوابة كانت ترفض
+  // نسخة JS: REJECTED_EVAL_FIX_UNPROVEN). القرار في eval مبنيّ على الدليل في
+  // repair_engine.js (fixEval): نص ثابت ⇒ التعبير نفسه، وما عداه يُترك مع سببه.
   function fixEval(code, ctx) {
-    let fixed = code;
-    const repairs = [];
-    const before = fixed;
-
-    if (ctx.ext === 'js' || ctx.ext === 'ts') {
-      fixed = fixed.replace(/\beval\s*\(([^)]+)\)/g, (_, arg) =>
-        /json|data|response|result/i.test(arg)
-          ? `JSON.parse(${arg.trim()})`
-          : `/* SECURITY: eval removed — validate ${arg.trim()} */`
-      );
-      fixed = fixed.replace(
-        /new\s+Function\s*\([^)]*\)\s*\(\)/g,
-        '/* SECURITY: new Function removed */'
-      );
-    } else if (ctx.ext === 'py') {
-      fixed = fixed.replace(/\beval\s*\(/g, 'ast.literal_eval(');
-      if (fixed !== before && !fixed.includes('import ast'))
-        fixed = 'import ast\n' + fixed;
-    }
-
-    if (fixed !== before) repairs.push({ fix: 'eval → safe alternative' });
-    return { fixed, repairs };
+    return { fixed: code, repairs: [] };
   }
 
-  // 6. XSS
+  // 6. XSS — مُصلح سياقي فقط.
+  // كان: كل .innerHTML= و.outerHTML= في الملف → .textContent= ، فيعرض الوسوم نصًّا حرفيًا
+  // ويحوّل استبدال العنصر (outerHTML) إلى تعديل محتواه. الآن XSSFixer (xss_fix.js) إن كان
+  // محمَّلًا: يهرّب المقاطع الديناميكية ويُبقي الوسوم، ويترك ما لا يعرف سياقه. وبدونه لا تعديل.
   function fixXSS(code, ctx) {
-    let fixed = code;
-    const repairs = [];
-    const before = fixed;
-
-    if (ctx.ext === 'js' || ctx.ext === 'ts') {
-      fixed = fixed
-        .replace(/\.innerHTML\s*=/g, '.textContent =')
-        .replace(/\.outerHTML\s*=/g, '.textContent =');
-    }
-
-    if (fixed !== before) repairs.push({ fix: 'innerHTML → textContent' });
-    return { fixed, repairs };
+    if (ctx.ext !== 'js' && ctx.ext !== 'ts') return { fixed: code, repairs: [] };
+    let X = null;
+    try { X = (typeof XSSFixer !== 'undefined' && XSSFixer && typeof XSSFixer.fix === 'function') ? XSSFixer : null; } catch (e) { X = null; }
+    if (!X) return { fixed: code, repairs: [] };
+    let r = null;
+    try { r = X.fix(code, ctx.fileName || 'a.js'); } catch (e) { r = null; }
+    if (!r || !r.changed || typeof r.fixed !== 'string' || r.fixed === code) return { fixed: code, repairs: [] };
+    return { fixed: r.fixed, repairs: (r.edits || []).map(e => ({ line: e.line, before: e.before, fix: 'XSS: ' + (e.action || e.kind) })) };
   }
 
   // ─── Main Repair Function ─────────────────────────────

@@ -164,31 +164,110 @@ function fixSQLInjection(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── eval() ───────────────────────────────────────────
+// ─── eval حسب الاستخدام الفعلي ────────────────────────
+// كان: JSON.parse إن «بدا» اسم المتغير JSON (data/json/response…) — تخمين من الاسم يغيّر السلوك
+// (JSON.parse أشد: يرفض ما كان eval يقبله)؛ وفي Python ‎ast.literal_eval‎ لكل eval بلا شرط.
+// الآن يُعدَّل شيء واحد مُثبَت: eval مباشر على نص ثابت فيه تعبير واحد ⇒ التعبير نفسه.
+// eval المباشر يُنفَّذ في نطاق المنادي، فالتعبير المضمَّن يعطي القيمة نفسها حرفيًا — ويزول eval.
+// وما عداه يُترك مع سبب دقيق: تنفيذ مدخلات (الميزة نفسها هي تشغيل كود)، أو JSON غير مُثبت، أو غير معروف.
+const _EVAL_INPUT_SRC = /\.value\b|\blocation\b|document\.cookie|\bprompt\s*\(|\b(?:req|request)\.(?:query|body|params|headers|cookies)|process\.argv|URLSearchParams|\.innerText\b|\.textContent\b|\binput\s*\(|sys\.argv|\bstdin\b|\.getParameter\s*\(|localStorage|sessionStorage|\bevent\.data\b|\be\.data\b|postMessage/;
+
+function _evalArgSource(code, ast, call) {
+  // نص المعامل + (إن كان متغيرًا) نصوص إسناداته في نفس الملف
+  const arg = call.arguments[0];
+  let src = code.slice(arg.start, arg.end);
+  if (arg.type === 'Identifier') {
+    _reWalk(ast, n => {
+      if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === arg.name && n.init) src += ' ' + code.slice(n.init.start, n.init.end);
+      if (n.type === 'AssignmentExpression' && n.left.type === 'Identifier' && n.left.name === arg.name) src += ' ' + code.slice(n.right.start, n.right.end);
+    });
+  }
+  return src;
+}
+
+function _fixEvalJS(code, issue) {
+  const ast = _reParse(code);
+  if (!ast) return _reDecline('EVAL_UNPROVABLE — تعذّر تحليل الملف بـAST؛ لا يمكن إثبات بديل مكافئ', 0.6);
+  // أي ظهور لاسم eval ليس نداءً مباشرًا (تعريف، destructuring، إسناد، window.eval…) ⇒ قد لا يكون
+  // eval الأصلي؛ وأي with ⇒ نطاق ديناميكي. في الحالتين التضمين قد يغيّر المعنى (نفس شرط البوابة).
+  let shadow = false, withStmt = false;
+  const calls = [];
+  _reWalk(ast, (n, ps) => {
+    if (n.type === 'WithStatement') withStmt = true;
+    if (n.type === 'Identifier' && n.name === 'eval') {
+      const p = ps[ps.length - 1];
+      if (!(p && p.type === 'CallExpression' && p.callee === n)) shadow = true;
+    }
+    if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'eval' && n.loc.start.line === issue.line) calls.push(n);
+  });
+  if (shadow) return _reDecline('EVAL_SHADOWED — اسم eval مُعرَّف/مُسنَد/مُستعمل بغير نداء مباشر في الملف؛ قد لا يكون eval الأصلي', 0.9);
+  if (withStmt) return _reDecline('EVAL_DYNAMIC_SCOPE — with في الملف يجعل نطاق الأسماء ديناميكيًا', 0.9);
+  if (calls.length !== 1) return _reDecline('EVAL_AMBIGUOUS — ' + calls.length + ' استدعاء eval في السطر', 0.7);
+  const call = calls[0];
+  if (call.arguments.length !== 1) return _reDecline('EVAL_DYNAMIC_UNKNOWN — عدد معاملات غير معتاد', 0.75);
+  const arg = call.arguments[0];
+  const isStatic = (arg.type === 'Literal' && typeof arg.value === 'string') ||
+                   (arg.type === 'TemplateLiteral' && arg.expressions.length === 0);
+  if (isStatic) {
+    const content = arg.type === 'Literal' ? arg.value : arg.quasis[0].value.cooked;
+    let prog = null;
+    try { prog = acorn.parse(content, { ecmaVersion: 'latest', sourceType: 'script' }); } catch (e) { prog = null; }
+    if (!prog) return _reDecline('EVAL_STATIC_INVALID — النص الثابت ليس كودًا صالحًا؛ eval يرمي SyntaxError وقت التشغيل، والتضمين يكسر الملف', 0.9);
+    if (prog.body.length !== 1 || prog.body[0].type !== 'ExpressionStatement') {
+      return _reDecline('EVAL_STATIC_STATEMENTS — النص الثابت يحوي تعريفات/عدة جمل؛ تضمينه يغيّر النطاق أو القيمة', 0.85);
+    }
+    let contextual = false;
+    _reWalk(prog.body[0].expression, n => {
+      if (n.type === 'Identifier' && /^(?:await|yield|let|async|eval|arguments)$/.test(n.name)) contextual = true;
+      if (n.type === 'MetaProperty' || n.type === 'Super') contextual = true;
+    });
+    if (contextual) return _reDecline('EVAL_STATIC_CONTEXTUAL — كلمة تتغيّر دلالتها حسب السياق (await/yield…)', 0.85);
+    const expr = prog.body[0].expression;
+    const inline = '(' + content.slice(expr.start, expr.end) + ')';
+    const fixed = code.slice(0, call.start) + inline + code.slice(call.end);
+    const newLine = fixed.split('\n')[issue.line - 1] || '';
+    return { fixed, patch: newLine.trim(), reason: 'eval على نص ثابت ⇒ التعبير نفسه (eval المباشر يُنفَّذ في النطاق نفسه، القيمة مطابقة)' };
+  }
+  const src = _evalArgSource(code, ast, call);
+  if (_EVAL_INPUT_SRC.test(src)) {
+    return _reDecline('EVAL_EXECUTES_INPUT — eval يشغّل مدخلات من المستخدم/الطلب؛ تشغيل الكود هو الوظيفة نفسها، فلا بديل يحفظ السلوك. ' +
+                      'يلزم قرار تصميم (قائمة أوامر مسموحة بدل كود حر). الثغرة باقية ومُعلَنة', 0.9);
+  }
+  if (arg.type === 'BinaryExpression' && /^\s*(["'`])\(\1\s*\+/.test(code.slice(arg.start, arg.end))) {
+    return _reDecline('EVAL_JSON_UNPROVEN — eval("(" + x + ")") يقبل ما يرفضه JSON.parse (اقتباس مفرد، دوال، فواصل زائدة)؛ الاستبدال يغيّر السلوك ما لم يُثبت أن المدخل JSON', 0.85);
+  }
+  return _reDecline('EVAL_DYNAMIC_UNKNOWN — محتوى eval يُبنى وقت التشغيل ولا يُعرف؛ لا بديل مُثبت', 0.75);
+}
+
+function _fixEvalPy(code, issue, lines) {
+  const ln = issue.line - 1;
+  const line = lines[ln];
+  const all = line.match(/(?<![\w.])eval\s*\(/g) || [];
+  if (all.length !== 1) return _reDecline('EVAL_AMBIGUOUS — ' + all.length + ' استدعاء eval في السطر', 0.7);
+  // الحالة المُثبتة الوحيدة بلا parser لـPython: نص ثابت حسابي (أرقام وعمليات وأقواس فقط)
+  const m = line.match(/(?<![\w.])eval\s*\(\s*(["'])([0-9\s+\-*\/%().]*[0-9][0-9\s+\-*\/%().]*)\1\s*\)/);
+  if (m) {
+    lines[ln] = line.replace(m[0], '(' + m[2].trim() + ')');
+    return { fixed: lines.join('\n'), patch: lines[ln].trim(), reason: 'eval على تعبير حسابي ثابت ⇒ التعبير نفسه' };
+  }
+  const simple = (line.match(/(?<![\w.])eval\s*\(([^()]*)\)/) || [])[1];
+  const name = simple !== undefined ? (simple.match(/^\s*([A-Za-z_]\w*)\s*$/) || [])[1] : undefined;
+  let src = simple !== undefined ? simple : line.slice(line.search(/(?<![\w.])eval\s*\(/));
+  if (name) for (const l of lines) { const a = l.match(new RegExp('^\\s*' + name + '\\s*=(?!=)\\s*(.+)$')); if (a) src += ' ' + a[1]; }
+  if (_EVAL_INPUT_SRC.test(src)) {
+    return _reDecline('EVAL_EXECUTES_INPUT — eval يشغّل مدخلات المستخدم؛ ast.literal_eval يكسر أي مدخل ليس قيمة حرفية (تعابير، أسماء)، فلا بديل يحفظ السلوك دون معرفة الصيغة المتوقعة', 0.9);
+  }
+  return _reDecline('EVAL_DYNAMIC_UNKNOWN — محتوى eval غير معروف؛ ast.literal_eval يغيّر السلوك لأي تعبير غير حرفي', 0.75);
+}
+
 function fixEval(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
-  const line = lines[ln];
-  if (!/\beval\s*\(/.test(line)) return null;
+  if (!/\beval\s*\(/.test(lines[ln])) return null;
   const ext = detectExt(code, fileName);
-  const indent = ' '.repeat(line.search(/\S/));
-  const argMatch = line.match(/eval\s*\(([^)]+)\)/);
-  const arg = argMatch ? argMatch[1] : 'data';
-
-  if (ext === 'js' || ext === 'ts') {
-    if (/json|data|response|result/i.test(arg)) {
-      lines[ln] = line.replace(/eval\s*\([^)]+\)/, `JSON.parse(${arg})`);
-    } else {
-      // لا نحذف السطر ولا نغيّر معناه عندما لا يكون المقصود JSON واضحًا.
-      // الإصلاح الدلالي يُترك لمسار AI_REQUIRED.
-      return null;
-    }
-    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'eval() replaced with safe alternative' };
-  } else if (ext === 'py') {
-    lines[ln] = line.replace(/eval\s*\(([^)]+)\)/, 'ast.literal_eval($1)');
-    if (!code.includes('import ast')) lines.unshift('import ast');
-    return { fixed: lines.join('\n'), patch: lines[ln], reason: 'eval() → ast.literal_eval()' };
-  }
+  if (ext === 'js' || ext === 'ts') return _fixEvalJS(code, issue);
+  if (ext === 'py') return _fixEvalPy(code, issue, lines);
   return null;
 }
 
@@ -335,41 +414,133 @@ function fixCommandInjection(code, issue, lines2, ext2, fileName) {
 }
 
 // ─── Weak Crypto ──────────────────────────────────────
+// ─── MD5/SHA1 حسب الغرض ───────────────────────────────
+// كان: استبدال الخوارزمية بـSHA256 في كل سطر لا يوقفه حارس كلمات المرور. لكن تغيير الخوارزمية
+// يغيّر القيمة الناتجة: مفتاح كاش/بصمة ملف/ETag محفوظة تفقد مطابقتها، وبروتوكول يفرض MD5
+// (Content-MD5، Gravatar، S3) ينكسر. القرار الآن حسب الغرض:
+//   كلمة مرور      ⇒ المرشّح القديم يذهب لحارس كلمات المرور كما كان (يُرفض ويُسجَّل؛ يلزم KDF وترحيل)
+//   رمز عشوائي     ⇒ crypto.randomBytes بنفس الطول والصيغة (مُثبت: المخرج عشوائي في الحالتين وأقوى)
+//   بروتوكول/HMAC  ⇒ يُترك: الطرف الآخر يتوقع هذه الخوارزمية
+//   بصمة غير أمنية ⇒ يُترك: لا خطر أمني مُثبت، والتغيير يكسر مطابقة القيم السابقة
+const _WC_PROTOCOL = /content-md5|\betag\b|if-none-match|gravatar|x-amz|\bs3\b|md5sum|checksum-?md5|digest\s+auth|www-authenticate|\bsri\b|integrity/i;
+const _WC_RANDOM_ONLY = /^(?:\s|\+|\(|\)|String|Math\.random\(\)|Date\.now\(\)|new\s+Date\(\)\.getTime\(\)|\.toString\(\s*\d*\s*\)|\d+|'[^'\\\n]*'|"[^"\\\n]*"|`[^`$\\]*`)*$/;
+
+function _legacyWeakCryptoLine(line, ext) {
+  if (ext === 'py') return line.replace(/hashlib\.md5\s*\(/g, 'hashlib.sha256(').replace(/hashlib\.sha1\s*\(/g, 'hashlib.sha256(');
+  if (ext === 'js' || ext === 'ts') return line.replace(/createHash\s*\(\s*["']md5["']\s*\)/gi, 'createHash("sha256")').replace(/createHash\s*\(\s*["']sha1["']\s*\)/gi, 'createHash("sha256")');
+  if (ext === 'php') return line.replace(/md5\s*\(/gi, 'hash("sha256", ').replace(/sha1\s*\(/gi, 'hash("sha256", ');
+  if (ext === 'cs') return line.replace(/MD5\.Create\s*\(\s*\)/g, 'SHA256.Create()').replace(/new MD5CryptoServiceProvider\s*\(\s*\)/g, 'new SHA256Managed()');
+  if (ext === 'java') return line.replace(/MessageDigest\.getInstance\s*\(\s*["']MD5["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")').replace(/MessageDigest\.getInstance\s*\(\s*["']SHA-1["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")');
+  return line;
+}
+
 function fixWeakCrypto(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
   const ln = issue.line - 1;
   if (ln < 0 || ln >= lines.length) return null;
   const line = lines[ln];
   const ext = detectExt(code, fileName);
-  let fixedLine = line;
+  if (!['py', 'js', 'ts', 'php', 'cs', 'java'].includes(ext)) return null;
 
-  if (ext === 'py') {
-    fixedLine = line
-      .replace(/hashlib\.md5\s*\(/g, 'hashlib.sha256(')
-      .replace(/hashlib\.sha1\s*\(/g, 'hashlib.sha256(');
-  } else if (ext === 'js' || ext === 'ts') {
-    fixedLine = line
-      .replace(/createHash\s*\(\s*["']md5["']\s*\)/gi, 'createHash("sha256")')
-      .replace(/createHash\s*\(\s*["']sha1["']\s*\)/gi, 'createHash("sha256")');
-  } else if (ext === 'php') {
-    fixedLine = line
-      .replace(/md5\s*\(/gi, 'hash("sha256", ')
-      .replace(/sha1\s*\(/gi, 'hash("sha256", ');
-  } else if (ext === 'cs') {
-    fixedLine = line
-      .replace(/MD5\.Create\s*\(\s*\)/g, 'SHA256.Create()')
-      .replace(/new MD5CryptoServiceProvider\s*\(\s*\)/g, 'new SHA256Managed()');
-  } else if (ext === 'java') {
-    fixedLine = line
-      .replace(/MessageDigest\.getInstance\s*\(\s*["']MD5["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")')
-      .replace(/MessageDigest\.getInstance\s*\(\s*["']SHA-1["']\s*\)/g, 'MessageDigest.getInstance("SHA-256")');
-  } else {
-    return null;
+  // 1. حالات يحكمها حارس قائم في repairCode: المرشّح القديم كما هو ليصل إليه فيرفضه ويُسجّل سببه
+  //    (بلا أي تغيير للحارس):
+  //    • كلمة مرور / سياق اعتماد  ⇒ WEAK_CRYPTO_CREDENTIAL_CONTEXT / PASSWORD_HASH (+ aiNeeded)
+  //    • مدخل من معامل دالة       ⇒ WEAK_CRYPTO_INPUT_FROM_CALLER (مصدره قد يكون ملفًا آخر؛ + aiNeeded)
+  //    • الهدف داخل نص/تعليق       ⇒ TARGET_IN_LITERAL (ليس استدعاءً أصلًا)
+  const legacy = _legacyWeakCryptoLine(line, ext);
+  const legacyCandidate = () => {
+    if (legacy === line) return null;
+    lines[ln] = legacy;
+    return { fixed: lines.join('\n'), patch: legacy.trim(), reason: 'Weak crypto MD5/SHA1 → SHA256' };
+  };
+  const cred = weakCryptoCredentialProblem(code, issue, ext);
+  if (cred) return legacyCandidate();
+  if (legacy !== line) {
+    const lit = literalTargetProblem(code, code.split('\n').map((l, i) => (i === ln ? legacy : l)).join('\n'), issue.line, 'WEAK_CRYPTO', ext);
+    if (lit) return legacyCandidate();
   }
 
-  if (fixedLine === line) return null;
-  lines[ln] = fixedLine;
-  return { fixed: lines.join('\n'), patch: fixedLine.trim(), reason: 'Weak crypto MD5/SHA1 → SHA256' };
+  // 2. رمز عشوائي: md5/sha1 على Math.random() ⇒ randomBytes بنفس الطول والصيغة
+  if (ext === 'js' || ext === 'ts') {
+    const m = line.match(/\b([A-Za-z_$][\w$]*)\.createHash\s*\(\s*(["'])(md5|sha1)\2\s*\)\s*\.update\s*\(([^;]*?)\)\s*\.digest\s*\(\s*(["'])(hex|base64)\5\s*\)/i);
+    if (m && /Math\.random\(\)/.test(m[4]) && _WC_RANDOM_ONLY.test(m[4])) {
+      const why = _wcRandomUnproven(code, issue.line, m[1]);
+      if (why) return _reDecline(why, 0.85);
+      {
+        const bytes = m[3].toLowerCase() === 'md5' ? 16 : 20;
+        const repl = m[1] + '.randomBytes(' + bytes + ').toString(' + m[5] + m[6] + m[5] + ')';
+        lines[ln] = line.replace(m[0], repl);
+        return { fixed: lines.join('\n'), patch: lines[ln].trim(),
+                 reason: m[3].toUpperCase() + '(Math.random…) ⇒ randomBytes(' + bytes + ') بنفس الطول والصيغة (' + m[6] + ') — مصدر عشوائية آمن' };
+      }
+    }
+  }
+
+  // 3. بروتوكول/خدمة تفرض الخوارزمية
+  const near = lines.slice(Math.max(0, ln - 2), ln + 3).join('\n');
+  if (_WC_PROTOCOL.test(near)) {
+    return _reDecline('WEAK_CRYPTO_PROTOCOL_REQUIRED — الخوارزمية يفرضها بروتوكول/خدمة (Content-MD5، ETag، Gravatar، S3…)؛ تغييرها يكسر التوافق', 0.9);
+  }
+  // 4. HMAC: التوقيع يتحقق منه طرف آخر بنفس الخوارزمية
+  if (/createHmac\s*\(\s*["'](?:md5|sha1)["']|hmac\.new\s*\([^)]*(?:md5|sha1)|HmacMD5|HmacSHA1|hash_hmac\s*\(\s*["'](?:md5|sha1)["']/i.test(line)) {
+    return _reDecline('WEAK_CRYPTO_HMAC_COMPAT — HMAC-MD5/SHA1 يتحقق منه طرف آخر بنفس الخوارزمية؛ تغييره يكسر التحقق (ولا كسر عملي معروف لـHMAC-SHA1)', 0.85);
+  }
+  // 5. بصمة/مفتاح غير أمني
+  if (_legacyWeakCryptoLine(line, ext) === line) return null;
+  return _reDecline('WEAK_CRYPTO_OUTPUT_CHANGES — استعمال غير مرتبط بكلمات مرور؛ تغيير الخوارزمية يغيّر القيمة الناتجة فتنكسر مطابقة القيم المخزنة/المرسلة (مفتاح كاش، بصمة ملف، معرّف). لا خطر أمني مُثبت يبرر الكسر', 0.8);
+}
+
+// إثبات بالـAST لمسار «رمز عشوائي» (نفس شروط البوابة [ALT-PROOF]): المستقبِل مربوط مرة واحدة في الملف
+// بـrequire('crypto')/import من crypto ولا يُعاد إسناده؛ Math/Date/String غير مُعاد تعريفها ولا with؛
+// والنداء ليس داخل دالة/طريقة/متغير اسمه أو معاملاته توحي بكلمة مرور. يُرجع سبب الرفض أو ''.
+function _wcRandomUnproven(code, lineNo, recv) {
+  const ast = _reParse(code);
+  if (!ast) return 'WEAK_CRYPTO_UNPROVABLE — تعذّر تحليل الملف بـAST';
+  const binds = new Map();
+  const add = (nm, k) => { if (!binds.has(nm)) binds.set(nm, []); binds.get(nm).push(k); };
+  let dynamic = false, sinkChain = null;
+  _reWalk(ast, (n, ps) => {
+    const pat = (q, k) => { _rePatternNames(q, []).forEach(id => add(id.name, k)); };
+    if (n.type === 'VariableDeclarator') {
+      const i = n.init;
+      const isReq = i && i.type === 'CallExpression' && i.callee.type === 'Identifier' && i.callee.name === 'require' &&
+                    i.arguments.length === 1 && i.arguments[0].type === 'Literal' && /^(?:node:)?crypto$/.test(String(i.arguments[0].value));
+      pat(n.id, n.id.type === 'Identifier' && isReq ? 'crypto' : 'other');
+    }
+    if (_RE_FN.test(n.type)) { if (n.id) add(n.id.name, 'other'); n.params.forEach(q => pat(q, 'other')); }
+    if (n.type === 'ClassDeclaration' && n.id) add(n.id.name, 'other');
+    if (n.type === 'CatchClause' && n.param) pat(n.param, 'other');
+    if (n.type === 'ImportDeclaration') {
+      const c = /^(?:node:)?crypto$/.test(String(n.source.value));
+      n.specifiers.forEach(sp => add(sp.local.name, c && sp.type !== 'ImportSpecifier' ? 'crypto' : 'other'));
+    }
+    if (n.type === 'AssignmentExpression' || n.type === 'UpdateExpression') {
+      const t = n.type === 'AssignmentExpression' ? n.left : n.argument;
+      if (t.type === 'Identifier') add(t.name, 'assign');
+      if (t.type === 'MemberExpression' && t.object.type === 'Identifier' && /^(?:Math|Date)$/.test(t.object.name)) dynamic = true;
+    }
+    if (n.type === 'WithStatement') dynamic = true;
+    if (!sinkChain && n.type === 'CallExpression' && n.loc.start.line === lineNo && n.callee.type === 'MemberExpression' &&
+        !n.callee.computed && n.callee.property.name === 'createHash') sinkChain = ps.slice();
+  });
+  if (dynamic || binds.has('Math') || binds.has('Date') || binds.has('String')) return 'WEAK_CRYPTO_RANDOM_UNPROVEN — Math/Date/String مُعاد تعريفها أو with؛ لا يُثبت أن المدخل عشوائي';
+  const b = binds.get(recv) || [];
+  if (b.length !== 1 || b[0] !== 'crypto') return 'WEAK_CRYPTO_RANDOM_UNPROVEN — ' + recv + ' ليس مربوطًا مرة واحدة بوحدة crypto (require/import) أو يُعاد إسناده';
+  if (!sinkChain) return 'WEAK_CRYPTO_RANDOM_UNPROVEN — موضع النداء غير موجود في الـAST';
+  for (let k = sinkChain.length - 1; k >= 0; k--) {
+    const fn = sinkChain[k];
+    if (!_RE_FN.test(fn.type)) continue;
+    const p = sinkChain[k - 1];
+    const names = [fn.id && fn.id.name];
+    if (p && p.type === 'VariableDeclarator' && p.id) names.push(p.id.name);
+    if (p && (p.type === 'Property' || p.type === 'MethodDefinition' || p.type === 'PropertyDefinition') && p.key) names.push(p.key.name || p.key.value);
+    if (p && p.type === 'AssignmentExpression') names.push(p.left.type === 'Identifier' ? p.left.name : (p.left.property && (p.left.property.name || p.left.property.value)));
+    const params = []; fn.params.forEach(q => _rePatternNames(q, []).forEach(id => params.push(id.name)));
+    if (names.concat(params).some(x => x && _CREDENTIAL_RE.test(String(x)))) {
+      return 'WEAK_CRYPTO_CREDENTIAL_CONTEXT — داخل دالة اسمها أو معاملاتها توحي بكلمة مرور؛ KDF وحده يُقبل';
+    }
+  }
+  return '';
 }
 
 // ─── WEAK_CRYPTO: سياق credential ─────────────────────
@@ -459,12 +630,72 @@ function fixNoneCompare(code, issue) {
 }
 
 // ─── XSS ─────────────────────────────────────────────
-function fixXSS(code, issue, lines, ext) {
+// innerHTML/outerHTML حسب السياق. كان: innerHTML → textContent دائمًا، فـ
+//   el.innerHTML = "<h2>Top: " + name + "</h2>"  يعرض الوسوم نصًّا حرفيًا (تغيّر شكل الصفحة)
+//   el.outerHTML = html                          يصير تعديل محتوى بدل استبدال العنصر
+// الآن: XSSFixer (xss_fix.js) إن كان محمَّلًا — يهرّب المقاطع الديناميكية ويُبقي الوسوم، ويرفض ما لا
+// يعرف سياقه (قيمة URL، ناتج استدعاء قد يكون HTML مقصودًا…). وبدونه: textContent فقط حين تكون
+// القيمة كلها متغيرًا واحدًا بلا وسوم (نفس قرار XSSFixer)، وما عداه يُترك مع السبب.
+const _XSS_SINK = /\.(?:innerHTML|outerHTML)\s*=(?!=)/;
+function _fixXSSSink(code, issue, line, fileName) {
+  let X = null;
+  try { X = (typeof XSSFixer !== 'undefined' && XSSFixer && typeof XSSFixer.fix === 'function') ? XSSFixer : null; } catch (e) { X = null; }
+  if (X) {
+    let r = null;
+    try { r = X.fix(code, fileName || 'a.js'); } catch (e) { r = null; }
+    if (!r || typeof r.fixed !== 'string') return _reDecline('XSS_FIXER_FAILED — مُصلح XSS لم يُرجع نتيجة', 0.6);
+    const edit = (r.edits || []).find(e => e.line === issue.line);
+    const unres = (r.unresolved || []).find(u => u.line === issue.line);
+    if (!edit) {
+      if (unres) return _reDecline('XSS_CONTEXT_UNSAFE — ' + String(unres.reason || unres.kind), 0.85);
+      return _reDecline('XSS_NO_SAFE_EDIT — لا قيمة ديناميكية غير معقَّمة يمكن تهريبها بأمان في هذا السطر', 0.7);
+    }
+    if (!r.changed || r.fixed === code) return null;
+    const fixed = _xssHelperToEnd(code, r.fixed);
+    const shift = fixed.split('\n').length - code.split('\n').length;
+    const after = fixed.split('\n')[issue.line - 1 + (fixed === r.fixed ? Math.max(0, shift) : 0)] || '';
+    return { fixed, patch: after.trim(), reason: 'XSS: ' + String(edit.action || edit.kind) };
+  }
+  if (/\.outerHTML\s*=/.test(line)) {
+    return _reDecline('XSS_OUTERHTML_NO_EQUIVALENT — outerHTML يستبدل العنصر نفسه؛ textContent ليس بديلًا مكافئًا', 0.9);
+  }
+  if (/\.innerHTML\s*=\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*;?\s*$/.test(line)) {
+    const fixed = line.replace(/\.innerHTML\s*=/, '.textContent =');
+    return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'XSS: innerHTML → textContent (القيمة متغير واحد بلا وسوم)' };
+  }
+  return _reDecline('XSS_NO_CONTEXT_FIXER — القيمة تحوي وسومًا أو تعبيرًا مركّبًا ولا مُصلح سياقي محمَّل؛ textContent يغيّر العرض', 0.85);
+}
+
+// XSSFixer يضيف دالة __escapeHTML في رأس الملف، فتنزاح أرقام كل الأسطر التي تحتها. داخل repairCode
+// (يعالج البلاغات من الأسفل للأعلى) يجعل ذلك كل إصلاح لاحق يُسجَّل برقم سطر مُزاح (مقيس: 21 بدل 8).
+// نقلها إلى آخر الملف مكافئ دلاليًا — تعريف دالة في المستوى الأعلى يُرفع (hoisting) أينما كان —
+// ويُبقي أرقام الأسطر ثابتة. يُتحقق من البنية ومن التحليل بعد النقل؛ وإلا يبقى ناتج XSSFixer كما هو.
+function _xssHelperToEnd(original, fixed) {
+  const O = original.split('\n'), F = fixed.split('\n');
+  const shift = F.length - O.length;
+  if (shift <= 0) return fixed;
+  let k = 0;
+  while (k < O.length && O[k] === F[k]) k++;
+  const block = F.slice(k, k + shift);
+  if (!block.some(l => /^function __escapeHTML\(/.test(l)) || !/^\}\s*$/.test(block[block.length - 1] || '')) return fixed;
+  const body = F.slice(0, k).concat(F.slice(k + shift));
+  if (body.length !== O.length) return fixed;
+  const moved = (body[body.length - 1] === '' ? body.slice(0, -1).concat([''], block, ['']) : body.concat([''], block)).join('\n');
+  try {
+    const A = (typeof acorn !== 'undefined' && acorn) ? acorn : null;
+    if (!A) return fixed;
+    const o = { ecmaVersion: 'latest', allowReturnOutsideFunction: true, allowHashBang: true };
+    try { A.parse(moved, Object.assign({ sourceType: 'script' }, o)); } catch (e) { A.parse(moved, Object.assign({ sourceType: 'module' }, o)); }
+  } catch (e) { return fixed; }
+  return moved;
+}
+
+function fixXSS(code, issue, lines, ext, fileName) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  let fixed = line.replace(/\.innerHTML\s*=/, '.textContent =');
-  if (fixed === line) fixed = line.replace(/\.outerHTML\s*=/, '.textContent =');
-  if (fixed === line && /res\.send\s*\(/.test(line)) {
+  if (_XSS_SINK.test(line)) return _fixXSSSink(code, issue, line, fileName);
+  let fixed = line;
+  if (/res\.send\s*\(/.test(line)) {
     const m = line.match(/res\.send\s*\(["'`]([^"'`]*?)["'`]\s*\+\s*(\w+)/);
     if (m) {
       fixed = line.replace(/res\.send\s*\([^)]+\)/, `res.json({ message: String(${m[2]}).replace(/[<>]/g, '') })`);
@@ -486,11 +717,32 @@ const _HTTP_PATTERN_CALL = /\.(?:replace|replaceAll|includes|startsWith|endsWith
 // URI اسم namespace (معرّف وليس اتصالًا): createElementNS("http://www.w3.org/2000/svg") يتعطل مع https
 const _HTTP_NAMESPACE_HOST = /^http:\/\/(?:www\.w3\.org|ns\.adobe\.com|purl\.org|schemas\.(?:xmlsoap\.org|microsoft\.com|openxmlformats\.org|android\.com)|xmlns\.com)\//i;
 const _HTTP_NAMESPACE_CONTEXT = /(?:xmlns|namespace|\bns)\w*['"]?\s*(?:[:=]|\()\s*(?:[\w$.]+\s*\|\|\s*)?$|\b(?:create(?:Element|Attribute)NS|[gs]etAttributeNS|(?:has|remove)AttributeNS|lookupPrefix|isDefaultNamespace)\s*\([^()]*$/i;
+// HTTPS للإنتاج فقط: مضيف تطوير/داخلي لا يملك عادةً شهادة TLS، فتحويله يكسر الاتصال
+// (http://localhost:3000 → https://localhost:3000 مقيس). ومضيف ديناميكي (${host}) لا يُعرف أهو إنتاج.
+function _httpHostKind(body) {
+  const m = body.match(/^http:\/\/([^\/?#]*)/);
+  const auth = m ? m[1] : '';
+  if (!auth || /\$\{|[{}%]/.test(auth)) return 'dynamic';     // ${host} ، f"{host}" ، "%s" ، أو "http://" + host
+  const host = auth.replace(/^[^@]*@/, '').replace(/:\d*$/, '').toLowerCase();
+  if (/^\[(?:::1|f[cd][0-9a-f]*:.*|fe80:.*)\]$/.test(host)) return 'dev';
+  if (/^(?:localhost|0\.0\.0\.0)$/.test(host) || /\.(?:localhost|local|test|internal|lan|home\.arpa)$/.test(host)) return 'dev';
+  if (/\.(?:nip\.io|sslip\.io|localtest\.me)$/.test(host)) return 'dev';       // DNS عام يُشير إلى عنوان محلي
+  const ip = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);                         // قواعد العناوين على IPv4 الصريح فقط
+  if (ip && (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) ||
+      /^172\.(?:1[6-9]|2\d|3[01])\./.test(host))) return 'dev';
+  if (!host.includes('.')) return 'dev';            // اسم بلا نطاق: خدمة داخلية (docker/compose) أو جهاز محلي
+  // منفذ صريح غير 80: TLS نادرًا على المنفذ نفسه، فتغيير المخطط وحده يكسر الاتصال
+  const port = (auth.replace(/^[^@]*@/, '').match(/:(\d+)$/) || [])[1];
+  if (port && port !== '80') return 'port';
+  return 'prod';
+}
+
 function fixHTTP(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
   const lits = _lineLiterals(line, ext === 'mjs' || ext === 'cjs' || ext === 'jsx' || ext === 'tsx' ? 'js' : ext);
   let fixed = line;
+  const skipped = [];
   for (const q of lits.reverse()) {
     if (q.kind !== 'string') continue;
     const body = line.slice(q.start + 1, q.end - 1);
@@ -498,19 +750,222 @@ function fixHTTP(code, issue, lines, ext) {
     const before = line.slice(0, q.start), after = line.slice(q.end);
     if (_HTTP_PATTERN_CALL.test(before) || /[=!]==?\s*$/.test(before) || /^\s*[=!]==?(?!>)/.test(after)) continue;
     if (_HTTP_NAMESPACE_HOST.test(body) || _HTTP_NAMESPACE_CONTEXT.test(before)) continue;
+    const kind = _httpHostKind(body);
+    if (kind !== 'prod') { skipped.push(kind); continue; }
     fixed = fixed.slice(0, q.start + 1) + 'https://' + fixed.slice(q.start + 1 + 'http://'.length);
+  }
+  if (fixed === line && skipped.length) {
+    if (skipped.includes('dynamic')) return _reDecline('HTTP_DYNAMIC_HOST — المضيف يُحدَّد وقت التشغيل؛ لا يُعرف أهو إنتاج يدعم TLS', 0.8);
+    if (skipped.includes('port')) return _reDecline('HTTP_EXPLICIT_PORT — منفذ صريح غير 80؛ الخادم نادرًا يقدّم TLS على المنفذ نفسه، فتغيير المخطط وحده يكسر الاتصال', 0.75);
+    return _reDecline('HTTP_DEV_HOST — مضيف تطوير/داخلي (localhost، شبكة خاصة، .local…)؛ HTTPS يكسر الاتصال المحلي', 0.95);
   }
   if (fixed === line) return null;
   return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'HTTP → HTTPS' };
 }
 
 // ─── var → let ────────────────────────────────────────
+// شرح أسباب حراس repairCode القائمة (النص الأصلي للسبب لا يتغيّر؛ يُضاف الشرح فقط)
+function _explainRejection(reason) {
+  if (/^WEAK_CRYPTO_(?:PASSWORD_HASH|CREDENTIAL_CONTEXT)/.test(reason)) {
+    return { confidence: 0.95, text: ' — كلمات المرور تحتاج KDF بملح (scrypt/bcrypt/Argon2)؛ الاستبدال يغيّر صيغة المخرج ويكسر التحقق من كل كلمة مرور مخزّنة، فيلزم تخزين جديد ومسار ترحيل (تحقق بالقديم ثم إعادة الحفظ) لا يُثبت من ملف واحد. SHA256 وحده ليس إصلاحًا' };
+  }
+  if (/^WEAK_CRYPTO_INPUT_FROM_CALLER/.test(reason)) return { confidence: 0.8, text: ' — مصدر المدخل خارج الملف؛ لا يُعرف أهو كلمة مرور' };
+  if (/^XSS_RESPONSE_CHANGED/.test(reason)) return { confidence: 0.9, text: '' };
+  return { confidence: 0.8, text: '' };
+}
+
+// ─── قرار «لا تعديل» مع السبب ─────────────────────────
+// الـfixer الذي يرفض لأن التعديل غير مُثبَت يُسجّل السبب هنا قبل أن يُرجع null؛ repairCode
+// يلتقطه في decisions (لا إسقاط صامت). confidence = ثقتنا في أن الترك هو القرار الصحيح.
+let _reLastDecline = null;
+function _reDecline(reason, confidence) {
+  _reLastDecline = { reason: String(reason), confidence: typeof confidence === 'number' ? confidence : 0.7 };
+  return null;
+}
+
+// ─── أدوات AST مشتركة (acorn إن وُجد؛ بدونه لا إثبات ⇒ لا تعديل) ───
+let _reAstCache = { code: null, ast: null };
+function _reParse(code) {
+  if (_reAstCache.code === code) return _reAstCache.ast;
+  let A = null;
+  try { A = (typeof acorn !== 'undefined' && acorn && typeof acorn.parse === 'function') ? acorn : null; } catch (e) { A = null; }
+  let ast = null;
+  if (A) {
+    const o = { ecmaVersion: 'latest', locations: true, allowReturnOutsideFunction: true, allowHashBang: true };
+    try { ast = A.parse(code, Object.assign({ sourceType: 'script' }, o)); }
+    catch (e) { try { ast = A.parse(code, Object.assign({ sourceType: 'module' }, o)); } catch (e2) { ast = null; } }
+  }
+  _reAstCache = { code, ast };
+  return ast;
+}
+function _reWalk(node, fn, parents) {
+  parents = parents || [];
+  if (!node || typeof node.type !== 'string') return;
+  if (fn(node, parents) === false) return;
+  parents.push(node);
+  for (const k of Object.keys(node)) {
+    if (k === 'loc') continue;
+    const v = node[k];
+    if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') _reWalk(c, fn, parents); }
+    else if (v && typeof v.type === 'string') _reWalk(v, fn, parents);
+  }
+  parents.pop();
+}
+const _RE_FN = /^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/;
+const _RE_LOOP = /^(?:ForStatement|ForInStatement|ForOfStatement|WhileStatement|DoWhileStatement)$/;
+// Identifier مرجع لقيمة (لا اسم خاصية ولا وسم ولا مفتاح)
+function _reIsRef(n, p) {
+  if (!p) return true;
+  if ((p.type === 'MemberExpression' && p.property === n && !p.computed)) return false;
+  if ((p.type === 'Property' || p.type === 'PropertyDefinition' || p.type === 'MethodDefinition') && p.key === n && !p.computed && !(p.shorthand && p.value === n)) return false;
+  if (/^(?:LabeledStatement|BreakStatement|ContinueStatement)$/.test(p.type)) return false;
+  if (/^(?:ImportSpecifier|ImportDefaultSpecifier|ImportNamespaceSpecifier|ExportSpecifier)$/.test(p.type)) return false;
+  if (p.type === 'MetaProperty') return false;
+  return true;
+}
+function _rePatternNames(pat, out) {
+  if (!pat) return out;
+  if (pat.type === 'Identifier') out.push(pat);
+  else if (pat.type === 'ObjectPattern') pat.properties.forEach(pr => _rePatternNames(pr.type === 'RestElement' ? pr.argument : pr.value, out));
+  else if (pat.type === 'ArrayPattern') pat.elements.forEach(el => _rePatternNames(el, out));
+  else if (pat.type === 'RestElement') _rePatternNames(pat.argument, out);
+  else if (pat.type === 'AssignmentPattern') _rePatternNames(pat.left, out);
+  return out;
+}
+
+// ─── var → let: فقط حين يُثبت الـAST أن السلوك لا يتغيّر ─────────
+// كان: استبدال نصّي لأول var في السطر. فكسر برامج صحيحة:
+//   if (x) { var y = 1; }  return y;   →  let y  ⇒ ReferenceError (مقيس)
+// الآن يُشترط: كل مراجع الاسم داخل الكتلة نفسها وبعد التعريف، لا إعادة تعريف ولا eval/with،
+// وفي الحلقات لا closure يلتقطه ولا تعريف بلا قيمة (var يحتفظ بقيمة الدورة السابقة، let لا)،
+// وفي أعلى سكربت متصفح لا (var هناك خاصية عامة قد تقرؤها ملفات أخرى).
+function _varProblem(code, lineNo) {
+  const ast = _reParse(code);
+  if (!ast) return ['VAR_UNPROVABLE — تعذّر تحليل الملف بـAST؛ لا يمكن إثبات النطاق', 0.6];
+  let decl = null, chain = null;
+  _reWalk(ast, (n, ps) => {
+    if (decl) return false;
+    if (n.type === 'VariableDeclaration' && n.kind === 'var' && n.loc.start.line === lineNo) { decl = n; chain = ps.slice(); return false; }
+  });
+  if (!decl) return ['VAR_NOT_FOUND — لا تعريف var يبدأ في هذا السطر', 0.6];
+  const P = chain[chain.length - 1];
+  let fnIdx = -1;
+  for (let i = chain.length - 1; i >= 0; i--) if (_RE_FN.test(chain[i].type)) { fnIdx = i; break; }
+  const F = fnIdx >= 0 ? chain[fnIdx] : ast;
+  const inLoopHeader = P && ((P.type === 'ForStatement' && P.init === decl) ||
+                             ((P.type === 'ForInStatement' || P.type === 'ForOfStatement') && P.left === decl));
+  let region;
+  if (inLoopHeader) region = P;
+  else if (P && (P.type === 'BlockStatement' || P.type === 'Program' || P.type === 'StaticBlock')) region = P;
+  else return ['VAR_UNSUPPORTED_POSITION — موضع لا يقبل let بنفس المعنى (' + (P ? P.type : '?') + ')', 0.9];
+
+  // أعلى الملف: var ربط عام في السكربت العادي (خاصية window/this، ويتشاركه كل <script>). وحدة ES وحدها
+  // نطاقها مُثبت من الملف نفسه. وجود require/module.exports لا يُثبت شيئًا: ملفات كثيرة ثنائية الاستعمال
+  // (if (typeof module !== 'undefined') module.exports = …) تُحمَّل في المتصفح سكربتًا عاديًا — مقيس:
+  // var g1 = 5; function f(){ return this.g1 } ⇒ 5، وبعد let ⇒ undefined.
+  // والاستثناء المُثبت: مرجعٌ **غير مشروط** في أعلى الملف إلى module.exports/exports.x/require(…) —
+  // سكربت المتصفح العادي يرمي ReferenceError عند تحميله، فالملف لا يعمل إلا CommonJS أو داخل bundler،
+  // وكلاهما يلفّ الملف بدالة فيكون var فيه بنطاق الوحدة. (الحارس الشرطي typeof module لا يُثبت شيئًا.)
+  if (region.type === 'Program' && ast.sourceType !== 'module' && !_isUnconditionalCommonJS(ast)) {
+    return ['VAR_GLOBAL_BINDING — var في أعلى سكربت (غير وحدة ES ولا CommonJS مُثبت) ربطٌ عام تتشاركه السكربتات وthis/window؛ let يلغيه، ولا يُثبت من الملف كيف يُحمَّل', 0.85];
+  }
+  const names = [];
+  decl.declarations.forEach(d => _rePatternNames(d.id, names));
+  if (!names.length) return ['VAR_NOT_FOUND — لا أسماء في التعريف', 0.6];
+  const nameSet = new Set(names.map(n => n.name));
+  const own = new Set(names);
+  // معامل الدالة نفسها أو اسمها: var يعيد استعمال الربط نفسه (ومرتبط بـarguments في الوضع غير الصارم)، let ربط جديد
+  if (F !== ast) {
+    const fp = []; F.params.forEach(pp => _rePatternNames(pp, fp));
+    if (fp.some(x => nameSet.has(x.name)) || (F.id && nameSet.has(F.id.name))) {
+      return ['VAR_NAME_REDECLARED — الاسم معامل/اسم الدالة نفسها؛ var يعيد استعمال ذلك الربط (ومرتبط بـarguments)، let ينشئ ربطًا جديدًا', 0.95];
+    }
+  }
+
+  // ما بين الكتلة وحدّ الدالة: هل الكتلة داخل حلقة؟
+  const regionIdx = chain.indexOf(region);
+  let loopAround = inLoopHeader;
+  for (let i = Math.max(regionIdx, fnIdx + 1); i < chain.length && !loopAround; i++) if (_RE_LOOP.test(chain[i].type)) loopAround = true;
+  for (let i = fnIdx + 1; i <= regionIdx && !loopAround; i++) if (_RE_LOOP.test(chain[i].type)) loopAround = true;
+  if (loopAround && !inLoopHeader && decl.declarations.some(d => d.init === null)) {
+    return ['VAR_LOOP_NO_INIT — var بلا قيمة داخل حلقة يحتفظ بقيمة الدورة السابقة؛ let يعيدها undefined', 0.9];
+  }
+
+  let problem = null;
+  _reWalk(F, (n, ps) => {
+    if (problem) return false;
+    if (n !== F && _RE_FN.test(n.type)) {
+      // دالة متداخلة: تعريفها لنفس الاسم = إعادة تعريف (نرفض تحفظًا)
+      if (n.id && nameSet.has(n.id.name)) { problem = ['VAR_NAME_REDECLARED — الاسم ' + n.id.name + ' معرّف مرة أخرى', 0.85]; return false; }
+      const ps2 = []; n.params.forEach(pp => _rePatternNames(pp, ps2));
+      if (ps2.some(x => nameSet.has(x.name))) { problem = ['VAR_NAME_REDECLARED — الاسم مُعاد كمعامل دالة متداخلة', 0.85]; return false; }
+    }
+    if (n.type === 'WithStatement') { problem = ['VAR_DYNAMIC_SCOPE — with في الدالة', 0.9]; return false; }
+    if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'eval') { problem = ['VAR_DYNAMIC_SCOPE — eval في الدالة قد يقرأ الاسم', 0.9]; return false; }
+    if (n.type === 'VariableDeclaration' && n !== decl) {
+      const other = []; n.declarations.forEach(d => _rePatternNames(d.id, other));
+      if (other.some(x => nameSet.has(x.name))) { problem = ['VAR_NAME_REDECLARED — الاسم معرّف مرة أخرى في نفس الدالة', 0.9]; return false; }
+    }
+    if ((n.type === 'ClassDeclaration' || n.type === 'FunctionDeclaration') && n !== F && n.id && nameSet.has(n.id.name)) {
+      problem = ['VAR_NAME_REDECLARED — الاسم معرّف كدالة/صنف', 0.9]; return false;
+    }
+    if (n.type === 'CatchClause' && n.param) {
+      const cp = []; _rePatternNames(n.param, cp);
+      if (cp.some(x => nameSet.has(x.name))) { problem = ['VAR_NAME_REDECLARED — الاسم معامل catch', 0.85]; return false; }
+    }
+    if (n.type === 'Identifier' && nameSet.has(n.name) && !own.has(n)) {
+      const p = ps[ps.length - 1];
+      if (!_reIsRef(n, p)) return;
+      if (n.start < region.start || n.end > region.end) { problem = ['VAR_SCOPE_ESCAPE — ' + n.name + ' مستعمل خارج الكتلة (سطر ' + n.loc.start.line + ')؛ let يجعله ReferenceError', 0.95]; return false; }
+      if (n.start < decl.end) { problem = ['VAR_USED_BEFORE_DECL — ' + n.name + ' مستعمل قبل/داخل تعريفه (سطر ' + n.loc.start.line + ')؛ let يجعله خطأ TDZ', 0.95]; return false; }
+      if (loopAround && ps.some((a, k) => k > ps.indexOf(region) && _RE_FN.test(a.type))) {
+        problem = ['VAR_LOOP_CLOSURE — دالة داخل الحلقة تلتقط ' + n.name + '؛ let يغيّر القيمة الملتقطة لكل دورة', 0.95]; return false;
+      }
+    }
+  });
+  if (problem) return problem;
+  if (code.slice(decl.start, decl.start + 3) !== 'var') return ['VAR_NOT_FOUND — موضع الكلمة غير متوقع', 0.6];
+  return { start: decl.start };
+}
+
+// ملف CommonJS مُثبت: جملة في أعلى الملف (لا داخل if/try/دالة) تشير بلا شرط إلى module.exports أو
+// exports.x أو require(…)، و module/exports/require غير معرّفة محليًا في الملف.
+function _isUnconditionalCommonJS(ast) {
+  let local = false;
+  _reWalk(ast, n => {
+    if (n.type === 'VariableDeclarator') _rePatternNames(n.id, []).forEach(id => { if (/^(?:module|exports|require)$/.test(id.name)) local = true; });
+    if (_RE_FN.test(n.type)) {
+      if (n.id && /^(?:module|exports|require)$/.test(n.id.name)) local = true;
+      n.params.forEach(p => _rePatternNames(p, []).forEach(id => { if (/^(?:module|exports|require)$/.test(id.name)) local = true; }));
+    }
+  });
+  if (local) return false;
+  const isExportsTarget = t => t && t.type === 'MemberExpression' &&
+    ((t.object.type === 'Identifier' && t.object.name === 'module' && !t.computed && t.property.name === 'exports') ||
+     (t.object.type === 'Identifier' && t.object.name === 'exports') ||
+     isExportsTarget(t.object));
+  const isRequire = e => e && e.type === 'CallExpression' && e.callee.type === 'Identifier' && e.callee.name === 'require';
+  for (const st of ast.body) {
+    if (st.type === 'ExpressionStatement') {
+      const e = st.expression;
+      if (e.type === 'AssignmentExpression' && isExportsTarget(e.left)) return true;
+      if (isRequire(e)) return true;
+    }
+    if (st.type === 'VariableDeclaration' && st.declarations.some(d => isRequire(d.init) ||
+        (d.init && d.init.type === 'MemberExpression' && isRequire(d.init.object)))) return true;
+  }
+  return false;
+}
+
 function fixVar(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const fixed = line.replace(/\bvar\b/, 'let');
-  if (fixed === line) return null;
-  return { fixed: replaceLineInCode(code, issue.line, fixed), patch: fixed.trim(), reason: 'var → let' };
+  const r = _varProblem(code, issue.line);
+  if (Array.isArray(r)) return _reDecline(r[0], r[1]);
+  const fixed = code.slice(0, r.start) + 'let' + code.slice(r.start + 3);
+  if (fixed === code) return null;
+  const newLine = fixed.split('\n')[issue.line - 1];
+  return { fixed, patch: String(newLine).trim(), reason: 'var → let (AST: كل الاستخدامات داخل الكتلة وبعد التعريف)' };
 }
 
 // ─── Loose Equality ───────────────────────────────────
@@ -1690,6 +2145,7 @@ function repairCode(code, issues, fileName, _opts) {
   const repairs  = [];
   const aiNeeded = [];
   const rejected = [];   // candidates رُفضت قبل التطبيق (مثل SQL غير سليم)
+  const declines = [];   // fixer قرّر عدم التعديل لأن التعديل غير مُثبَت السلامة (مع السبب والثقة)
   let repairedCode = code;
 
   // تتبّع الأسطر: لكل سطر حالي → رقم سطره في code (أو -1 إذا أُضيف)،
@@ -1787,6 +2243,7 @@ function repairCode(code, issues, fileName, _opts) {
     }
 
     let result = null;
+    _reLastDecline = null;
     try {
       result = strat.fn(repairedCode, issue, lines, ext, fileName);
     } catch (e) {
@@ -1916,6 +2373,10 @@ function repairCode(code, issues, fileName, _opts) {
       }
 
       if (!result || result.fixed === repairedCode) {
+        if (_reLastDecline) {
+          declines.push({ line: issue.line, title: issue.title, ev: issue.ev, strategy: stratKey,
+                          reason: _reLastDecline.reason, confidence: _reLastDecline.confidence });
+        }
         // تراكم بعنوان Data Flow: سبب عدم التعديل يُسجَّل (لا إسقاط صامت)، والمشكلة تبقى
         // للمراجعة لأن إعادة التحليل تجدها في remainingIssues.
         if (stratKey === 'ACCUMULATION' && accumulationDataFlowTarget(issue)) {
@@ -2044,6 +2505,14 @@ function repairCode(code, issues, fileName, _opts) {
   return {
     original: code, repaired: repairedCode,
     repairs, aiNeeded, rejected,
+    // كل ما تُرك عمدًا وسببه: رفضُ الـfixer نفسه (declines) + رفضُ حراس repairCode للـcandidate (rejected)
+    declined: declines.concat(rejected.map(r => {
+      const ex = _explainRejection(String(r.reason || ''));
+      // rejected لا يحمل العنوان؛ يُستعاد من البلاغ نفسه (السطر + الاستراتيجية) كي يُنسب السبب للبلاغ الصحيح
+      const src = r.title ? null : issues.find(i => i && i.line === r.line && detectStrategy(i, ext) === r.strategy);
+      return { line: r.line, strategy: r.strategy, title: r.title || (src && src.title), ev: src && src.ev,
+               reason: String(r.reason || '') + ex.text, confidence: typeof r.confidence === 'number' ? r.confidence : ex.confidence, source: r.source };
+    })),
     summary: {
       total: issues.length,
       fixed: repairs.length,

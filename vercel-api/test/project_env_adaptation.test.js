@@ -714,7 +714,12 @@ test('[INTEGRATED] vercel-api: بيئة ← تحليل عبر الملفات ←
 
 test('[INTEGRATED] اكتشاف مشكلة فعلية، وإصلاح تتحقق منه البوابة، بلا تطبيق', () => {
   const ctx = fullContext();
-  const files = projectFiles(30);
+  // ملفات المشروع (أغلبها سكربتات متصفح ثنائية الاستعمال وجداول أنماط) + ملف مستخدم حقيقي.
+  // كانت المُرشَّحات هنا var → let في أعلى تلك السكربتات (var X = (() => …)())، وصار ذلك مرفوضًا
+  // عمدًا (VAR_GLOBAL_BINDING: ربط عام بين السكربتات لا يُثبت من ملف واحد). فأُضيف ملف المستخدم
+  // GameServer.js من fixtures كي يبقى الشرط نفسه قائمًا: مشكلة فعلية ← إصلاح تقبله البوابة ← لا كتابة.
+  const files = projectFiles(30).concat([{ name: 'vercel-api/test/fixtures/GameServer.js',
+    code: fs.readFileSync(path.join(REPO_ROOT, 'vercel-api', 'test', 'fixtures', 'GameServer.js'), 'utf8') }]);
 
   // بصمات قبل — لإثبات أن لا شيء يُكتب
   const root = path.join(REPO_ROOT, 'vercel-api');

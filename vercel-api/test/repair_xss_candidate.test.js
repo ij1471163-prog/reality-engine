@@ -6,7 +6,8 @@
 // نوع الاستجابة وشكلها (والـAnalyzer نفسه يقول إنه ليس الإصلاح الصحيح).
 // candidate كهذا يُرفض بـXSS_RESPONSE_CHANGED: repairedCode لا يتغير، المشكلة
 // لا تُحذف، و aiRequired تستمر إلى aiNeeded.
-// فرع innerHTML / outerHTML يبقى byte-identical.
+// فرع innerHTML / outerHTML: بلا مُصلح XSS سياقي محمَّل (هذا السياق لا يحمّل xss_fix.js)
+// يُقبل textContent فقط حين تكون القيمة متغيرًا واحدًا بلا وسوم؛ والوسوم أو outerHTML تُترك مع السبب.
 // ═══════════════════════════════════════════════════════
 'use strict';
 
@@ -97,12 +98,25 @@ test('real analyzer + server adapter: res.send XSS stays reported and goes to ai
 
 // ═══ innerHTML / outerHTML — byte-identical ═════════════
 const XSS_TITLE = '🔴 XSS — innerHTML';
+// كان يشمل: "<b>" + name + "</b>" → textContent (يعرض <b> نصًّا) و outerHTML → textContent
+// (يعدّل المحتوى بدل استبدال العنصر). تغيّر عمدًا: كلاهما يغيّر سلوكًا صحيحًا — انظر NOT_EQUIVALENT.
 const SOUND = [
   ['el.innerHTML = userInput;', 'el.textContent = userInput;'],
-  ['div.innerHTML = "<b>" + name + "</b>";', 'div.textContent = "<b>" + name + "</b>";'],
   ['  box.innerHTML=html', '  box.textContent =html'],
-  ['el.outerHTML = html;', 'el.textContent = html;'],
 ];
+const NOT_EQUIVALENT = [
+  ['div.innerHTML = "<b>" + name + "</b>";', /^XSS_NO_CONTEXT_FIXER/],
+  ['el.outerHTML = html;', /^XSS_OUTERHTML_NO_EQUIVALENT/],
+];
+for (const [before, reason] of NOT_EQUIVALENT) {
+  test(`no context fixer: ${before.trim()} is left unchanged (textContent would change rendering) and the reason is recorded`, () => {
+    const code = `function f(html, name, userInput) {\n${before}\n}`;
+    const out = run(code, [{ line: 2, title: XSS_TITLE, ev: before.trim() }]);
+    assert.strictEqual(out.repaired, code);
+    assert.strictEqual(out.repairs.length, 0);
+    assert.ok(out.declined.some(d => reason.test(d.reason)), JSON.stringify(out.declined));
+  });
+}
 for (const [before, after] of SOUND) {
   test(`sound: ${before.trim()} → ${after.trim()} (unchanged output)`, () => {
     const code = `function f(html, name, userInput) {\n${before}\n}`;

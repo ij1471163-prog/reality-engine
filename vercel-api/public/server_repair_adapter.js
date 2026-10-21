@@ -74,6 +74,9 @@ function createRepairEngine() {
     "dependency_analyzer.js",
     "repair_sql.js",
     "fix_verifier.js",
+    // مُصلح XSS السياقي: repair_engine.fixXSS يفوّض إليه (يهرّب المقاطع الديناميكية ويُبقي
+    // الوسوم) بدل innerHTML → textContent الأعمى. يحتاج acorn المحمَّل أعلاه.
+    "xss_fix.js",
     "repair_engine.js",
     "smart_repair.js",
     "sql_injection_fix.js",
@@ -154,6 +157,10 @@ function createRepairEngine() {
         : [],
       aiNeeded: Array.isArray(result.aiNeeded)
         ? result.aiNeeded
+        : [],
+      // ما تُرك عمدًا وسببه وثقته — يبني منه المُنسّق سجل القرار لكل مشكلة
+      declined: Array.isArray(result.declined)
+        ? result.declined
         : [],
     };
   }

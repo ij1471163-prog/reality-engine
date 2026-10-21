@@ -713,6 +713,7 @@ var RealityOrchestrator = (() => {
         engineId:    engine.id,
         safeRepairs: Array.isArray(r.repairs)  ? r.repairs  : [],
         aiNeeded:    Array.isArray(r.aiNeeded) ? r.aiNeeded : [],
+        declined:    Array.isArray(r.declined) ? r.declined : [],
         repairedCode: typeof r.repaired === 'string' ? r.repaired : code,
         hasChanges:  typeof r.repaired === 'string' && r.repaired !== code,
       };
@@ -1010,6 +1011,101 @@ var RealityOrchestrator = (() => {
     });
   }
 
+  // ─── سجل القرار لكل مشكلة ──────────────────────────
+  // لكل بلاغ في المدخل: ماذا قرّر المحرك ولماذا وبأي ثقة، وما الذي تحقّق منه.
+  //   FIXED_VERIFIED        إصلاح طُبّق، اجتاز بوابة التحقق، واختفى البلاغ عند إعادة التحليل
+  //   RESOLVED_BY_OTHER_FIX اختفى البلاغ بعد إصلاح مُتحقَّق منه لبلاغ آخر (لا يُنسب لإصلاح خاص به)
+  //   CHANGED_STILL_REPORTED تغيير طُبّق واجتاز البوابة، لكن المحلل ما زال يبلّغ عنه ⇒ لا يُعدّ مُصلحًا
+  //   LEFT_UNCHANGED        لم يُعدَّل: السبب من الـfixer/الحارس، أو لا مُصلح حتمي له
+  // البلاغ الذي بقي لا يُعدّ «مُصلحًا» أبدًا، مهما ادّعى أي محرك.
+  const _norm = s => String(s || '').replace(/\s+/g, '').toLowerCase();
+  function _sameOccurrence(a, b) {
+    const ea = _issueEvidence(a), eb = _issueEvidence(b);
+    if (ea && eb) return ea === eb;
+    return a.line === b.line && String(a.title || '') === String(b.title || '');
+  }
+  // سجل (رفض/إصلاح) يخص هذا البلاغ بالذات: العنوان أولًا (مع الدليل أو السطر)، ثم الاستراتيجية
+  // الصريحة مع السطر. لا مطابقة بالسطر وحده: سطر واحد قد يحمل بلاغات مختلفة (var وSQL معًا).
+  function _matchRecord(issue, rec, textOf) {
+    const ev = _norm(issue.ev).slice(0, 60);
+    const t = String(issue.title || '');
+    const evOk = x => ev && textOf(x) && _norm(textOf(x)).includes(ev);
+    const lineOk = x => x.line === issue.line;
+    return rec.find(x => t && String(x.title || '') === t && (evOk(x) || lineOk(x))) ||
+           rec.find(x => typeof issue.strategy === 'string' && x.strategy === issue.strategy && (evOk(x) || lineOk(x))) ||
+           // محرك على مستوى الملف (بلا عنوان): يكفي دليل نصّي محدد (≥ 20 حرفًا) داخل النص الذي عدّله
+           rec.find(x => !x.title && !x.strategy && ev.length >= 20 && evOk(x)) || null;
+  }
+  // إصلاحات المرحلة التي طُبّقت فعلًا: المُعلَنة، + ما اختفى نصّه الأصلي الكامل (before) من الكود
+  // المُتحقَّق منه — جملة على عدة أسطر قد يتغيّر سطرها الثاني فقط فلا يراها _appliedRepairsOnly.
+  function _appliedOf(v) {
+    const code = _norm(v.code);
+    const extra = (v.candidates || []).filter(r => r && r.before && String(r.before).length >= 20 &&
+                                                  !v.repairs.includes(r) && !code.includes(_norm(r.before)));
+    return v.repairs.concat(extra);
+  }
+  function _reasonConfidence(reason) {
+    if (/^WEAK_CRYPTO_(?:PASSWORD_HASH|CREDENTIAL_CONTEXT)/.test(reason)) return 0.95;
+    if (/^EVAL_EXECUTES_INPUT/.test(reason)) return 0.9;
+    return 0.5;
+  }
+  function _decisionFor(issue, rec) { return _matchRecord(issue, rec, x => x.ev); }
+  function _buildDecisions(issues, finalRemaining, verifiedLog, declined, aiNeeded, finalStale) {
+    const remaining = Array.isArray(finalRemaining) ? finalRemaining.slice() : [];
+    const used = new Set();
+    return (issues || []).map(issue => {
+      const idx = remaining.findIndex((r, k) => !used.has(k) && _sameOccurrence(issue, r));
+      const base = { line: issue.line, title: issue.title, type: issue.type,
+                     strategy: typeof issue.strategy === 'string' ? issue.strategy : null };
+      if (idx >= 0 || finalStale) {
+        if (idx >= 0) used.add(idx);
+        if (!finalStale) {
+          for (const v of verifiedLog) {
+            const r = _matchRecord(issue, _appliedOf(v), x => x.before);
+            if (r) {
+              return Object.assign(base, {
+                outcome: 'CHANGED_STILL_REPORTED',
+                reason: 'التغيير طُبّق واجتاز البوابة (' + String(r.reason || r.fix || r.strategy || 'repair') +
+                        ')، لكن المحلل ما زال يبلّغ عن البلاغ؛ لا يُعدّ مُصلحًا حتى يزول',
+                confidence: typeof r.confidence === 'number' ? r.confidence : null,
+                change: { before: r.before != null ? String(r.before) : null, after: r.after != null ? String(r.after) : null },
+                verification: v.engineId + ': ' + String(v.verify || 'verified') + ' — والبلاغ باقٍ عند إعادة التحليل',
+              });
+            }
+          }
+        }
+        const d = _decisionFor(issue, declined);
+        const a = d ? null : _decisionFor(issue, aiNeeded);
+        const reason = d ? d.reason : (a && a.reason ? String(a.reason) : 'NO_DETERMINISTIC_FIX — لا مُصلح حتمي مُثبت لهذا النوع');
+        return Object.assign(base, {
+          outcome: 'LEFT_UNCHANGED',
+          reason,
+          confidence: d && typeof d.confidence === 'number' ? d.confidence : _reasonConfidence(reason),
+          change: null,
+          verification: finalStale ? 'UNKNOWN — إعادة التحليل فشلت' : 'NOT_APPLIED — البلاغ ما زال قائمًا بعد إعادة التحليل',
+        });
+      }
+      for (const v of verifiedLog) {
+        const r = _matchRecord(issue, _appliedOf(v), x => x.before);
+        if (r) {
+          return Object.assign(base, {
+            outcome: 'FIXED_VERIFIED',
+            reason: String(r.reason || r.strategy || 'repair'),
+            confidence: typeof r.confidence === 'number' ? r.confidence : null,
+            change: { before: r.before != null ? String(r.before) : null, after: r.after != null ? String(r.after) : null },
+            verification: v.engineId + ': ' + String(v.verify || 'verified') + ' + البلاغ غائب عند إعادة التحليل',
+          });
+        }
+      }
+      return Object.assign(base, {
+        outcome: 'RESOLVED_BY_OTHER_FIX',
+        reason: 'اختفى بعد إصلاح مُتحقَّق منه لبلاغ آخر',
+        confidence: null, change: null,
+        verification: 'البلاغ غائب عند إعادة التحليل',
+      });
+    });
+  }
+
   function runFallbackChain(code, issues, fileName) {
     if (typeof code !== 'string' || !Array.isArray(issues) || !fileName) {
       return _makeResult(_INTERNAL, Decision.PENDING_REVIEW, Source.ORCHESTRATOR,
@@ -1020,6 +1116,8 @@ var RealityOrchestrator = (() => {
     const stages  = [];
     let allSafeRepairs = [];
     let allAiNeeded    = [];
+    let allDeclined    = [];
+    const verifiedLog  = [];          // [{engineId, verify, repairs}] لكل مرحلة نجحت
     let verifiedCode   = null;
     let verifyResult   = null;
     let base           = code;        // last VERIFIED code
@@ -1044,6 +1142,9 @@ var RealityOrchestrator = (() => {
       // Collect AI_REQUIRED even when no deterministic patch was produced.
       if (attempt && Array.isArray(attempt.aiNeeded)) {
         allAiNeeded = [...allAiNeeded, ...attempt.aiNeeded];
+      }
+      if (attempt && Array.isArray(attempt.declined)) {
+        allDeclined = [...allDeclined, ...attempt.declined];
       }
 
       if (!attempt || attempt.error || !attempt.hasChanges) {
@@ -1080,6 +1181,8 @@ var RealityOrchestrator = (() => {
           ? _appliedRepairsOnly(attempt.safeRepairs, base, acceptedCode)
           : attempt.safeRepairs;
         allSafeRepairs  = [...allSafeRepairs, ...claimed];
+        verifiedLog.push({ engineId: engine.id, verify: vr.reason, repairs: claimed,
+                           candidates: attempt.safeRepairs, code: acceptedCode });
         base            = acceptedCode;           // advance the verified base
         verifiedCode    = base;
         verifyResult    = vr;
@@ -1115,6 +1218,8 @@ var RealityOrchestrator = (() => {
       aiNeeded: unresolvedAi,
       verifiedCode, verifyResult,
       remainingIssues: finalRemaining,
+      // سجل القرار لكل بلاغ (انظر _buildDecisions)
+      decisions: _buildDecisions(issues, finalRemaining, verifiedLog, allDeclined, unresolvedAi, reanalysisFailed),
       // Claude is the fallback only when nothing at all verified.
       claudeFallback: verifiedCode === null,
       // [v0.4.1] true when the chain stopped because re-analysis failed.

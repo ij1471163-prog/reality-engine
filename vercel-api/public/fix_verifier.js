@@ -1376,6 +1376,7 @@ var FixVerifier = (() => {
     'REJECTED_CMD_FIX_UNPROVEN',
     'REJECTED_CRYPTO_FIX_UNPROVEN',
     'REJECTED_EVAL_FIX_UNPROVEN',
+    'REJECTED_UNBOUND_HELPER',          // نداءُ دالةٍ مساعدة لا تعريف لها (ReferenceError)
   ];
   // المطابقة ببادئة النص: البوابة تُلحق بالسبب تفصيلًا (اللغة، العدد، الأسماء).
   function isHarmfulRejection(reason) {
@@ -1437,20 +1438,256 @@ var FixVerifier = (() => {
   // ثقبُ تغطيةٍ مُعلَن، لا رفضٌ عامّ لإصلاحات سليمة.
   const PROOF = { NA: 'NA', PROVEN: 'PROVEN', UNPROVEN: 'UNPROVEN' };
 
-  function sinkFixProven(beforeCode, afterCode, sinkRx, remedyRx) {
+  // altProof (اختياري): إثبات مستقل لسطر مَصرِفٍ اختفى — يُعيد البوابة اشتقاقه من النصّين بنفسها
+  // (لا ثقة في المحرك). altProof(i, B, A): هل سطر before رقم i (يبدأ من 0) استُبدل في موضعه بالبديل
+  // المُثبت؟ السطر المُثبت بها لا يحتاج سطر علاج؛ والباقي يحتاجه كما كان.
+  // keptProof (اختياري): المَصرِف باقٍ بنصّه والبلاغ اختفى — محوٌ شكلي إلا أن يُثبت الصنفُ بنفسه أن قيمة
+  // المَصرِف صارت آمنة في موضعه (انظر xssKeptEscapedProof). بلا keptProof: UNPROVEN كما كان.
+  function sinkFixProven(beforeCode, afterCode, sinkRx, remedyRx, altProof, keptProof) {
     const B = String(beforeCode).split('\n');
     const A = String(afterCode).split('\n');
     const aSet = new Set(A.map(l => l.trim()));
     const bSet = new Set(B.map(l => l.trim()));
 
-    const sinksBefore = B.filter(l => sinkRx.test(l));
-    if (!sinksBefore.length) return PROOF.NA;   // لا مَصرِف لهذا الصنف ⇒ لا دعوى
+    const sinkIdx = [];
+    B.forEach((l, i) => { if (sinkRx.test(l)) sinkIdx.push(i); });
+    if (!sinkIdx.length) return PROOF.NA;        // لا مَصرِف لهذا الصنف ⇒ لا دعوى
 
-    const gone = sinksBefore.filter(l => !aSet.has(l.trim()));
-    if (!gone.length) return PROOF.UNPROVEN;    // المَصرِف باقٍ والبلاغ اختفى ⇒ محوٌ شكلي
+    const goneIdx = sinkIdx.filter(i => !aSet.has(B[i].trim()));
+    if (!goneIdx.length) {                       // المَصرِف باقٍ والبلاغ اختفى ⇒ محوٌ شكلي…
+      let kept = false;                          // …إلا بإثبات الصنف نفسه في موضع المَصرِف
+      if (typeof keptProof === 'function') { try { kept = keptProof(B, A, sinkIdx) === true; } catch (e) { kept = false; } }
+      return kept ? PROOF.PROVEN : PROOF.UNPROVEN;
+    }
 
+    let unproven = goneIdx.length;
+    if (typeof altProof === 'function') {
+      unproven = goneIdx.filter(i => { try { return altProof(i, B, A) !== true; } catch (e) { return true; } }).length;
+    }
     const remedies = A.filter(l => !bSet.has(l.trim()) && remedyRx.test(l)).length;
-    return remedies >= gone.length ? PROOF.PROVEN : PROOF.UNPROVEN;
+    return remedies >= unproven ? PROOF.PROVEN : PROOF.UNPROVEN;
+  }
+
+  // ─── [ALT-PROOF] بدائل مُثبتة يُعيد البوابة اشتقاقها بنفسها ──────────
+  // ثلاثة شروط معًا، وأيّ شك ⇒ لا إثبات (فيعود الحكم لقاعدة العلاج القديمة كما كانت):
+  //   1. AST لا regex: before وafter يُحلَّلان بـacorn؛ فشل التحليل أو غياب acorn ⇒ لا إثبات.
+  //   2. الموضع: السطر المتوقع في after في موضع السطر الأصلي، وجاراه (السابق واللاحق) مطابقان
+  //      حرفيًا — لا يكفي وجود سطر مطابق في مكان آخر من الملف (طُعم).
+  //   3. شروط تُبطل الإثبات على مستوى الملف كله (انظر كل إثبات).
+  // [مراجعة مستقلة] النسخة السابقة كانت تقبل: سطرًا طُعمًا في مكان آخر، و require في تعليق،
+  // وتوقيع دالة كلمة مرور على عدة أسطر، وeval مُعاد تعريفه/داخل with — كلها كانت تُرفض قبل الإضافة.
+  function _proofAcorn() {
+    try { if (typeof acorn !== 'undefined' && acorn && typeof acorn.parse === 'function') return acorn; } catch (e) { /* لا شيء */ }
+    try { if (typeof require === 'function') { const a = require('./acorn.min.js'); if (a && typeof a.parse === 'function') return a; } } catch (e) { /* لا شيء */ }
+    return null;
+  }
+  function _proofParse(A, code) {
+    const o = { ecmaVersion: 'latest', locations: true, allowReturnOutsideFunction: true, allowHashBang: true };
+    try { return A.parse(code, Object.assign({ sourceType: 'script' }, o)); }
+    catch (e) { try { return A.parse(code, Object.assign({ sourceType: 'module' }, o)); } catch (e2) { return null; } }
+  }
+  function _proofWalk(node, fn, parents) {
+    parents = parents || [];
+    if (!node || typeof node.type !== 'string') return;
+    fn(node, parents);
+    parents.push(node);
+    for (const k of Object.keys(node)) {
+      if (k === 'loc') continue;
+      const v = node[k];
+      if (Array.isArray(v)) { for (const c of v) if (c && typeof c.type === 'string') _proofWalk(c, fn, parents); }
+      else if (v && typeof v.type === 'string') _proofWalk(v, fn, parents);
+    }
+    parents.pop();
+  }
+  // الموضع: A[j] يساوي expected حرفيًا، وجارا السطر i في before هما جارا j في after.
+  // j = i + إزاحة ما أُضيف/حُذف قبله؛ نجرّب كل j يطابق expected ونشترط الجارين معًا.
+  function _inPlace(i, B, A, expected) {
+    const prevOk = j => (i === 0 ? j === 0 : A[j - 1] === B[i - 1]);
+    const nextOk = j => (i === B.length - 1 ? j === A.length - 1 : A[j + 1] === B[i + 1]);
+    for (let j = 0; j < A.length; j++) if (A[j] === expected && prevOk(j) && nextOk(j)) return true;
+    return false;
+  }
+  const _lineStart = (code, line) => { let p = 0; for (let k = 1; k < line; k++) p = code.indexOf('\n', p) + 1; return p; };
+
+  // eval مباشر على نص ثابت فيه تعبير واحد ⇒ (التعبير نفسه): eval المباشر يُنفَّذ في نطاق المنادي.
+  // يُبطله في الملف كله: أي ظهور لاسم eval ليس نداءً مباشرًا (تعريف، destructuring، إسناد،
+  // خاصية window.eval…) أو أي with — فـeval قد لا يكون الأصلي أو النطاق ديناميكي.
+  function evalInlineProof(beforeCode) {
+    const A = _proofAcorn();
+    if (!A) return null;
+    const code = String(beforeCode);
+    const ast = _proofParse(A, code);
+    if (!ast) return null;
+    let unsafe = false;
+    const calls = [];
+    _proofWalk(ast, (n, ps) => {
+      if (n.type === 'WithStatement') unsafe = true;
+      if (n.type === 'Identifier' && n.name === 'eval') {
+        const p = ps[ps.length - 1];
+        if (!(p && p.type === 'CallExpression' && p.callee === n)) unsafe = true;
+      }
+      if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'eval') calls.push(n);
+    });
+    if (unsafe) return null;
+    const byLine = new Map();
+    for (const c of calls) {
+      const ln = c.loc.start.line;
+      byLine.set(ln, byLine.has(ln) ? null : c);          // أكثر من eval في السطر ⇒ لا إثبات
+    }
+    return (i, B, Aft) => {
+      const c = byLine.get(i + 1);
+      if (!c || c.loc.end.line !== i + 1 || c.arguments.length !== 1) return false;
+      const lit = c.arguments[0];
+      const isStatic = (lit.type === 'Literal' && typeof lit.value === 'string') ||
+                       (lit.type === 'TemplateLiteral' && lit.expressions.length === 0);
+      if (!isStatic) return false;
+      const content = lit.type === 'Literal' ? lit.value : lit.quasis[0].value.cooked;
+      let prog;
+      try { prog = A.parse(content, { ecmaVersion: 'latest', sourceType: 'script' }); } catch (e) { return false; }
+      if (prog.body.length !== 1 || prog.body[0].type !== 'ExpressionStatement') return false;
+      let ctxWord = false;
+      _proofWalk(prog, n => {
+        if (n.type === 'Identifier' && /^(?:await|yield|let|async|eval|arguments)$/.test(n.name)) ctxWord = true;
+        if (n.type === 'MetaProperty' || n.type === 'Super') ctxWord = true;
+      });
+      if (ctxWord) return false;
+      const expr = prog.body[0].expression;
+      const ls = _lineStart(code, i + 1);
+      const line = B[i];
+      const expected = line.slice(0, c.start - ls) + '(' + content.slice(expr.start, expr.end) + ')' + line.slice(c.end - ls);
+      if (!_inPlace(i, B, Aft, expected)) return false;
+      // after نفسه يُحلَّل ولا eval باقٍ في ذلك السطر
+      const aft = _proofParse(A, Aft.join('\n'));
+      return !!aft;
+    };
+  }
+
+  // md5/sha1 على عشوائية Math.random ⇒ randomBytes بنفس الطول والصيغة: المخرج عشوائي في الحالتين.
+  // يُشترط: المستقبِل مربوط مرة واحدة في الملف بـrequire('crypto')/import من 'crypto' ولا يُعاد إسناده،
+  // وMath غير مُعاد تعريفه، والمعامل بنيةٌ من Math.random/Date.now/String/toString/+/ثوابت فقط وفيه
+  // Math.random، والنداء ليس داخل دالة/طريقة/متغير يحمل اسمًا أو معاملًا يوحي بكلمة مرور.
+  function _proofCredentialAncestors(ps) {
+    for (let k = ps.length - 1; k >= 0; k--) {
+      const n = ps[k];
+      if (!/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type)) continue;
+      const names = [];
+      if (n.id && n.id.name) names.push(n.id.name);
+      const p = ps[k - 1];
+      if (p) {
+        if (p.type === 'VariableDeclarator' && p.id && p.id.name) names.push(p.id.name);
+        if ((p.type === 'Property' || p.type === 'MethodDefinition' || p.type === 'PropertyDefinition') && p.key) names.push(p.key.name || p.key.value || '');
+        if (p.type === 'AssignmentExpression') {
+          const l = p.left;
+          names.push(l.type === 'Identifier' ? l.name : (l.property && (l.property.name || l.property.value)) || '');
+        }
+      }
+      const params = [];
+      const pat = q => { if (!q) return; if (q.type === 'Identifier') params.push(q.name);
+        else if (q.type === 'AssignmentPattern') pat(q.left); else if (q.type === 'RestElement') pat(q.argument);
+        else if (q.type === 'ObjectPattern') q.properties.forEach(pp => pat(pp.value || pp.argument));
+        else if (q.type === 'ArrayPattern') q.elements.forEach(pat); };
+      n.params.forEach(pat);
+      if (names.concat(params).some(x => CRED_WORD_RX.test(String(x)))) return true;
+    }
+    return false;
+  }
+  function _proofRandomArg(node) {
+    let hasRandom = false, ok = true;
+    const isMath = (o, prop) => o && o.type === 'MemberExpression' && !o.computed && o.object.type === 'Identifier' &&
+                                o.object.name === (prop === 'now' ? 'Date' : 'Math') && o.property.name === prop;
+    const visit = n => {
+      if (!ok || !n) return;
+      if (n.type === 'Literal' && (typeof n.value === 'string' || typeof n.value === 'number')) return;
+      if (n.type === 'TemplateLiteral') { n.expressions.forEach(visit); return; }
+      if (n.type === 'BinaryExpression' && n.operator === '+') { visit(n.left); visit(n.right); return; }
+      if (n.type === 'CallExpression') {
+        const c = n.callee;
+        if (isMath(c, 'random') && !n.arguments.length) { hasRandom = true; return; }
+        if (isMath(c, 'now') && !n.arguments.length) return;
+        if (c.type === 'Identifier' && c.name === 'String' && n.arguments.length === 1) { visit(n.arguments[0]); return; }
+        if (c.type === 'MemberExpression' && !c.computed && c.property.name === 'toString' &&
+            n.arguments.every(x => x.type === 'Literal' && typeof x.value === 'number')) { visit(c.object); return; }
+        if (c.type === 'MemberExpression' && !c.computed && c.property.name === 'getTime' && !n.arguments.length &&
+            c.object.type === 'NewExpression' && c.object.callee.type === 'Identifier' && c.object.callee.name === 'Date' &&
+            !c.object.arguments.length) return;
+      }
+      ok = false;
+    };
+    visit(node);
+    return ok && hasRandom;
+  }
+  function randomTokenProof(beforeCode) {
+    const A = _proofAcorn();
+    if (!A) return null;
+    const code = String(beforeCode);
+    const ast = _proofParse(A, code);
+    if (!ast) return null;
+    // ربط الأسماء في الملف كله
+    const binds = new Map();     // name → [kind]
+    const addBind = (name, kind) => { if (!binds.has(name)) binds.set(name, []); binds.get(name).push(kind); };
+    let mathTouched = false;
+    _proofWalk(ast, (n, ps) => {
+      const pat = (q, kind) => { if (!q) return; if (q.type === 'Identifier') addBind(q.name, kind);
+        else if (q.type === 'AssignmentPattern') pat(q.left, kind); else if (q.type === 'RestElement') pat(q.argument, kind);
+        else if (q.type === 'ObjectPattern') q.properties.forEach(pp => pat(pp.value || pp.argument, kind));
+        else if (q.type === 'ArrayPattern') q.elements.forEach(e => pat(e, kind)); };
+      if (n.type === 'VariableDeclarator') {
+        const init = n.init;
+        const isReq = init && init.type === 'CallExpression' && init.callee.type === 'Identifier' && init.callee.name === 'require' &&
+                      init.arguments.length === 1 && init.arguments[0].type === 'Literal' && /^(?:node:)?crypto$/.test(String(init.arguments[0].value));
+        pat(n.id, n.id.type === 'Identifier' && isReq ? 'crypto' : 'other');
+      }
+      if (/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type)) {
+        if (n.id) addBind(n.id.name, 'other');
+        n.params.forEach(q => pat(q, 'other'));
+      }
+      if (n.type === 'ClassDeclaration' && n.id) addBind(n.id.name, 'other');
+      if (n.type === 'CatchClause' && n.param) pat(n.param, 'other');
+      if (n.type === 'ImportDeclaration') {
+        const isCrypto = /^(?:node:)?crypto$/.test(String(n.source.value));
+        n.specifiers.forEach(sp => addBind(sp.local.name,
+          isCrypto && (sp.type === 'ImportDefaultSpecifier' || sp.type === 'ImportNamespaceSpecifier') ? 'crypto' : 'other'));
+      }
+      if (n.type === 'AssignmentExpression' || n.type === 'UpdateExpression') {
+        const t = n.type === 'AssignmentExpression' ? n.left : n.argument;
+        if (t.type === 'Identifier') addBind(t.name, 'assign');
+        if (t.type === 'MemberExpression' && t.object.type === 'Identifier' && t.object.name === 'Math') mathTouched = true;
+      }
+      if (n.type === 'WithStatement') mathTouched = true;     // with يجعل الأسماء ديناميكية
+    });
+    if (mathTouched || binds.has('Math') || binds.has('Date') || binds.has('String')) return null;
+    const sinks = new Map();      // line → {call, recv, alg, enc, q}
+    _proofWalk(ast, (n, ps) => {
+      // R.createHash(alg).update(arg).digest(enc)
+      if (n.type !== 'CallExpression' || n.callee.type !== 'MemberExpression' || n.callee.computed || n.callee.property.name !== 'digest') return;
+      const up = n.callee.object;
+      if (!up || up.type !== 'CallExpression' || up.callee.type !== 'MemberExpression' || up.callee.computed || up.callee.property.name !== 'update' || up.arguments.length !== 1) return;
+      const ch = up.callee.object;
+      if (!ch || ch.type !== 'CallExpression' || ch.callee.type !== 'MemberExpression' || ch.callee.computed || ch.callee.property.name !== 'createHash' ||
+          ch.callee.object.type !== 'Identifier' || ch.arguments.length !== 1 || ch.arguments[0].type !== 'Literal') return;
+      const alg = String(ch.arguments[0].value).toLowerCase();
+      if (alg !== 'md5' && alg !== 'sha1') return;
+      if (n.arguments.length !== 1 || n.arguments[0].type !== 'Literal' || !/^(?:hex|base64)$/.test(String(n.arguments[0].value))) return;
+      const recv = ch.callee.object.name;
+      const b = binds.get(recv) || [];
+      if (b.length !== 1 || b[0] !== 'crypto') return;
+      if (!_proofRandomArg(up.arguments[0])) return;
+      if (_proofCredentialAncestors(ps)) return;
+      const ln = n.loc.start.line;
+      if (n.loc.end.line !== ln) return;
+      const encLit = n.arguments[0];
+      sinks.set(ln, sinks.has(ln) ? null : { n, recv, alg, enc: String(encLit.value), q: code.charAt(encLit.start) });
+    });
+    return (i, B, Aft) => {
+      const s = sinks.get(i + 1);
+      if (!s) return false;
+      if (CRED_WORD_RX.test(B[i])) return false;
+      const ls = _lineStart(code, i + 1);
+      const bytes = s.alg === 'md5' ? 16 : 20;
+      const repl = s.recv + '.randomBytes(' + bytes + ').toString(' + s.q + s.enc + s.q + ')';
+      const expected = B[i].slice(0, s.n.start - ls) + repl + B[i].slice(s.n.end - ls);
+      return _inPlace(i, B, Aft, expected) && !!_proofParse(A, Aft.join('\n'));
+    };
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -1526,6 +1763,79 @@ var FixVerifier = (() => {
     return false;
   }
 
+  // ─── [XSS-KEPT] مَصرِف innerHTML باقٍ بنصّه وقيمته (في سطر تالٍ) صارت مُهرَّبة ─────────────
+  // knowledge_base.js لا يُبلّغ عن إسناد innerHTML/outerHTML حين يُثبت KnowledgeBase.escapedTextSink
+  // (AST: دالة التهريب المعيارية بنصّها، غير مُعاد ربطها، وكل نداء في سياق نص HTML). فيختفي البلاغ
+  // وسطرُ المَصرِف «‎el.innerHTML =‎» باقٍ بحرفه، وكانت البوابة تعدّ ذلك محوًا شكليًّا فترفض إصلاحًا سليمًا.
+  // الإثبات هنا يُعاد اشتقاقه من النصّين، ولكل سطر مَصرِفٍ مُبلَّغ عنه في before:
+  //   • يُطابَق في after بنصّه وبالسطر السابق له، ووحيدًا (لا طُعم/تكرار) — وإلا لا إثبات؛
+  //   • إن بقي مُبلَّغًا عنه فهو خارج الدعوى؛ وإن اختفى بلاغه فيلزم أن يكون إسنادَ innerHTML/outerHTML
+  //     مُثبَتَ التهريب في after وغير مُثبَت في before؛
+  //   • وعدد ما أُثبت لا يقلّ عن عدد بلاغات XSS التي نقصت (بلاغٌ نقص في سطر آخر لا يغطّيه هذا الإثبات).
+  // الحدّ المُعلَن: الإثبات نفسه هو استثناء المحلل؛ خطأٌ فيه يصيب الاثنين معًا. لذلك هو ضيّق (الدالة
+  // المعيارية وحدها) ومُختبَر سلبيًّا، ومُثبَت سلوكيًّا في jsdom. بلا KnowledgeBase محمَّلًا: لا إثبات.
+  function xssKeptEscapedProof(ctx) {
+    let KB = null;
+    try { KB = (typeof KnowledgeBase !== 'undefined' && KnowledgeBase) ? KnowledgeBase : null; } catch (e) { KB = null; }
+    if (!KB) { try { if (typeof require === 'function') KB = require('./knowledge_base.js'); } catch (e) { KB = null; } }
+    if (!KB || typeof KB.escapedTextSink !== 'function') return false;
+    const ASSIGN = /\.(?:inner|outer)HTML\s*=(?!=)/;
+    const B = ctx.B, A = ctx.A;
+    let newly = 0;
+    for (const i of ctx.sinkIdx) {
+      if (!ctx.reportedBefore.has(i + 1)) continue;
+      const js = [];
+      for (let j = 0; j < A.length; j++) {
+        if (A[j] === B[i] && (i === 0 ? j === 0 : (j > 0 && A[j - 1] === B[i - 1]))) js.push(j);
+      }
+      if (js.length !== 1) return false;
+      const j = js[0];
+      if (ctx.reportedAfter.has(j + 1)) continue;
+      if (!ASSIGN.test(B[i])) return false;
+      if (KB.escapedTextSink(ctx.after, j + 1) !== true) return false;
+      if (KB.escapedTextSink(ctx.before, i + 1) === true) return false;
+      newly++;
+    }
+    return newly > 0 && newly >= ctx.need;
+  }
+
+  // ─── [UNBOUND-HELPER] نداءُ دالةٍ مساعدة بلا تعريفها ─────────────────────────────
+  // المقيس: تجزئةُ الإنقاذ (salvageVerifiedSubset) تقبل الـhunks واحدًا واحدًا، فقبلت hunk
+  // ‎+ __escapeHTML(players[0].name) +‎ وأسقطت hunk تعريف الدالة (رُفض لسببٍ آخر)، فخرج كودٌ
+  // يرمي ReferenceError عند أول تشغيل — والمحلل لا يرى ذلك، فالبوابة قبلته.
+  // الحارس: نداءٌ جديد لمُعرِّفٍ يبدأ بـ‎__‎ (اصطلاح الدوال التي تحقنها المحركات) لم يكن في before،
+  // ولا تعريف له في after (function/var/let/const/class/وسيط/import) ⇒ رفض ضارّ.
+  // الحدّ المُعلَن: مقصور على اصطلاح ‎__name‎ — نداءٌ جديد لاسمٍ عادي غير معرَّف لا يلتقطه هذا الحارس
+  // (التمييز بينه وبين العامّ المشروع مثل fetch/require يحتاج بيئة التشغيل). JS وحدها، وacorn لازم.
+  function unboundInjectedHelpers(beforeCode, afterCode) {
+    const A = _proofAcorn();
+    if (!A) return [];
+    const ast = _proofParse(A, String(afterCode));
+    if (!ast) return [];
+    const called = new Set(), declared = new Set();
+    const addPat = p => {
+      if (!p) return;
+      if (p.type === 'Identifier') declared.add(p.name);
+      else if (p.type === 'AssignmentPattern') addPat(p.left);
+      else if (p.type === 'RestElement') addPat(p.argument);
+      else if (p.type === 'ArrayPattern') p.elements.forEach(addPat);
+      else if (p.type === 'ObjectPattern') p.properties.forEach(q => addPat(q.type === 'Property' ? q.value : q.argument));
+    };
+    _proofWalk(ast, n => {
+      if ((n.type === 'CallExpression' || n.type === 'NewExpression') && n.callee && n.callee.type === 'Identifier' &&
+          /^__[A-Za-z]\w*$/.test(n.callee.name)) called.add(n.callee.name);
+      if ((n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression' || n.type === 'ClassDeclaration' ||
+           n.type === 'ClassExpression') && n.id) declared.add(n.id.name);
+      if (n.type === 'VariableDeclarator') addPat(n.id);
+      if (n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression' || n.type === 'ArrowFunctionExpression') n.params.forEach(addPat);
+      if (n.type === 'CatchClause') addPat(n.param);
+      if (n.type === 'ImportSpecifier' || n.type === 'ImportDefaultSpecifier' || n.type === 'ImportNamespaceSpecifier') addPat(n.local);
+    });
+    const esc = x => x.replace(/[$]/g, '\\$');
+    return [...called].filter(name => !declared.has(name) &&
+      !new RegExp('(^|[^\\w$])' + esc(name) + '\\s*\\(').test(String(beforeCode)));
+  }
+
   // المصارف والعلاجات — قيست على مُدخلات حقيقية لكل صنف
   const SINK_CLASSES = {
     xss: {
@@ -1533,6 +1843,7 @@ var FixVerifier = (() => {
       sink: /innerHTML|outerHTML|document\.write\s*\(|\.html\s*\(|insertAdjacentHTML|echo\s+\$_(GET|POST|REQUEST)|<\?=/i,
       remedy: /\btextContent\b|\binnerText\b|htmlspecialchars\s*\(|htmlentities\s*\(|escapeHtml\s*\(|DOMPurify\s*\.\s*sanitize|\bsanitize\s*\(|createTextNode\s*\(|setAttribute\s*\(|encodeURIComponent\s*\(/i,
       reason: "REJECTED_XSS_FIX_UNPROVEN — نقص بلاغ XSS لكن الـcandidate لا يُدخل تهريبًا ولا مَصرِفًا آمنًا في موضع المصرف الذي اختفى",
+      keptProof: xssKeptEscapedProof,
     },
     cmd: {
       // ‎\bcmd[_ ]?injection\b‎ يلتقط وسمَ محرّكات التتبّع نفسها
@@ -1555,11 +1866,13 @@ var FixVerifier = (() => {
       issue: /\bmd5\b|\bsha1\b|sha-1|cwe-327(?!\d)|تشفير ضعيف|weak.?(?:crypto|hash)/i,
       // تبديلُ الخوارزمية لا يُثبت شيئًا على تهشيرِ اعتماد — انظر [CRED-HASH]
       credentialNeedsKdf: true,
+      altProof: randomTokenProof,     // لا يُستعمل في سياق اعتماد (انظر _cred)
       sink: /createHash\s*\(\s*['"](?:md5|sha1)['"]|\bmd5\s*\(|hashlib\s*\.\s*(?:md5|sha1)\s*\(|MessageDigest\s*\.\s*getInstance\s*\(\s*"(?:MD5|SHA-?1)"|\bsha1\s*\(/i,
       remedy: /sha(?:256|384|512)|sha-(?:256|384|512)|\bbcrypt\b|\bscrypt\b|\bargon2\b|pbkdf2/i,
       reason: "REJECTED_CRYPTO_FIX_UNPROVEN — نقص بلاغ التشفير الضعيف لكن الـcandidate لا يُدخل خوارزمية أقوى ولا دالة اشتقاق مفتاح",
     },
     evalx: {
+      altProof: evalInlineProof,
       issue: /\beval\b|code injection|cwe-94(?!\d)/i,
       sink: /\beval\s*\(|\bnew\s+Function\s*\(/i,
       remedy: /JSON\s*\.\s*parse\s*\(|json\s*\.\s*loads\s*\(|ast\s*\.\s*literal_eval\s*\(/i,
@@ -1840,6 +2153,17 @@ var FixVerifier = (() => {
                syntaxStatus: "unknown", language: syn.language, afterIssues: null, quick };
     }
 
+    // [UNBOUND-HELPER] نداءٌ جديد لدالة مساعدة محقونة بلا تعريفها ⇒ ReferenceError مؤكَّد
+    if (syn.language === "javascript") {
+      const unbound = unboundInjectedHelpers(beforeCode, afterCode);
+      if (unbound.length) {
+        return { accepted: false,
+                 reason: "REJECTED_UNBOUND_HELPER: " + unbound.join(", ") +
+                   " — نداءٌ جديد لدالةٍ لا تعريف لها في الملف (ReferenceError عند التشغيل)",
+                 syntaxStatus, language: syn.language, afterIssues: null, quick };
+      }
+    }
+
     // (3) التحقق العميق
     const deep = verify(beforeCode, afterCode, fileName, analyzeFunc);
 
@@ -1979,7 +2303,18 @@ var FixVerifier = (() => {
           id,
           count: code => countOf(code, k.issue),
           lines: () => linesOf(k.issue),
-          prove: () => sinkFixProven(beforeCode, afterCode, k.sink, _cred().rx),
+          // الإثبات البديل لا يُستعمل في سياق اعتماد: هناك KDF وحده يُقبل كما كان
+          prove: () => sinkFixProven(beforeCode, afterCode, k.sink, _cred().rx,
+            typeof k.altProof === 'function' && !_cred().hit ? k.altProof(beforeCode) : undefined,
+            typeof k.keptProof === 'function'
+              ? (B, A, sinkIdx) => k.keptProof({
+                  B, A, sinkIdx, before: beforeCode, after: afterCode,
+                  reportedBefore: linesOf(k.issue),
+                  reportedAfter: new Set(matchingIssues(afterCode, k.issue)
+                    .map(i => Number(i && i.line)).filter(n => Number.isFinite(n) && n > 0)),
+                  need: countOf(beforeCode, k.issue) - countOf(afterCode, k.issue),
+                })
+              : undefined),
           get reason() {
             return _cred().hit
               ? k.reason + " [تهشيرُ اعتماد: تبديلُ الخوارزمية يُبطل كلمات"

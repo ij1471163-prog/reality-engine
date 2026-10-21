@@ -209,12 +209,14 @@ const WC_KEEP = {
   'Java':      ['MessageDigest md = MessageDigest.getInstance("MD5");\n', 'A.java'],
   'C#':        ['var h = MD5.Create();\n', 'a.cs'],
 };
+// كان: الاستدعاء الحقيقي يُعاد كتابته إلى SHA256. تغيّر عمدًا: لا تغيير للخوارزمية لمجرد
+// اختلافها (يغيّر المخرج ويكسر مطابقة القيم المخزنة). ما يحرسه هذا القسم باقٍ: حارس الـliteral
+// لا يرفض استدعاءً حقيقيًا (لا TARGET_IN_LITERAL)، والقرار مُسجَّل بسبب الغرض.
 for (const [name, [code, file]] of Object.entries(WC_KEEP)) {
-  test(`WEAK_CRYPTO real call (${name}) → fixed, byte-identical to fixWeakCrypto`, () => {
-    const expected = ctx.fixWeakCrypto(code, { line: 1 }, code.split('\n'), null, file).fixed;
+  test(`WEAK_CRYPTO real call (${name}) → not a literal rejection; left with a purpose-based reason`, () => {
     const out = wc(code, file);
-    assert.strictEqual(out.repaired, expected);
-    assert.notStrictEqual(out.repaired, code);
-    assert.strictEqual(out.rejected.filter(r => r.strategy === 'WEAK_CRYPTO').length, 0);
+    assert.strictEqual(out.repaired, code);
+    assert.strictEqual(out.rejected.filter(r => r.strategy === 'WEAK_CRYPTO').length, 0, 'لا رفض من أي حارس لاستدعاء حقيقي');
+    assert.ok(out.declined.some(x => /^WEAK_CRYPTO_OUTPUT_CHANGES/.test(x.reason)), JSON.stringify(out.declined));
   });
 }

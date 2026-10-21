@@ -73,22 +73,12 @@ function emergencyFix(code, fileName) {
       repairs.push({ fix: 'os.system → subprocess' });
     }
 
-    // eval → ast.literal_eval
-    if (/\beval\s*\(/.test(fixed)) {
-      fixed = fixed.replace(/\beval\s*\(([^)]+)\)/g, 'ast.literal_eval($1)');
-      if (!fixed.includes('import ast')) fixed = 'import ast\n' + fixed;
-      repairs.push({ fix: 'eval → ast.literal_eval' });
-    }
-
-    // == None → is None
-    fixed = fixed.replace(/==\s*None/g, 'is None').replace(/!=\s*None/g, 'is not None');
-
-    // MD5 → SHA256
-    if (/hashlib\.(md5|sha1)\s*\(/.test(fixed)) {
-      fixed = fixed.replace(/hashlib\.md5\s*\(/g, 'hashlib.sha256(')
-                   .replace(/hashlib\.sha1\s*\(/g, 'hashlib.sha256(');
-      repairs.push({ fix: 'MD5 → SHA256' });
-    }
+    // [NO-BLIND] أُوقفت هنا ثلاثة تحويلات عامة تغيّر السلوك بلا دليل، والبوابة كانت تقبل اثنين منها (مقيس):
+    //   eval → ast.literal_eval (+import ast): يكسر كل eval على تعبير غير حرفي
+    //   == None → is None: يكسر من يعرّف __eq__ عمدًا (SQLAlchemy: filter(col == None) يصير False)
+    //   md5/sha1 → sha256: يغيّر القيمة الناتجة، وكلمات المرور تحتاج KDF وترحيلًا لا تبديلًا
+    // القرار في هذه الأصناف مبنيّ على الدليل في repair_engine.js (fixEval/fixNoneCompare/fixWeakCrypto)،
+    // وهو يعمل قبل هذا المحرك في المسار نفسه.
 
     // Hardcoded secrets → env
     fixed = fixed.replace(
@@ -314,24 +304,9 @@ function emergencyFix(code, fileName) {
       fixed = dbLines.join('\n');
     }
 
-    // XSS في res.send
-    fixed = fixed.replace(
-      /res\.send\s*\(([^)]*\+[^)]*)\)/g,
-      (m, inner) => {
-        // استخرج المتغيرات - تجاهل HTML tags والـ strings
-        const noStrings = inner.trim().replace(/['"\`][^'"\`]*['"\`]/g, '');
-        const noHTML = noStrings.replace(/<\/?\w+>/g, '');
-        const vars = noHTML.match(/\b([a-zA-Z_]\w*)\b/g) || [];
-        const safeVars = vars.filter(v => 
-          !['div','span','h1','h2','p','a','br','html','body','true','false'].includes(v) &&
-          v.length > 1
-        );
-        if (safeVars.length > 0) {
-          return `res.json({ message: String(${safeVars[safeVars.length-1]}).replace(/[<>]/g, '') })`;
-        }
-        return `res.json({ message: 'OK' })`;
-      }
-    );
+    // [NO-BLIND] XSS في res.send: أُوقف التحويل إلى res.json({ message: String(v)… }). كان يغيّر نوع
+    // الاستجابة وشكلها، ويختار «متغيرًا» من النص فيُنتج مرجعًا غير معرّف (req.query.name ⇒ String(name)
+    // ⇒ ReferenceError وقت التشغيل)، و.replace(/[<>]/g,'') ليس تهريبًا. والبوابة كانت تقبله (مقيس).
 
     // JS db.query با ? بدون array
     fixed = fixed.replace(
@@ -350,14 +325,8 @@ function emergencyFix(code, fileName) {
       }
     );
 
-    // eval → JSON.parse أو comment
-    if (/\beval\s*\(/.test(fixed)) {
-      fixed = fixed.replace(/\beval\s*\(([^)]+)\)/g, (m, arg) => {
-        if (/json|data|response|result/i.test(arg)) return `JSON.parse(${arg})`;
-        return `/* SECURITY: eval removed - validate ${arg.trim()} */`;
-      });
-      repairs.push({ fix: 'eval removed' });
-    }
+    // [NO-BLIND] eval → JSON.parse (حين «يبدو» الاسم JSON) أو حذف بتعليق: أُوقف. الاسم ليس دليلًا،
+    // وJSON.parse أشد من eval (مقيس: eval(data) لـ"2 + 2" ⇒ 4، وبعده SyntaxError) — والبوابة كانت تقبله.
 
     // JWT hardcoded → process.env
     fixed = fixed.replace(
@@ -379,35 +348,16 @@ function emergencyFix(code, fileName) {
       }
     );
 
-    // MD5 → SHA256 في JS
-    fixed = fixed.replace(
-      /createHash\s*\(\s*['"]md5['"]\s*\)/gi,
-      'createHash("sha256")'
-    );
-    fixed = fixed.replace(
-      /createHash\s*\(\s*['"]sha1['"]\s*\)/gi,
-      'createHash("sha256")'
-    );
-
-    // XSS innerHTML → textContent
-    fixed = fixed.replace(/\.innerHTML\s*=/g, '.textContent =');
-
-    // HTTP → HTTPS
-    fixed = fixed.replace(/["']http:\/\//g, '"https://');
-
-    // var → let
-    fixed = fixed.replace(/\bvar\b/g, 'let');
-
-    // == → ===
-    fixed = fixed.replace(/([^=!<>])==([^=])/g, '$1===$2');
-
-    // TypeScript any → unknown
-    if (ext === 'ts') {
-      fixed = fixed.replace(/:\s*any\b/g, (m, _, str) => {
-        // استنتج النوع من السياق
-        return ': unknown';
-      });
-    }
+    // [NO-BLIND] أُوقفت هنا ستة تحويلات عامة على الملف كله. كلٌّ منها يغيّر سلوكًا صحيحًا في حالات
+    // مقيسة، والبوابة كانت تقبل أغلبها لأنها لا ترى إلا النحو وعدد البلاغات:
+    //   md5/sha1 → sha256          يغيّر القيمة الناتجة (ETag/مفتاح كاش محفوظ يفقد مطابقته)
+    //   innerHTML → textContent    يعرض الوسوم المقصودة نصًّا حرفيًا
+    //   "http:// → "https://       يكسر localhost، ويُفسد الاقتباس في '...' (‎'http://x' ⇒ "https://x'‎)
+    //   var → let                  يكسر النطاق: if (x) { var y = 1 } return y ⇒ ReferenceError (مقيس، مقبول من البوابة)
+    //   == → ===                   x == null (null أو undefined) ⇒ x === null يغيّر الناتج (مقيس، مقبول من البوابة)
+    //   : any → : unknown          يكسر فحص الأنواع (x.length على unknown خطأ)
+    // كل صنف منها له مُصلِح مبنيّ على الدليل في repair_engine.js (fixWeakCrypto/fixXSS+XSSFixer/fixHTTP/
+    // fixVar بالـAST/fixEquality بحراسه)، ويعمل قبل هذا المحرك في المسار نفسه.
   }
 
   // ─── PHP ──────────────────────────────────────────
@@ -430,9 +380,7 @@ function emergencyFix(code, fileName) {
       fixed = lines.join('\n');
     }
 
-    // MD5 → sha256
-    fixed = fixed.replace(/\bmd5\s*\(/gi, 'hash("sha256", ');
-    fixed = fixed.replace(/\bsha1\s*\(/gi, 'hash("sha256", ');
+    // [NO-BLIND] md5/sha1 → hash("sha256", …): أُوقف — يغيّر القيمة الناتجة، وكلمات المرور تحتاج KDF وترحيلًا.
 
     // echo user input → htmlspecialchars
     fixed = fixed.replace(
@@ -444,9 +392,7 @@ function emergencyFix(code, fileName) {
   // ─── C# / Unity ───────────────────────────────────
 
   if (ext === 'cs') {
-    // MD5 → SHA256
-    fixed = fixed.replace(/\bMD5\.Create\s*\(\s*\)/g, 'SHA256.Create()');
-    fixed = fixed.replace(/\bnew MD5CryptoServiceProvider\s*\(\s*\)/g, 'new SHA256Managed()');
+    // [NO-BLIND] MD5 → SHA256: أُوقف (يغيّر القيمة الناتجة؛ كلمات المرور تحتاج KDF وترحيلًا).
 
     // Hardcoded secrets
     fixed = fixed.replace(
@@ -458,11 +404,7 @@ function emergencyFix(code, fileName) {
   // ─── Java / Kotlin ────────────────────────────────
 
   if (ext === 'java' || ext === 'kt') {
-    // MD5 → SHA-256
-    fixed = fixed.replace(
-      /MessageDigest\.getInstance\s*\(\s*["']MD5["']\s*\)/g,
-      'MessageDigest.getInstance("SHA-256")'
-    );
+    // [NO-BLIND] MD5 → SHA-256: أُوقف (يغيّر القيمة الناتجة؛ كلمات المرور تحتاج KDF وترحيلًا).
   }
 
   // cleanup نهائي - LIKE '%?%' → LIKE ?

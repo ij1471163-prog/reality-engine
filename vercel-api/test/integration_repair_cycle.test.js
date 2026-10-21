@@ -123,9 +123,14 @@ test('اكتشاف ← إصلاح: كل ملف فيه بلاغ يصل إلى م�
   const ctx = loadCtx();
   const files = { 'a.js': VULN_JS, 'b.py': VULN_PY };
   const { report, out } = runPipe(ctx, files);
+  // القرار المُسجَّل قد يكون قبولًا أو رفضًا أو «يحتاج مراجعة» بسبب (aiNeeded/deferred). كانت b.py
+  // تُقبل عبر تبديل md5 → sha256 في emergency_fixes، وأُوقف ذلك التبديل الأعمى عمدًا؛ فقرارها الآن
+  // WEAK_CRYPTO_INPUT_FROM_CALLER في aiNeeded — قرارٌ مُسجَّل بسببه، لا إسقاط صامت.
   for (const fn of Object.keys(files)) {
     const touched = (report.accepted || []).some(a => a.file === fn) ||
-                    (report.rejected || []).some(r => r.file === fn);
+                    (report.rejected || []).some(r => r.file === fn) ||
+                    (report.deferred || []).some(r => r.file === fn) ||
+                    (report.aiNeeded || []).some(r => r.file === fn && String(r.reason || '').length > 0);
     assert.ok(touched, `${fn} لم يصل إلى أي محرك ولا سُجِّل له قرار`);
   }
   assert.ok(findings(ctx, out['a.js'], 'a.js') < findings(ctx, VULN_JS, 'a.js'),
@@ -249,12 +254,14 @@ test('التسجيل: totalFixed = مجموع ما أزالته البوابة،
   }
 });
 
+// [P4-3] كانت العيّنة md5 في بايثون يُصلحها emergency_fixes بتبديلٍ إلى sha256 — أُوقف ذلك التبديل
+// الأعمى عمدًا (يغيّر القيمة الناتجة). الاختبار يقيس نسبة الادّعاء لا md5، فالعيّنة الآن سرّ JWT
+// يُصلحه محرك معزول (SmartRepair) وتقبله البوابة بإثبات السرّ.
+const JWT_A = 'const jwt = require("jsonwebtoken");\nfunction t(u) {\n  return jwt.sign({ id: u }, "my-hardcoded-key-123");\n}\nmodule.exports = t;\n';
+const JWT_B = JWT_A.replace('id: u', 'uid: u');
 test('[P4-3] ادّعاء المحرك لا يُضاعَف: مجموعٌ على ملفين لا يُنسب لكل ملف', () => {
   const ctx = loadCtx();
-  const { report } = runPipe(ctx, {
-    'a.py': 'import hashlib\ndef f(x):\n    return hashlib.md5(x).hexdigest()\n',
-    'b.py': 'import hashlib\ndef g(y):\n    return hashlib.md5(y).hexdigest()\n',
-  });
+  const { report } = runPipe(ctx, { 'a.js': JWT_A, 'b.js': JWT_B });
   const iso = (report.accepted || []).filter(a => /Emergency|SmartRepair|Fallback/.test(a.source));
   assert.ok(iso.length >= 2, 'محرك معزول لم يصلح ملفين ⇒ تغطية خاوية: ' +
     JSON.stringify((report.accepted || []).map(a => a.file + '/' + a.source)));
@@ -267,7 +274,7 @@ test('[P4-3] ادّعاء المحرك لا يُضاعَف: مجموعٌ على 
 
 test('[P4-3] وعند تغيّر ملف واحد يُنسب الادّعاء كما هو', () => {
   const ctx = loadCtx();
-  const { report } = runPipe(ctx, { 'a.py': 'import hashlib\ndef f(x):\n    return hashlib.md5(x).hexdigest()\n' });
+  const { report } = runPipe(ctx, { 'a.js': JWT_A });
   const iso = (report.accepted || []).filter(a => /Emergency|SmartRepair|Fallback/.test(a.source));
   assert.ok(iso.length === 1, 'المطلوب ملف واحد متغيّر: ' + JSON.stringify(iso.map(a => a.file)));
   assert.ok(typeof iso[0].claimedCount === 'number' && iso[0].claimedCount >= 1,

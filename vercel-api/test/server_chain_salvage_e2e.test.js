@@ -123,7 +123,10 @@ test('[CH-2] الإصلاحات المُثبَتة تُكتب: أسرارٌ إل
 
   // والباقي: == و innerHTML و http
   assert.match(fixed, /username === "admin"/, fixed);
-  assert.doesNotMatch(fixed, /\.innerHTML\s*=/, 'innerHTML باقٍ');
+  // XSS: كان المطلوب «لا innerHTML» (أي textContent الأعمى الذي يعرض <b> نصًّا). تغيّر عمدًا:
+  // الإصلاح السياقي يهرّب القيمة الديناميكية ويُبقي الوسم كما هو.
+  assert.match(fixed, /\.innerHTML = "<b>" \+ __escapeHTML\(players\[0\]\.name\) \+ "<\/b>"/, 'XSS لم يُصلَح سياقيًا');
+  assert.doesNotMatch(fixed, /\.textContent = "<b>"/, 'textContent أعمى يعرض الوسم نصًّا');
   assert.doesNotMatch(fixed, /"http:\/\/api\.example\.com/, 'http غير مشفّر باقٍ');
 });
 
@@ -145,8 +148,30 @@ test('[CH-3] والمحوُ الشكلي لا يُطبَّق ولو جاء في 
     'eval ليس في aiNeeded: ' + JSON.stringify(titles(out.phases.fallback.aiNeeded)));
 });
 
+// [CH-4]/[CH-4b] يقيسان آلية الإنقاذ [CHAIN-SALVAGE] نفسها. كان مُشغِّلها الطبيعي في هذه العيّنة
+// SmartRepair حين كان يُنتج في رُقعةٍ واحدة إصلاحَ SQL صحيحًا ومحوًا أعمى لـeval. أُزيل ذلك المحو
+// (القرار في eval صار مبنيًا على الدليل في repair_engine)، فلم تعد العيّنة تُسقط رُقعة. الآلية لم
+// تتغيّر، فيُستعاد مُشغِّلها حرفيًا بمحركٍ اختباري مؤقت يُنتج تلك الرُقعة المختلطة نفسها، ويُزال بعده.
+function withMixedBatchEngine(fn) {
+  const ID = 'test-mixed-batch';
+  RO.registerEngine(ID, RO.EngineType.REPAIR, (code) => {
+    const L = code.split('\n');
+    const q = L.findIndex(l => /var query = "SELECT/.test(l));
+    const e = L.findIndex(l => /^\s*eval\(cheat\);/.test(l));
+    if (q < 0 || e < 0) return { repaired: code, repairs: [], aiNeeded: [] };
+    L[q] = '    var query = "SELECT * FROM players WHERE username=? AND password=?";';
+    L[q + 1] = '    db.execute(query, [username, password]);';
+    L[e] = '    /* SECURITY: eval removed — validate cheat */';
+    return { repaired: L.join('\n'), aiNeeded: [],
+             // إعلانٌ واحد لإصلاح SQL (سطر execute) وواحدٌ للمحو؛ سطر الاستعلام يحمل أيضًا var → let من
+             // محرك الخادم، فإعلانان عليه يجعلان عدّ «المُعلَن ≤ المتغيّر» يقيس التكرار لا الادّعاء الزائد.
+             repairs: [{ line: q + 2, fix: 'SQL → parameterized' }, { line: e + 1, fix: 'eval → safe alternative' }] };
+  }, ['*'], { priority: 1000 });
+  try { return fn(); } finally { RO.unregisterEngine(ID); }
+}
+
 test('[CH-4] الإنقاذ مُسجَّل في المرحلة: أُبقي كذا وأُسقط كذا، ومعه سببُ الرُقعة', () => {
-  const out = run(MIXED, 'game.js');
+  const out = withMixedBatchEngine(() => run(MIXED, 'game.js'));
   const salvaged = out.phases.fallback.stages.filter(s => s.salvaged);
   assert.ok(salvaged.length >= 1,
     'لا مرحلة أُنقذت ⇒ إما لم تسقط رُقعة (فالعيّنة لا تقيس الإنقاذ) أو الإنقاذ لا يُسجّل');
@@ -162,7 +187,7 @@ test('[CH-4b] والتقرير لا يدّعي إصلاحًا أسقطه الإ�
   // نفس عِلّة [GHOST-PRUNE]: ما لم يُطبَّق لا يُعلَن. وكان safeRepairs يحمل
   // إصلاحات المحرك **كلَّها** حتى ما أسقطه الإنقاذ (مقيس: 11 مُعلَنًا
   // و10 أسطر متغيّرة، والزائد «eval → safe alternative»).
-  const out = run(MIXED, 'game.js');
+  const out = withMixedBatchEngine(() => run(MIXED, 'game.js'));
   const fixed = out.phases.fallback.verifiedCode || '';
   assert.ok(out.phases.fallback.stages.some(s => s.salvaged),
     'tripwire: لا إنقاذ في هذا التشغيل ⇒ لا يقيس الادّعاء الزائد');

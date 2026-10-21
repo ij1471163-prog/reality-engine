@@ -105,15 +105,43 @@ test('no gate available (fix_verifier.js not loaded) → fail-closed, original c
   assert.strictEqual(r.gateVerified, false);
 });
 
-test('repairCode on the 7 module files: var → let is now applied through the gate', () => {
+// كان: «var → let يُطبَّق» على هذه الملفات (≥ تعديل واحد لكل ملف). تغيّر عمدًا: هذه ملفات
+// تُحمَّل بـ<script> معًا، و«var X = (() => …)()» في أعلاها ربطٌ عام تتشاركه السكربتات؛ let يكسر
+// إعادة تعريف الاسم في سكربت آخر وإعادة التحميل وwindow.X — لا يُثبت من ملف واحد. وبقية بلاغات
+// var فيها كلمةُ var داخل regex لا تعريف. فالعقد الآن: كل تعديل var → let على تعريف حقيقي فقط،
+// وكل بلاغ var لم يُعدَّل له سبب مُسجَّل (لا إسقاط صامت).
+test('repairCode on the 7 module files: var → let only where proven; every kept var has a recorded reason', () => {
   for (const f of ['command_injection_fix.js', 'context_analyzer.js', 'deep_flow.js', 'knowledge_base.js',
                    'repair_auth.js', 'smart_context.js', 'type_inference.js']) {
     const code = fs.readFileSync(path.join(PUBLIC_DIR, f), 'utf8');
-    const out = ctx.repairCode(code, ctx.analyzeCode(code, f), f).repaired;
-    const a = code.split('\n'), b = out.split('\n');
+    const issues = ctx.analyzeCode(code, f);
+    const r = ctx.repairCode(code, issues, f);
+    const a = code.split('\n'), b = r.repaired.split('\n');
     assert.strictEqual(a.length, b.length, f);
     const changed = a.map((l, i) => (l !== b[i] ? [l, b[i]] : null)).filter(Boolean);
-    assert.ok(changed.length >= 1, `${f}: something applied`);
     for (const [x, y] of changed) assert.strictEqual(x.replace(/\bvar\b/, 'let'), y, `${f}: only var → let`);
+    const varIssues = issues.filter(i => ctx.detectStrategy(i, 'js') === 'VAR_USAGE');
+    for (const i of varIssues) {
+      if (a[i.line - 1] !== b[i.line - 1]) continue;
+      assert.ok(r.declined.some(d => d.line === i.line && d.strategy === 'VAR_USAGE' && /^VAR_/.test(d.reason)),
+        `${f}:${i.line} var kept without a recorded reason`);
+    }
   }
+});
+
+// top-level var: يُحوَّل حين يُثبت الملف نطاق وحدة — وحدة ES، أو CommonJS بمرجع غير مشروط في أعلاه
+// (module.exports/require؛ سكربت المتصفح يرمي عنده). الملف ثنائي الاستعمال (if (typeof module…))
+// يُحمَّل في المتصفح سكربتًا عاديًا حيث var ربط عام، فيُترك.
+test('top-level var: kept in a classic or dual-use script (VAR_GLOBAL_BINDING), converted in an ES module or proven CommonJS', () => {
+  const browser = 'var counter = 0;\nfunction inc() { counter++; }\n';
+  const dual = 'var counter = 0;\nfunction inc() { counter++; }\nif (typeof module !== "undefined") module.exports = inc;\n';
+  const cjs = "const x = require('x');\nvar counter = 0;\nfunction inc() { counter++; }\nmodule.exports = inc;\n";
+  const esm = "import x from 'x';\nvar counter = 0;\nexport function inc() { counter++; }\n";
+  const issue = l => [{ line: l, sev: 'l', type: 'js', title: '🔵 استخدام var — استخدم let أو const' }];
+  for (const [code, l] of [[browser, 1], [dual, 1]]) {
+    const r = ctx.repairCode(code, issue(l), 'a.js');
+    assert.strictEqual(r.repaired, code);
+    assert.ok(r.declined.some(d => /^VAR_GLOBAL_BINDING/.test(d.reason)));
+  }
+  for (const code of [cjs, esm]) assert.strictEqual(ctx.repairCode(code, issue(2), 'a.js').repaired.split('\n')[1], 'let counter = 0;');
 });

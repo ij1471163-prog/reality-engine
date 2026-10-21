@@ -53,14 +53,13 @@ const fixLine = (code, line, file = 'a.js') => {
 const FIX = {
   'JS fetch':                  ['fetch("http://api.example.com/save", { method: "POST" });', 'a.js', 'fetch("https://api.example.com/save", { method: "POST" });'],
   'JS const single quotes':    ["const u = 'http://example.com/a?b=1';", 'a.js', "const u = 'https://example.com/a?b=1';"],
-  'JS template with ${}':      ['const u = `http://${host}/api/${id}`;', 'a.js', 'const u = `https://${host}/api/${id}`;'],
-  'JS prefix + concatenation': ['const u = "http://" + host + "/x";', 'a.js', 'const u = "https://" + host + "/x";'],
+  'JS template with ${} in the path (static host)': ['const u = `http://api.example.com/${id}`;', 'a.js', 'const u = `https://api.example.com/${id}`;'],
   'JS two URLs on one line':   ['const a = "http://a.example", b = "http://b.example";', 'a.js', 'const a = "https://a.example", b = "https://b.example";'],
   'JS URL next to code-as-text': ["const u = \"http://a.example\", t = 'fetch(\"http://b.example\");\\n';", 'a.js', "const u = \"https://a.example\", t = 'fetch(\"http://b.example\");\\n';"],
   'JS URL before a comment':   ['const u = "http://a.example"; // was http://old.example', 'a.js', 'const u = "https://a.example"; // was http://old.example'],
   'TS':                        ['const u: string = "http://api.example.com";', 'a.ts', 'const u: string = "https://api.example.com";'],
   'Python':                    ['url = "http://api.example.com"', 'a.py', 'url = "https://api.example.com"'],
-  'Python f-string':           ['r = requests.get(f"http://{host}/v1")', 'a.py', 'r = requests.get(f"https://{host}/v1")'],
+  'Python f-string (static host)': ['r = requests.get(f"http://api.example.com/{v}")', 'a.py', 'r = requests.get(f"https://api.example.com/{v}")'],
   'PHP':                       ['$u = "http://api.example.com";', 'a.php', '$u = "https://api.example.com";'],
   'Java':                      ['String u = "http://api.example.com";', 'A.java', 'String u = "https://api.example.com";'],
   'C#':                        ['var u = "http://api.example.com";', 'A.cs', 'var u = "https://api.example.com";'],
@@ -70,6 +69,40 @@ for (const [name, [line, file, expected]] of Object.entries(FIX)) {
     assert.strictEqual(fixLine(line + '\n', 1, file), expected);
   });
 }
+
+// ═══ 1ب. HTTPS للإنتاج فقط ═══════════════════════════════
+// كان: كل http:// يصير https:// — ومنها localhost والمضيف الديناميكي. تغيّر عمدًا: مضيف
+// تطوير/داخلي لا يملك شهادة TLS عادةً فيتعطل الاتصال المحلي، والمضيف الديناميكي (${host}،
+// f"{host}"، "http://" + host) يُحدَّد وقت التشغيل فلا يُعرف أهو إنتاج. يُترك ويُسجَّل السبب.
+const DEV_OR_DYNAMIC = {
+  'localhost with port':       ['fetch("http://localhost:3000/api");', 'a.js', /^HTTP_DEV_HOST/],
+  'loopback IP':               ['const u = "http://127.0.0.1:8080/x";', 'a.js', /^HTTP_DEV_HOST/],
+  'private network':           ['const u = "http://192.168.1.10/api";', 'a.js', /^HTTP_DEV_HOST/],
+  'docker service name':       ['const u = "http://db:5432";', 'a.js', /^HTTP_DEV_HOST/],
+  '.local host':               ['url = "http://printer.local/status"', 'a.py', /^HTTP_DEV_HOST/],
+  'JS template ${host}':       ['const u = `http://${host}/api/${id}`;', 'a.js', /^HTTP_DYNAMIC_HOST/],
+  'JS prefix + concatenation': ['const u = "http://" + host + "/x";', 'a.js', /^HTTP_DYNAMIC_HOST/],
+  'Python f-string {host}':    ['r = requests.get(f"http://{host}/v1")', 'a.py', /^HTTP_DYNAMIC_HOST/],
+  'nip.io (DNS to loopback)':  ['const u = "http://127.0.0.1.nip.io/x";', 'a.js', /^HTTP_DEV_HOST/],
+  'explicit non-80 port':      ['const u = "http://api.example.com:8080/x";', 'a.js', /^HTTP_EXPLICIT_PORT/],
+};
+for (const [name, [line, file, reason]] of Object.entries(DEV_OR_DYNAMIC)) {
+  test(`keeps http:// for a non-production host (${name}) and records why`, () => {
+    const code = line + '\n';
+    const r = ctx.repairCode(code, [{ line: 1, title: TITLE, ev: line.trim() }], file);
+    assert.strictEqual(r.repaired, code);
+    assert.ok(r.declined.some(d => reason.test(d.reason)), JSON.stringify(r.declined));
+  });
+}
+test('a public domain that merely starts with a private-IP-like label is production (address rules apply to IPv4 literals only)', () => {
+  assert.strictEqual(fixLine('const u = "http://10.0.0.1.example.com/x";\n', 1, 'a.js'), 'const u = "https://10.0.0.1.example.com/x";');
+  assert.strictEqual(fixLine('const u = "http://localhost.evil.com/x";\n', 1, 'a.js'), 'const u = "https://localhost.evil.com/x";');
+  assert.strictEqual(fixLine('const u = "http://api.example.com:80/x";\n', 1, 'a.js'), 'const u = "https://api.example.com:80/x";');
+});
+test('mixed line: the production URL is fixed, the localhost URL on the same line is kept', () => {
+  const line = 'const base = dev ? "http://localhost:3000" : "http://api.example.com";';
+  assert.strictEqual(fixLine(line + '\n', 1, 'a.js'), 'const base = dev ? "http://localhost:3000" : "https://api.example.com";');
+});
 
 // ═══ 2. ليس URL في الكود → لا يتغير ═════════════════════
 const KEEP = {

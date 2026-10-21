@@ -58,8 +58,17 @@ function scanSecurity(code, fileName) {
     }
 
     // ─── 3. XSS ────────────────────────────────────
+    // [XSS-ESCAPED] نفس استثناء knowledge_base.js بالإثبات نفسه (لا نسخة): إسناد innerHTML/outerHTML
+    // مُهرَّب بالدالة المعيارية في سياق نص HTML لا يُبلَّغ عنه. بلا KnowledgeBase محمَّلًا: البلاغ كما كان.
+    const _escapedSink = () => {
+      try {
+        const KB = typeof KnowledgeBase !== 'undefined' ? KnowledgeBase : null;
+        return !!(KB && typeof KB.escapedTextSink === 'function' && /\.(?:inner|outer)HTML\s*=(?!=)/.test(t) &&
+                  !/document\.write|\.html\(/.test(t) && KB.escapedTextSink(code, ln));
+      } catch (e) { return false; }
+    };
     if (['js','jsx','ts','html'].includes(ext)) {
-      if (/innerHTML|document\.write|\.html\(/.test(t) && /\w+/.test(t)) {
+      if (/innerHTML|document\.write|\.html\(/.test(t) && /\w+/.test(t) && !_escapedSink()) {
         issues.push({
           type: 'security', sev: 'h',
           title: '🟠 XSS محتمل: innerHTML بدون sanitize',

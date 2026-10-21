@@ -91,19 +91,25 @@ test('repairCode records the reason (rejected + aiNeeded) instead of a silent sk
   assert.ok(r2.rejected.some(x => /WEAK_CRYPTO_(CREDENTIAL_CONTEXT|PASSWORD_HASH)/.test(x.reason)));
 });
 
-// ═══ 2. checksum محلي — السلوك السابق لا يتراجع ═════════════
-test('local non-credential checksum is still auto-fixed (unchanged behavior)', () => {
+// ═══ 2. checksum/ETag غير مرتبط بكلمات مرور — لا تغيير للخوارزمية ═══
+// كان: md5 → sha256 تلقائيًا ("السلوك السابق لا يتراجع"). تغيّر عمدًا: تغيير الخوارزمية يغيّر
+// القيمة الناتجة، فـETag/بصمة محفوظة تفقد مطابقتها، ولا خطر أمني مُثبت في استعمال غير أمني.
+// القرار الآن: لا إعادة كتابة، والسبب مُسجَّل (بروتوكول يفرضها، أو تغيّر المخرج).
+test('local non-credential checksum / ETag: not rewritten, reason recorded (output/protocol compatibility)', () => {
   const code = "const crypto = require('crypto');\nconst etag = crypto.createHash('md5').update(fileBuffer).digest('hex');\n";
   const out = serverRun(code, 'cksum.js');
-  assert.strictEqual(out.decision.decision, 'SAFE_AUTO_FIX');
-  assert.match(out.decision.patch, /createHash\("sha256"\)\.update\(fileBuffer\)/);
-  assert.strictEqual(weakLeft(out).length, 0);
+  assert.ok(!/sha256/.test(String(out.decision.patch || '')), 'no md5→sha256 rewrite');
+  assert.ok(weakLeft(out).length > 0, 'still reported');
+  const d = out.phases.fallback.decisions.find(x => WEAK.test(x.title));
+  assert.strictEqual(d.outcome, 'LEFT_UNCHANGED');
+  assert.match(d.reason, /^WEAK_CRYPTO_(?:PROTOCOL_REQUIRED|OUTPUT_CHANGES)/);
 });
 
-test('hash of a local variable inside a function (not a parameter) is still auto-fixed', () => {
+test('hash of a local variable inside a function: not rewritten, reason recorded', () => {
   const code = "const crypto = require('crypto');\nfunction etagOf(buf) {\n  const body = render();\n  return crypto.createHash('md5').update(body).digest('hex');\n}\n";
   const r = ctx.repairCode(code, ctx.analyzeCode(code, 'e.js'), 'e.js');
-  assert.match(r.repaired, /createHash\("sha256"\)\.update\(body\)/);
+  assert.strictEqual(r.repaired, code);
+  assert.ok(r.declined.some(x => /^WEAK_CRYPTO_(?:PROTOCOL_REQUIRED|OUTPUT_CHANGES)/.test(x.reason)), JSON.stringify(r.declined));
 });
 
 // ═══ 3. Java — كشف بلا إعادة كتابة آلية ══════════════════════
