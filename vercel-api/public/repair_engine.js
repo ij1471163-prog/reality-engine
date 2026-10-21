@@ -546,10 +546,147 @@ function _accIsCursor(code, esc) {
   ).test(code);
 }
 
+// ─── Accumulation بعنوان Data Flow (deep_analyzer.js) ───
+// مسار الخادم لا يحمّل ast-engine.js (واجهة فقط)، فالإشارة الوحيدة هناك لـ«x = obj.prop داخل
+// حلقة» هي: "🟠 Data Flow: x = obj.prop داخل loop — يجب +=". وكانت accumulationTarget لا تستخرج
+// منها اسمًا ⇒ null ⇒ إسقاط صامت. هذا الكاشف أضعف دليلًا من AST (يكتفي بنوع number وبكلمة
+// for في آخر 8 أسطر)، فيُشترط له فوق حراس fixAccumulation القائمة:
+//   0. الاسم يدل بوضوح على التجميع (total/sum/accumulator…) ولا يحمل كلمة «لحظية» (last/current/latest…):
+//      البنية وحدها لا تفرّق «مجموع» عن «آخر قيمة» (last = p.score بتهيئة 0 مطابق بنيويًا لـtotalScore)
+//   1. تهيئة بـ0 قبل السطر — نفس معيار ast-engine.js
+//   2. الإسناد داخل جسم حلقة فعلًا (بنية الأقواس/الإزاحة) لا داخل دالة/callback غير حلقية
+//   3. لا يُقرأ المتغير في موضع آخر من الحلقة (رأسها أو جسمها): لو قُرئ فهو غالبًا قيمة لكل دورة
+// العنوان القديم ("X = بدل +=") لا يمرّ بهذه الشروط — لا تغيير لسلوكه.
+const _ACC_DF_TITLE = /Data Flow:\s*([A-Za-z_$][\w$]*)\s*=\s*[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s*داخل loop\s*[—–-]\s*يجب\s*\+=/;
+function accumulationDataFlowTarget(issue) {
+  const m = String(issue && issue.title || '').match(_ACC_DF_TITLE);
+  return m ? m[1] : null;
+}
+
+// الاسم مقسّمًا إلى كلمات: totalScore → [total, score] ، grand_total → [grand, total] ، $sum → [sum]
+function _accNameTokens(name) {
+  return String(name).replace(/^\$/, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[^A-Za-z]+/).filter(Boolean).map(t => t.toLowerCase());
+}
+// كلمات تدل على التجميع صراحةً (مطابقة كلمة كاملة: summary ليست sum ، account ليست acc)
+const _ACC_NAME_YES = new Set(['total', 'totals', 'subtotal', 'sum', 'sums', 'accumulator', 'accumulated']);
+// كلمات تدل على قيمة لحظية/مختارة — تُبطل الدلالة حتى مع total/sum (currentTotal ، lastSum ، maxTotal)
+const _ACC_NAME_NO = new Set(['last', 'current', 'cur', 'curr', 'latest', 'prev', 'previous', 'next', 'first',
+  'final', 'new', 'old', 'temp', 'tmp', 'max', 'min', 'best', 'worst', 'avg', 'average', 'mean', 'peak', 'top']);
+function _accNameIsAccumulative(name) {
+  const t = _accNameTokens(name);
+  return t.some(w => _ACC_NAME_YES.has(w)) && !t.some(w => _ACC_NAME_NO.has(w));
+}
+
+// يمحو النصوص والتعليقات السطرية مع حفظ الأعمدة (كي لا تُحسب أقواس أو أسماء داخلها)
+function _accClean(l, ext) {
+  let s = String(l).replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, m => ' '.repeat(m.length));
+  return s.replace(ext === 'py' ? /#.*$/ : /\/\/.*$/, m => ' '.repeat(m.length));
+}
+const _ACC_LOOP_HDR  = /\b(?:for|foreach|while)\s*\(|\bdo\s*$|\.(?:forEach|map|filter|reduce|some|every|flatMap)\s*\(/;
+const _ACC_BLOCK_HDR = /\b(?:if|else|try|catch|finally|switch|case|default)\b|^\s*$/;
+
+// أقواس: يصعد من موضع الإسناد عبر الكتل غير الحلقية حتى أول حلقة. يتوقف عند دالة/صنف.
+// يُرجع { header, body } نصّين منظّفين، أو null.
+function _accLoopBraces(clean, idx, col) {
+  let depth = 0;
+  for (let li = idx; li >= 0; li--) {
+    const row = clean[li];
+    for (let ci = (li === idx ? col : row.length) - 1; ci >= 0; ci--) {
+      const ch = row[ci];
+      if (ch === '}') { depth++; continue; }
+      if (ch !== '{') continue;
+      if (depth > 0) { depth--; continue; }
+      let header = row.slice(0, ci);
+      if (!header.trim()) { let k = li - 1; while (k >= 0 && !clean[k].trim()) k--; header = k >= 0 ? clean[k] : ''; }
+      if (_ACC_LOOP_HDR.test(header)) {
+        // الجسم: من بعد { حتى } المقابل
+        let d = 0, body = '';
+        for (let lj = li; lj < clean.length; lj++) {
+          const r = clean[lj];
+          for (let cj = (lj === li ? ci + 1 : 0); cj < r.length; cj++) {
+            if (r[cj] === '{') d++;
+            else if (r[cj] === '}') { if (d === 0) return { header, body }; d--; }
+            body += r[cj];
+          }
+          body += '\n';
+        }
+        return null;                                  // قوس غير مغلق — لا تخمين
+      }
+      if (!_ACC_BLOCK_HDR.test(header.replace(/\)\s*$/, ') ').split(/[;{}]/).pop())) return null;  // دالة/callback/صنف
+    }
+  }
+  // حلقة بلا أقواس على السطر نفسه: for (...) x = o.p;
+  const pre = clean[idx].slice(0, col);
+  if (/(?:\b(?:for|while)\s*\(.*\)|\.forEach\s*\(.*=>)\s*$/.test(pre)) return { header: pre, body: clean[idx].slice(col) };
+  return null;
+}
+
+// إزاحة (Python): يصعد عبر if/else/try/with حتى for/while، ويتوقف عند def/class
+function _accLoopIndent(clean, idx) {
+  const ind = l => l.match(/^\s*/)[0].length;
+  let base = ind(clean[idx]);
+  for (let h = idx - 1; h >= 0; h--) {
+    const t = clean[h].trim();
+    if (!t || ind(clean[h]) >= base) continue;
+    if (/^(?:for|while)\b/.test(t)) {
+      const hi = ind(clean[h]);
+      let body = '';
+      for (let j = h + 1; j < clean.length; j++) {
+        if (clean[j].trim() && ind(clean[j]) <= hi) break;
+        body += clean[j] + '\n';
+      }
+      return { header: t, body };
+    }
+    if (/^(?:if|elif|else|try|except|finally|with)\b/.test(t)) { base = ind(clean[h]); continue; }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * لعنوان Data Flow فقط: سبب رفض (نص) أو '' إن استوفى الشروط. لا يُعدّل شيئًا.
+ */
+function accumulationDataFlowProblem(code, issue, ext) {
+  const target = accumulationDataFlowTarget(issue);
+  if (!target) return '';
+  const lines = String(code).split('\n');
+  const idx = issue.line - 1;
+  if (!lines[idx]) return 'ACCUMULATION_LINE_MISSING';
+  const esc = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const clean = lines.map(l => _accClean(l, ext));
+  const asg = new RegExp('(^|[^\\w$.])' + esc + '\\s*=(?![=>])').exec(clean[idx]);
+  if (!asg) return 'ACCUMULATION_TARGET_NOT_ON_LINE';
+  const col = asg.index + asg[1].length;
+
+  // 0. اسم يدل بوضوح على التجميع
+  if (!_accNameIsAccumulative(target)) {
+    return 'ACCUMULATION_NAME_AMBIGUOUS — اسم ' + target + ' لا يدل بوضوح على التجميع (total/sum/accumulator)؛ قد يكون «آخر قيمة» — للمراجعة';
+  }
+  // 1. تهيئة بـ0 قبل السطر
+  const zero = new RegExp('(?:^|[^\\w$.])' + esc + '\\s*=\\s*0(?![\\w.])');
+  if (!clean.slice(0, idx).some(l => zero.test(l))) {
+    return 'ACCUMULATION_NOT_ZERO_INIT — ' + target + ' غير مُهيَّأ بـ0 قبل الحلقة؛ قد يكون «آخر قيمة» لا مجموعًا';
+  }
+  // 2. داخل حلقة فعلًا
+  const loop = ext === 'py' ? _accLoopIndent(clean, idx) : _accLoopBraces(clean, idx, col);
+  if (!loop) return 'ACCUMULATION_NOT_IN_LOOP — الإسناد ليس داخل جسم حلقة (أو داخل دالة/callback غير حلقية)';
+  // 3. لا قراءة أخرى داخل الحلقة (الإسناد نفسه هو الظهور الوحيد)
+  const use = new RegExp('(?:^|[^\\w$.])' + esc + '(?![\\w$])', 'g');
+  const n = (loop.header.match(use) || []).length + (loop.body.match(use) || []).length;
+  if (n > 1) return 'ACCUMULATION_VAR_USED_IN_LOOP — ' + target + ' يُقرأ داخل الحلقة؛ غالبًا قيمة لكل دورة لا مجموع';
+  return '';
+}
+
 function fixAccumulation(code, issue, lines, ext) {
   const line = lines[issue.line - 1];
   if (!line) return null;
-  const target = accumulationTarget(issue);
+  let target = accumulationTarget(issue);
+  if (!target) {
+    target = accumulationDataFlowTarget(issue);
+    if (target && accumulationDataFlowProblem(code, issue, ext)) return null;
+  }
   if (!target) return null;
   const esc = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -1779,6 +1916,13 @@ function repairCode(code, issues, fileName, _opts) {
       }
 
       if (!result || result.fixed === repairedCode) {
+        // تراكم بعنوان Data Flow: سبب عدم التعديل يُسجَّل (لا إسقاط صامت)، والمشكلة تبقى
+        // للمراجعة لأن إعادة التحليل تجدها في remainingIssues.
+        if (stratKey === 'ACCUMULATION' && accumulationDataFlowTarget(issue)) {
+          rejected.push({ line: issue.line, strategy: stratKey, source: 'fixAccumulation',
+                          reason: accumulationDataFlowProblem(repairedCode, issue, ext) ||
+                                  'ACCUMULATION_NO_SAFE_EDIT — حراس fixAccumulation القائمة رفضت التعديل' });
+        }
         // إذا فشل الإصلاح الحتمي، لكن Analyzer أعلن أن المشكلة
         // تحتاج AI، فمررها إلى AI بدل إسقاطها بصمت.
         if (issue.aiRequired === true) {
