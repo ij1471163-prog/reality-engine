@@ -672,7 +672,9 @@ function buildPipelineContext() {
     'deep_flow.js', 'knowledge_base.js', 'cve_patterns.js', 'extended_patterns.js',
     'crypto_scanner.js', 'typescript_analyzer.js', 'kotlin_analyzer.js', 'php_analyzer.js',
     'advanced_analyzer.js', 'threat_detector.js', 'dependency_analyzer.js',
-    'xss_fix.js', 'fixers_orchestrator.js',
+    // fix_verifier.js: المنسّق صار يشترط البوابة الرئيسية أيضًا ([ONE-GATE])، وبدونها لا يكتب (Fail-Closed)
+    // — وهي محمَّلة في الإنتاج (index.html وapi/analyze.js) قبله.
+    'fix_verifier.js', 'xss_fix.js', 'fixers_orchestrator.js',
   ];
   const ctx = vm.createContext({ console: { log() {}, warn() {}, error() {}, info() {} }, window: {}, global: {}, F: {}, R: {} });
   for (const f of engines) {
@@ -702,12 +704,16 @@ test('[PIPE-1] تحويل textContent يُقبل في المنسّق (البوا
   assert.ok(parses(F['a.js']));
 });
 
-test('[PIPE-2] innerHTML += مع نص بلا markup يُقبل ويحافظ على العنصر', () => {
+// [ONE-GATE] كان: يُقبل بالبوابة المحلية وحدها (عدّ البلاغات). المنسّق صار يشترط FixVerifier أيضًا، وهي لا تعدّ
+// insertAdjacentText علاجًا مُثبتًا لـinnerHTML += (يحوّل msg من HTML إلى نص — قد يغيّر العرض إن حمل وسومًا)،
+// فالمرشّح يُرفض بسببه والكود يبقى كما هو. لم تُوسَّع قائمة علاجات البوابة لتمريره.
+test('[PIPE-2] innerHTML += msg ⇒ insertAdjacentText: البوابة الرئيسية لا تُثبته، فيُرفض والكود كما هو', () => {
   const ctx = buildPipelineContext();
   const code = 'function add(log, msg) {\n  log.innerHTML += msg;\n}\n';
   const { out, F } = runPipeline(ctx, 'a.js', code);
-  assert.strictEqual(out.totalFixed, 1, JSON.stringify(out));
-  assert.match(F['a.js'], /log\.insertAdjacentText\('beforeend', msg\)/);
+  assert.strictEqual(out.totalFixed, 0, JSON.stringify(out));
+  assert.strictEqual(F['a.js'], code);
+  assert.match(String(out.rejected['a.js'][0].reason), /^REJECTED_XSS_FIX_UNPROVEN/);
 });
 
 test('[PIPE-3] الإصلاح الصحيح مع الإبقاء على innerHTML + تعقيم: لا يُسلَّم أبدًا مكسورًا — يُقبل أو يُرفض والكود كما هو', () => {

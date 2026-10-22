@@ -145,8 +145,9 @@ const MUST_REJECT = {
   'إسناد ثانٍ للمتغيّر في دالة أخرى ⇒ غموض':
     'function getUser(uid, fl) {\n  const q = "SELECT * FROM users WHERE id = ? AND a = ?";\n  return db.query(q, [uid, fl]);\n}\n' +
     'function setQuery() {\n  q = "SELECT 1";\n  return q;\n}\n',
+  // (obj معرَّف: بدونه يرفضه [UNBOUND-IDENT] أولًا — إسنادٌ إلى خاصية مُعرِّفٍ غير معرَّف — والدعوى هنا عن حارس SQL)
   'obj.q ليس تعريف متغيّر':
-    'function getUser(uid, fl) {\n  obj.q = "SELECT * FROM users WHERE id = ? AND a = ?";\n  return db.query(q, [uid, fl]);\n}\n',
+    'const obj = {};\nfunction getUser(uid, fl) {\n  obj.q = "SELECT * FROM users WHERE id = ? AND a = ?";\n  return db.query(q, [uid, fl]);\n}\n',
   'مصفوفة متداخلة ⇒ العدد غير معروف':
     'function getUser(uid, fl) {\n  const q = "SELECT * FROM users WHERE id = ? AND a = ?";\n  return db.query(q, [[uid, fl]]);\n}\n',
   'استدعاء بلا نقطة (destructured query)':

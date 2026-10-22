@@ -477,7 +477,22 @@ function applySpecializedFixers(F, R, opts) {
         continue;
       }
 
-      const verdict = _verifyFix(acceptedCode, candidate, currentIssues, fn, opts);
+      // [ONE-GATE] _verifyFix هنا بوابةٌ ثانية أضعف: عدّ بلاغات وفحص نحوي فقط، بلا سجلّ الإثبات في
+      // fix_verifier.js (SQL المعامَل، السرّ، المصارف، الاعتماد، eval، الدالة المساعدة غير المعرَّفة…).
+      // فالقبول يشترط الاثنين: هذه (سلوكها كما كان) **و**FixVerifier.verifyFix. وبلا FixVerifier لا كتابة
+      // (Fail-Closed كما في fix_engine_pipeline._gateAndCommit).
+      let verdict = _verifyFix(acceptedCode, candidate, currentIssues, fn, opts);
+      if (verdict.accepted) {
+        const FVg = (typeof FixVerifier !== 'undefined' && FixVerifier && typeof FixVerifier.verifyFix === 'function') ? FixVerifier : null;
+        if (!FVg) {
+          verdict = Object.assign({}, verdict, { accepted: false, reason: 'REJECTED_VERIFIER_UNAVAILABLE — fix_verifier.js غير محمّل' });
+        } else {
+          let g;
+          try { g = FVg.verifyFix(acceptedCode, candidate, fn, analyzeCode, { allowUnverifiedLanguages: opts.allowUnverifiedLanguages === true }); }
+          catch (e) { g = { accepted: false, reason: 'VERIFIER_THREW: ' + (e && e.message) }; }
+          if (!g || g.accepted !== true) verdict = Object.assign({}, verdict, { accepted: false, reason: (g && g.reason) || 'REJECTED' });
+        }
+      }
 
       if (verdict.accepted) {
         acceptedCode = candidate;

@@ -98,8 +98,12 @@ const XSS_U2  = 'function paint(box, txt) {\n  box.innerHTML = txt;\n}\nmodule.e
 const XSS_OK  = 'function safe(el, v) {\n  el.textContent = v;\n}\nmodule.exports = { safe };\n';
 
 // ─── عيّنات تعمية على غير اعتماد (etag) — لا يضيّقها [CRED-HASH] ───
-const MD5_T_B = 'function e1(body) {\n  const tag = crypto.createHash("md5").update(body).digest("hex");\n  return tag;\n}\nmodule.exports = { e1 };\n';
-const MD5_T_A = 'function e1(body) {\n  const tag = crypto.createHash("sha256").update(body).digest("hex");\n  return tag;\n}\nmodule.exports = { e1 };\n';
+// [HASH-EPHEMERAL] كانت العيّنة etag تُرجِع البصمة (md5 ⇒ sha256 يغيّر قيمة ETag المُرسلة)، والبوابة صارت لا تقبل
+// تبديل الخوارزمية إلا حين تبقى البصمة مفتاحًا داخليًا لـMap/Set محلي. فالعيّنة الآن كذلك.
+const MD5_T_B = 'const crypto = require("crypto");\nconst seen = new Set();\nfunction e1(body) {\n' +
+  '  const tag = crypto.createHash("md5").update(body).digest("hex");\n  if (seen.has(tag)) return false;\n' +
+  '  seen.add(tag);\n  return true;\n}\nmodule.exports = { e1 };\n';
+const MD5_T_A = MD5_T_B.replace('"md5"', '"sha256"');
 
 // ═══ 1. الآليةُ تعمل وتنتقل إلى كودٍ لم يُرَ ═══════════════════════════
 
@@ -159,9 +163,11 @@ test('[L-4] التعلّمُ تراكمي: عائلتان في مخزنٍ واح
   assert.ok([...types].some(t => /CRYPTO|327/i.test(t)), 'عائلةُ التعمية غائبة: ' + [...types].join(','));
 
   // ملفٌ لم يُرَ، فيه العيبان معًا وبأسماءٍ مختلفة
-  const MIX = 'function out(node, html, body) {\n  node.innerHTML = html;\n' +
+  // (سطر التعمية لا يجاور سطر XSS: الإثبات الموضعي في البوابة يشترط أن جارَي السطر المُستبدَل لم يتغيّرا)
+  const MIX = 'const crypto = require("crypto");\nconst done = new Set();\nfunction out(node, html, body) {\n' +
               '  const et = crypto.createHash("md5").update(body).digest("hex");\n' +
-              '  return et;\n}\nmodule.exports = { out };\n';
+              '  if (done.has(et)) return false;\n  done.add(et);\n  node.innerHTML = html;\n' +
+              '  return true;\n}\nmodule.exports = { out };\n';
   const r = ctx.LearningEngine.applyLearned(MIX, 'mix.js');
   assert.strictEqual(r.applied, 2, 'لم تُطبَّق العائلتان معًا: ' + r.applied);
   assert.match(r.fixed, /node\.textContent = html;/, 'إصلاحُ XSS غائب');

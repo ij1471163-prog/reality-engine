@@ -657,7 +657,8 @@ function analyzeCode(code, fileName) {
     if (['js','ts'].includes(ext)) {
         code.split('\n').forEach((line, i) => {
             if (lineIsNoise(i)) return;
-            if (/res\.send\s*\(.*\+/.test(line) && !line.trim().startsWith('//')) {
+            // ‎res.status(n).send(…)‎ نفس المَصرِف: كان خارج النمط فلا يُبلَّغ عنه إطلاقًا (ثغرة غير مرئية).
+            if (/res\.(?:status\s*\([^)]*\)\s*\.)?send\s*\(.*\+/.test(line) && !line.trim().startsWith('//')) {
                 issues.push({ type:'js', sev:'c', line:i+1, ev:line.trim(),
                     title:'🔴 XSS في res.send — user input مباشر',
                     fix: null, aiRequired: true,

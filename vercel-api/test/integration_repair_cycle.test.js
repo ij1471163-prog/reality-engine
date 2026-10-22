@@ -95,6 +95,19 @@ const VULN_JS  = 'function f(db, el, x) {\n  db.query("SELECT * FROM t WHERE a="
 const VULN_PY  = 'import hashlib\ndef g(x):\n    return hashlib.md5(x).hexdigest()\n';
 const LEARN_JS = 'function h(el, x, r) {\n  r = eval(x);\n  return r;\n}\n';   // سطر لا يمسّه مُصلِح آخر
 const P_LEARN  = () => pat('p-learn', 'r = eval(x);', 'r = JSON.parse(x);', 'js');
+// [EVAL-JSON] eval(x) ⇒ JSON.parse(x) لم يعد «إصلاحًا صحيحًا»: يغيّر الناتج لأي x ليس JSON (eval("2+2")=4 وJSON.parse
+// يرمي)، والبوابة صارت ترفضه. فعيّنة «الإصلاح المتعلَّم الصحيح» صارت إصلاحًا تُثبته البوابة فعلًا: بصمة md5
+// مفتاحٌ داخلي لـSet محلي ⇒ sha256 لا يغيّر سلوكًا مرئيًا ([HASH-EPHEMERAL])، ولا يمسّها مُصلِح آخر.
+const LEARN_OK_LINE = 'const k = crypto.createHash("md5").update(String(it)).digest("hex");';
+const LEARN_OK_JS = 'const crypto = require("crypto");\nconst seen = new Set();\nfunction h(items) {\n' +
+  '  return items.filter(it => {\n    ' + LEARN_OK_LINE + '\n    if (seen.has(k)) return false;\n' +
+  '    seen.add(k);\n    return true;\n  });\n}\nmodule.exports = h;\n';
+const P_LEARN_OK = () => pat('p-learn', LEARN_OK_LINE, LEARN_OK_LINE.replace('"md5"', '"sha256"'), 'js');
+const runH = code => {
+  const m = { exports: {} };
+  new Function('module', 'require', code)(m, n => require(n));
+  return JSON.stringify(m.exports([1, 2, 1, '1', 'a', 'a']));
+};
 const P_HARM   = () => pat('p-harm',  'r = eval(x);', 'r = JSON.parse(x);;;{', 'js');
 const P_BENIGN = () => pat('p-benign', 'r = eval(x);', 'r = eval(x) /* ok */;', 'js');
 
@@ -227,11 +240,27 @@ test('إصلاح صحيح يُقبل: لا رفض بيئي ولا تعارض ب�
 
 test('إصلاح متعلَّم صحيح يصل إلى الملف فعلاً — المسار غير مقطوع', () => {
   const ctx = loadCtx();
+  ctx.__store.set(STORAGE_KEY, mkDb([P_LEARN_OK()]));
+  const { report, out } = runPipe(ctx, { 'h.js': LEARN_OK_JS });
+  assert.ok(srcOf(report, 'h.js').includes('applyLearned'), 'لم يُقبل إصلاح التعلّم: ' +
+    JSON.stringify((report.rejected || []).map(r => r.source + ':' + String(r.reason).slice(0, 80))));
+  assert.ok(out['h.js'].includes(LEARN_OK_LINE.replace('"md5"', '"sha256"')), 'بديل النمط لم يُكتب');
+  assert.ok(!/"md5"/.test(out['h.js']), 'md5 باقٍ');
+  // السلوك قبل وبعد واحد: الإصلاح لا يغيّر ناتج البرنامج
+  assert.strictEqual(runH(out['h.js']), runH(LEARN_OK_JS));
+});
+
+test('[EVAL-JSON] نمط متعلَّم eval(x) ⇒ JSON.parse(x) تردّه البوابة ولا يُكتب (يغيّر الناتج)', () => {
+  const ctx = loadCtx();
   ctx.__store.set(STORAGE_KEY, mkDb([P_LEARN()]));
   const { report, out } = runPipe(ctx, { 'h.js': LEARN_JS });
-  assert.ok(srcOf(report, 'h.js').includes('applyLearned'), 'لم يُقبل إصلاح التعلّم');
-  assert.ok(/JSON\.parse\(x\)/.test(out['h.js']), 'بديل النمط لم يُكتب');
-  assert.ok(!/eval\(x\)/.test(out['h.js']), 'eval باقٍ');
+  assert.ok(!srcOf(report, 'h.js').includes('applyLearned'), 'قُبل تبديلٌ يغيّر الناتج');
+  assert.ok(!/JSON\.parse\(x\)/.test(out['h.js']), 'كُتب البديل المرفوض');
+  assert.ok((report.rejected || []).some(r => r.source === 'applyLearned' && /EVAL_FIX_UNPROVEN/.test(r.reason || '')),
+    'سبب الرفض غير مُسجَّل: ' + JSON.stringify((report.rejected || []).map(r => r.source + ':' + String(r.reason).slice(0, 60))));
+  // والسبب: الناتج يختلف فعلًا
+  const run = (code, x) => { try { return JSON.stringify(new Function('return (' + code.replace(/^function h/, 'function') + ')')()(null, x)); } catch (e) { return 'ERR:' + e.constructor.name; } };
+  assert.notStrictEqual(run(LEARN_JS, '2 + 2'), run(LEARN_JS.replace('eval(x)', 'JSON.parse(x)'), '2 + 2'));
 });
 
 // ═══ 5. النتيجة تُسجَّل في مكانها ══════════════════════
@@ -374,12 +403,12 @@ test('الدورة كاملة: تشغيلان يُنتجان خبرة معتمد
 
 test('[P4-2] بلا repairCode يبقى مسار التعلّم ومزامنة R قائمين', () => {
   const ctx = loadCtx();
-  ctx.__store.set(STORAGE_KEY, mkDb([P_LEARN()]));
+  ctx.__store.set(STORAGE_KEY, mkDb([P_LEARN_OK()]));
   vm.runInContext('repairCode = undefined;', ctx);
-  const { report, out, rState } = runPipe(ctx, { 'h.js': LEARN_JS });
+  const { report, out, rState } = runPipe(ctx, { 'h.js': LEARN_OK_JS });
   assert.strictEqual((report.learnedOutcomes || []).length, 1,
     'مسار التعلّم سقط مع غياب محرك آخر');
-  assert.ok(/JSON\.parse\(x\)/.test(out['h.js']), 'الإصلاح المتعلَّم لم يُكتب');
+  assert.ok(/"sha256"/.test(out['h.js']), 'الإصلاح المتعلَّم لم يُكتب');
   assert.ok(rState['h.js'] && rState['h.js'].code === out['h.js'], 'مزامنة R سقطت أيضًا');
 });
 

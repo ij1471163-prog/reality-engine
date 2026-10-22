@@ -587,20 +587,43 @@ test('[SINK-CMD-b] Python: shell=True ⇒ قائمة وسائط يُقبل', () 
 
 // ─── WEAK_CRYPTO ───────────────────────────────────────────────────────
 
-test('[SINK-CRYPTO] md5 ⇒ sha256 يُقبل، وحذف التهشير لا يُقبل', () => {
+// [HASH-EPHEMERAL] كان: md5 ⇒ sha256 يُقبل أينما كان خارج كلمات المرور. لكن الدالة هنا تُرجع البصمة،
+// فالتبديل يغيّر ناتجها (32 ⇒ 64 حرفًا وقيمة أخرى) ويكسر أي مطابقة مع قيمة محفوظة أو طرف آخر.
+test('[SINK-CRYPTO] md5 ⇒ sha256 لبصمة تُرجَع: مرفوض (يغيّر الناتج)، وحذف التهشير مرفوض', () => {
   const b = 'const crypto = require("crypto");\n' +
             'function d(s) {\n  return crypto.createHash("md5").update(s).digest("hex");\n}\n';
-  acceptsFix(b, 'const crypto = require("crypto");\n' +
+  const r0 = rejects(b, 'const crypto = require("crypto");\n' +
                 'function d(s) {\n  return crypto.createHash("sha256").update(s).digest("hex");\n}\n',
     'h.js', 'crypto');
+  assert.match(r0, /^REJECTED_CRYPTO_FIX_UNPROVEN/, r0);
   rejects(b, 'const crypto = require("crypto");\nfunction d(s) {\n  return s;\n}\n', 'h.js', 'crypto');
+});
+
+test('[SINK-CRYPTO-b] md5 ⇒ sha256 لبصمة تبقى مفتاحًا داخليًا لـSet محلي: مقبول، والناتج المرئي واحد', () => {
+  const mk = alg => 'const crypto = require("crypto");\nconst seen = new Set();\nfunction once(s) {\n' +
+    '  const k = crypto.createHash("' + alg + '").update(String(s)).digest("hex");\n  if (seen.has(k)) return false;\n' +
+    '  seen.add(k);\n  return true;\n}\nmodule.exports = once;\n';
+  acceptsFix(mk('md5'), mk('sha256'), 'h.js', 'crypto');
+  const run = code => { const m = { exports: {} }; new Function('module', 'require', code)(m, require);
+                        return JSON.stringify([1, 2, 1, 'x', 'x', '2'].map(m.exports)); };
+  assert.strictEqual(run(mk('sha256')), run(mk('md5')));
+  // والحاوية تُكشف (تصدير) ⇒ مرفوض
+  rejects(mk('md5').replace('module.exports = once;', 'module.exports = { once, seen };'),
+          mk('sha256').replace('module.exports = once;', 'module.exports = { once, seen };'), 'h.js', 'crypto');
 });
 
 // ─── EVAL_USAGE ────────────────────────────────────────────────────────
 
-test('[SINK-EVAL] eval ⇒ JSON.parse يُقبل، والتقطيع والحذف يُرفضان', () => {
+// [EVAL-JSON] كان: eval(x) ⇒ JSON.parse(x) يُقبل. لكنهما يختلفان على كل x ليس JSON (eval("2 + 2")=4 وJSON.parse
+// يرمي؛ eval('{"a":1}') يرمي وJSON.parse ينجح)، وصيغة x لا تُثبت من الملف. المقبول: eval على نصّ ثابت ⇒ التعبير نفسه.
+test('[SINK-EVAL] eval(x) ⇒ JSON.parse(x) مرفوض (يغيّر الناتج)، والتقطيع والحذف يُرفضان', () => {
   const b = 'function g(x) {\n  return eval(x);\n}\n';
-  acceptsFix(b, 'function g(x) {\n  return JSON.parse(x);\n}\n', 'e.js', 'evalx');
+  const r0 = rejects(b, 'function g(x) {\n  return JSON.parse(x);\n}\n', 'e.js', 'evalx');
+  assert.match(r0, /^REJECTED_EVAL_FIX_UNPROVEN/, r0);
+  const call = (code, x) => { try { return JSON.stringify(new Function(code + '\nreturn g;')()(x)); } catch (e) { return 'ERR'; } };
+  assert.notStrictEqual(call(b, '2 + 2'), call('function g(x) {\n  return JSON.parse(x);\n}\n', '2 + 2'),
+    'السبب: الناتج يختلف فعلًا');
+  acceptsFix('function g() {\n  return eval("2 + 2");\n}\n', 'function g() {\n  return (2 + 2);\n}\n', 'e.js', 'evalx');
 
   const r1 = rejects(b, 'function g(x) {\n  return window["ev" + "al"](x);\n}\n', 'e.js', 'evalx');
   assert.match(r1, /^REJECTED_EVAL_FIX_UNPROVEN/, r1);
@@ -656,7 +679,10 @@ test('[SINK-NA] صنفٌ نقص بلاغه وليس له مَصرِف في ال�
   const v = JSON.parse(vm.runInContext(
     'JSON.stringify((()=>{const r=FixVerifier.verifyFix(__B,__A,"p.js",analyzeCode);' +
     'return {accepted:r.accepted===true, reason:String(r.reason||"")};})())', kbCtx));
-  assert.strictEqual(v.accepted, true, `إصلاح eval سليم رُفض بدعوى XSS: ${v.reason}`);
+  // [EVAL-JSON] البديل JSON.parse لم يعد يُقبل (صنف evalx يرفضه لأنه يغيّر الناتج). والدعوى هنا عن صنف xss
+  // وحده: لا مَصرِف له ⇒ NA ⇒ لا يرفض. فالرفض إن وقع يجب أن يكون من evalx لا من xss (xss يُفحص قبله).
+  assert.doesNotMatch(v.reason, /^REJECTED_XSS_FIX_UNPROVEN/, `رُفض بدعوى XSS بلا مَصرِف: ${v.reason}`);
+  assert.match(v.reason, /^REJECTED_EVAL_FIX_UNPROVEN/, v.reason);
 
   // ونفس السياق يرفض المحو الشكلي لـeval — فالحماية من الصنف المالك للمَصرِف
   vm.runInContext('__A2 = ' + JSON.stringify('function g(el, x, r) {\n  r = null;\n  return r;\n}\n') + ';', kbCtx);
@@ -808,10 +834,12 @@ test('[SINK-CWE] حدُّ الرقم في أكواد CWE يمنع خطف صنف�
   // ‎cwe-79‎ بلا ‎(?!\\d)‎ يطابق داخل ‎CWE-798‎ (سرٌّ مُضمَّن). فملفٌ فيه مَصرِف
   // XSS حقيقي **وسرٌّ**، يُصلَح السرُّ وحده: ينقص عدُّ صنف XSS زورًا، ومَصرِفُ
   // XSS باقٍ كما هو ⇒ UNPROVEN ⇒ يُرفض إصلاح سرٍّ صحيح. وهو التحوّر S8.
-  const b = 'const el = document.getElementById("b");\n' +
+  // (require في الملف: سياق Node — بدونه الملف كود متصفح فيه document، وprocess.env هناك غير معرَّف،
+  //  فترفضه البوابة بسبب آخر ([ENV-REQUIRED]) لا علاقة له بالدعوى هنا)
+  const b = 'const { send } = require("./net");\nconst el = document.getElementById("b");\n' +
             'const API_KEY = "sk_live_51H8xQ2abcdefghijKLMN";\n' +
             'function r(u) {\n  el.innerHTML = u.bio;\n  send(API_KEY);\n}\n';
-  const a = 'const el = document.getElementById("b");\n' +
+  const a = 'const { send } = require("./net");\nconst el = document.getElementById("b");\n' +
             'const API_KEY = process.env.API_KEY;\n' +
             'function r(u) {\n  el.innerHTML = u.bio;\n  send(API_KEY);\n}\n';
 

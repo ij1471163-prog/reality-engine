@@ -271,6 +271,29 @@ function fixEval(code, issue, lines2, ext2, fileName) {
   return null;
 }
 
+// ─── [ENV-REQUIRED] نقل السرّ إلى متغير بيئة: متى يصحّ، وما الذي يلزمه ───────────
+// • كود متصفح (لا علامة Node، وفيه document/window/localStorage…): process غير معرَّف هناك ⇒ ReferenceError،
+//   وأي سرّ يُرسَل إلى المتصفح مكشوف أصلًا (ومُجمِّع يحقن process.env.X يعيده إلى الحزمة). الإصلاح: نقل
+//   الاستدعاء إلى الخادم وتدوير القيمة — لا يُثبت من ملف واحد ⇒ لا تعديل والسبب مُسجَّل.
+// • بايثون: os.environ.get('X', '') يُرجع نصًّا فارغًا عند الغياب — «فشلٌ مفتوح» محتمل (مفتاح HMAC/JWT فارغ يُوقّع
+//   ويتحقق بلا خطأ). تبديله إلى os.environ['X'] (توقّف صريح) قرارُ نشرٍ لم يُعتمد بعد، فالسبب المُسجَّل يذكر الشرط.
+// • JS/Java/C#/PHP: القراءة تُرجع undefined/null/false عند الغياب؛ ومعظم المكتبات ترفض المفتاح الفارغ (jsonwebtoken،
+//   crypto.createHmac)، لكن الدمج النصّي يمرّ صامتًا ("Bearer undefined") — لذلك يُذكر الشرط في سبب القرار.
+// والسبب المُسجَّل يذكر المتغير المطلوب وتدوير القيمة المسرّبة: التعديل وحده لا يكفي.
+function _secretBrowserContext(code, ext, fileName) {
+  const e = String(ext || '').toLowerCase();
+  if (e === 'html' || e === 'htm') return true;
+  if (e !== 'js' && e !== 'ts' && e !== 'jsx' && e !== 'tsx' && e !== 'mjs') return false;
+  const c = String(code);
+  const node = /\brequire\s*\(|module\.exports|\bexports\.|\bprocess\.(?:env|argv|exit|on|cwd)\b|__dirname|__filename|from\s+['"](?:node:|fs|path|http|https|express|crypto|child_process|os|net)['"]/.test(c);
+  const browser = /\b(?:document|window|localStorage|sessionStorage|navigator)\s*\.|\baddEventListener\s*\(/.test(c);
+  return browser && !node;
+}
+function _envRequiredNote(name) {
+  return ' — يتطلب ضبط متغير البيئة ' + name + ' في بيئة التشغيل قبل النشر (مثل Vercel Environment Variables أو .env مع dotenv محليًا)، ' +
+         'وتدوير القيمة القديمة لأنها مسرَّبة في تاريخ git';
+}
+
 // ─── Hardcoded Password ───────────────────────────────
 function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const lines = code.split('\n');
@@ -282,6 +305,9 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   const ext = detectExt(code, fileName);
   const varMatch = line.match(/(\w+)\s*[:=]/);
   const varName = varMatch ? varMatch[1].toUpperCase() : 'SECRET';
+  if (_secretBrowserContext(code, ext, fileName)) {
+    return _reDecline('SECRET_IN_BROWSER_CODE — كود متصفح: process.env غير معرَّف هناك، والسرّ المُرسَل إلى المتصفح مكشوف أصلًا؛ يلزم نقل الاستدعاء إلى الخادم وتدوير القيمة', 0.9);
+  }
 
   let fixed = line;
   if (ext === 'py') {
@@ -293,7 +319,7 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
     lines[ln] = fixed;
     const withOs = _pyEnsureImportOs(lines.join('\n'));
     if (withOs === null) return null;
-    return { fixed: withOs, patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' };
+    return { fixed: withOs, patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' + _envRequiredNote(varName) };
   } else if (ext === 'js' || ext === 'ts') {
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `process.env.${varName}`);
   } else if (ext === 'java') {
@@ -309,7 +335,7 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
 
   if (fixed === line) return null;
   lines[ln] = fixed;
-  return { fixed: lines.join('\n'), patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' };
+  return { fixed: lines.join('\n'), patch: fixed.trim(), reason: 'Hardcoded credential moved to env variable' + _envRequiredNote(varName) };
 }
 
 // ─── Command Injection JS/TS — splice لا string concat ─
@@ -1217,6 +1243,9 @@ function fixHardcodedSecret(code, issue, lines, ext) {
     return null;
   }
 
+  if (_secretBrowserContext(code, ext, null)) {
+    return _reDecline('SECRET_IN_BROWSER_CODE — كود متصفح: process.env غير معرَّف هناك، والسرّ المُرسَل إلى المتصفح مكشوف أصلًا؛ يلزم نقل الاستدعاء إلى الخادم وتدوير القيمة', 0.9);
+  }
   let fixed = line;
 
   if (ext === 'py') {
@@ -1241,7 +1270,7 @@ function fixHardcodedSecret(code, issue, lines, ext) {
     out = _pyEnsureImportOs(out);          // بلا import os ⇒ NameError (إصلاح مزيّف)
     if (out === null) return null;
   }
-  return { fixed: out, patch: fixed.trim(), reason: 'Secret moved to env variable' };
+  return { fixed: out, patch: fixed.trim(), reason: 'Secret moved to env variable' + _envRequiredNote(varName) };
 }
 
 // ─── Log Secret — يحافظ على توقيع Log.d/e ───────────
@@ -1393,6 +1422,9 @@ function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   if (!m) return null;
   const varName = m[1];
   const envName = varName.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
+  if (_secretBrowserContext(code, ext, fileName)) {
+    return _reDecline('SECRET_IN_BROWSER_CODE — كود متصفح: process.env غير معرَّف هناك، والسرّ المُرسَل إلى المتصفح مكشوف أصلًا؛ يلزم نقل الاستدعاء إلى الخادم وتدوير القيمة', 0.9);
+  }
 
   if (ext === 'py') {
     lines[ln] = line.replace(/["'][^"']+["']/, `os.environ.get('${envName}', '')`);
@@ -1411,7 +1443,7 @@ function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
     return null;
   }
 
-  return { fixed: lines.join('\n'), patch: lines[ln].trim(), reason: `Secret → ${envName} env variable` };
+  return { fixed: lines.join('\n'), patch: lines[ln].trim(), reason: `Secret → ${envName} env variable` + _envRequiredNote(envName) };
 }
 
 // ─── Command Injection Python ─────────────────────────

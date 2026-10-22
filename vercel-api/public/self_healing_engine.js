@@ -1033,6 +1033,37 @@ const SelfHealing = {
       evidence.baseCode = baseCode;
     }
 
+    // [ONE-GATE] اختبارات SelfHealing (Tests.runAll) فحصٌ خاص بها، لا سجلّ إثبات البوابة (SQL المعامَل، السرّ،
+    // المصارف، الاعتماد، eval، المعرِّف غير المعرَّف…). فقبل أي كتابة عبر applyCallback يلزم أن تقبل البوابة
+    // نفسها الزوج (الأصل، المعدَّل) — واعتماد الإنسان لا يُغني عنها. والاعتماد بلا applyCallback (تسجيلُ قرار
+    // فقط) يبقى كما كان. (وغياب البوابة: انظر الحدّ المُعلَن أدناه.)
+    if (typeof applyCallback === "function") {
+      const FVg = (typeof FixVerifier !== "undefined" && FixVerifier && typeof FixVerifier.verifyFix === "function") ? FixVerifier
+                : (global && global.FixVerifier && typeof global.FixVerifier.verifyFix === "function" ? global.FixVerifier : null);
+      const snapG = Snapshots.getById(id);
+      const filesG = snapG && snapG.files ? Object.values(snapG.files) : [];
+      const baseG = evidence && typeof evidence.baseCode === "string" ? evidence.baseCode
+                  : (filesG.length === 1 && typeof filesG[0] === "string" ? filesG[0] : null);
+      const fileG = (snapG && snapG.files && Object.keys(snapG.files)[0]) || entry.fileName || "unknown.js";
+      // حدّ مُعلَن: المحرك وحدة مستقلة تُحمَّل أحيانًا بلا البوابة (اختباراته، وسياقات بلا محلّل)؛ هناك يبقى
+      // سلوكه السابق (اختباراته + اعتماد الإنسان + أختام الدليل). وحيث البوابة محمَّلة — كل سياقات الإنتاج
+      // (api/analyze.js، index.html) — لا كتابة دون قبولها.
+      if (FVg && baseG === null) {
+        return deny({ id, status: "REJECTED", reasons: ["BASE_CODE_UNAVAILABLE"],
+                      error: "الكود الأصلي غير متاح — لا يمكن تمرير الزوج على البوابة" }, ["BASE_CODE_UNAVAILABLE"]);
+      }
+      let gv = FVg ? null : { accepted: true, reason: "NO_GATE_LOADED" };
+      if (FVg) try {
+        const an = typeof analyzeCode === "function" ? analyzeCode : (global && typeof global.analyzeCode === "function" ? global.analyzeCode : null);
+        gv = FVg.verifyFix(baseG, patchedCode, fileG, an, {});
+      } catch (e) { gv = { accepted: false, reason: "VERIFIER_THREW: " + (e && e.message) }; }
+      if (!gv || gv.accepted !== true) {
+        const why = String((gv && gv.reason) || "REJECTED");
+        return deny({ id, status: "REJECTED", reasons: ["GATE_REJECTED"],
+                      error: "البوابة رفضت الإصلاح: " + why }, ["GATE_REJECTED"]);
+      }
+    }
+
     // ✅ نُشغّل applyCallback أولاً — APPROVED فقط إذا نجح
     if (typeof applyCallback === "function") {
       try {

@@ -62,6 +62,16 @@
 //   [5] crypto: قُيّد بسياق أمني صريح. كان يبدّل md5/sha1 في ETag أو
 //       checksum أو توافق مع نظام خارجي — وهذا كسر توافق لا إصلاح أمني.
 //
+//   [6] [NO-BLIND] المُعمِّمات الأربعة الباقية معطَّلة (enabled:false) كما عُطِّل sql، والسبب مقيس:
+//       كلٌّ منها تحويلٌ بنمطٍ على سطر واحد بلا سياق، ونسخةٌ أضعف من مُصلِحٍ سياقي قائم:
+//         accumulation  x = a.b ⇒ x += a.b      يغيّر المعنى متى لم تكن x صفرًا (repair_engine يقرّر بتدفق البيانات)
+//         secret        "…" ⇒ process.env.X      بلا فحص غياب المتغيّر: قيمة undefined وقت التشغيل
+//                                                (repair_engine.fixSecret مع البوابة، وانظر [ENV-REQUIRED])
+//         crypto        md5 ⇒ sha256 على سطر فيه password/token   تبديل خوارزمية تهشير اعتماد خطأ (يلزم KDF)
+//         xss_dom       innerHTML = v ⇒ textContent = v   يُسطّح HTML مقصودًا إن كانت v تحمل وسومًا (XSSFixer سياقي)
+//       ومقيس أن البوابة قبلت ثلاثة منها (accumulation، secret، xss_dom). والملف بلا مستدعٍ إنتاجي اليوم، فالتعطيل
+//       لا يُسقط إصلاحًا مستعملًا؛ والمطابقة الحرفية لأنماط المخزن (المتعلَّمة من إصلاحات قبلتها البوابة) باقية.
+//
 // الواجهة العامة (بلا تغيير):
 //   LearnedFixer.apply / smartApply / GENERALIZERS
 //   window.LearnedFixer / module.exports كما كانا.
@@ -114,6 +124,8 @@ var LearnedFixer = (() => {
   // السطر كما هو. مرشّح لم يُولَّد أفضل من مرشّح مكسور يستهلك دورة تحقق.
   const GENERALIZERS = {
     accumulation: {
+      enabled:  false,   // [NO-BLIND] انظر [6] في الترويسة
+      reason:   'blind_assignment_to_accumulation_changes_semantics',
       ext:      ['js', 'ts', 'py', 'php'],
       detect:   /(\w+)\s*=(?!=|\+)\s*(\w+\.\w+)\s*;/,
       fix:      (line, m) => line.replace(`${m[1]} = ${m[2]}`, `${m[1]} += ${m[2]}`),
@@ -137,6 +149,8 @@ var LearnedFixer = (() => {
     },
 
     secret: {
+      enabled:  false,   // [NO-BLIND] انظر [6] في الترويسة
+      reason:   'no_missing_env_handling_duplicate_of_contextual_fixer',
       // [v2.1] JS/TS فقط — process.env صيغة JavaScript.
       // Python تحتاج os.environ.get، PHP تحتاج getenv، Java تحتاج System.getenv،
       // وكلها تحتاج استيرادات/سياقًا مختلفًا. إصلاحها ليس استبدال نص.
@@ -154,6 +168,8 @@ var LearnedFixer = (() => {
     },
 
     crypto: {
+      enabled:  false,   // [NO-BLIND] انظر [6] في الترويسة
+      reason:   'credential_hash_needs_kdf_not_sha256',
       ext:      ['js', 'ts'],
       detect:   /createHash\s*\(\s*['"](?:md5|sha1)['"]\s*\)/i,
       fix:      (line) => {
@@ -169,6 +185,8 @@ var LearnedFixer = (() => {
     },
 
     xss_dom: {
+      enabled:  false,   // [NO-BLIND] انظر [6] في الترويسة
+      reason:   'textContent_flattens_intended_html_duplicate_of_xssfixer',
       ext:      ['js', 'ts', 'html'],
       // [v2.1] إسناد مباشر فقط: x.innerHTML = ident;
       // القيمة معرّف بسيط (مع وصول خصائص) — لا استدعاء دالة، لا +، لا

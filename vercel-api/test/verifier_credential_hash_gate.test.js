@@ -122,10 +122,22 @@ test('[CRED-2] اعتماد: الترحيلُ إلى دالةِ اشتقاقِ �
     'الإصلاحُ الصحيح (bcrypt) رُفض — الحارسُ صار منعًا شاملًا: ' + v.reason);
 });
 
-test('[CRED-3] غيرُ اعتماد: md5 ⇒ sha256 يبقى مقبولًا', () => {
+// [HASH-EPHEMERAL] كان: «غير اعتماد ⇒ md5 ⇒ sha256 مقبول». لكن fileChecksum تُصدَّر وتُرجع البصمة: تبديل
+// الخوارزمية يغيّر كل checksum (طولًا وقيمة) فيكسر مقارنتها بقيمٍ محفوظة أو منشورة. فالرفض هنا صحيح، وسببه ليس
+// الاعتماد. والمقبول خارج الاعتماد: بصمة تبقى مفتاحًا داخليًا لـMap/Set محلي (لا تغادر الملف).
+test('[CRED-3] غيرُ اعتماد: md5 ⇒ sha256 لبصمة مُصدَّرة مرفوض (يغيّر الناتج) — وليس بسبب الاعتماد', () => {
   const v = gate(PLAIN, toSha256(PLAIN), 'h.js');
-  assert.strictEqual(v.accepted, true,
-    'مجموعُ تحقّقٍ لملف رُفض إصلاحُه — الحارسُ يتعدّى سياق الاعتماد: ' + v.reason);
+  assert.strictEqual(v.accepted, false, 'checksum مُصدَّر تغيّرت قيمته وقُبل');
+  assert.ok(v.reason.indexOf('REJECTED_CRYPTO_FIX_UNPROVEN') === 0, v.reason);
+  assert.doesNotMatch(v.reason, /تهشيرُ اعتماد/, 'نُسب الرفض للاعتماد خطأً');
+});
+
+test('[CRED-3b] غيرُ اعتماد: بصمة مفتاحٌ داخلي لـMap محلي ⇒ sha256 مقبول', () => {
+  const B = ['const crypto = require("crypto");', 'const cache = new Map();', 'function memo(key, load) {',
+    '  const h = crypto.createHash("md5").update(key).digest("hex");', '  if (!cache.has(h)) cache.set(h, load(key));',
+    '  return cache.get(h);', '}', 'module.exports = { memo };'].join('\n');
+  const v = gate(B, toSha256(B), 'h.js');
+  assert.strictEqual(v.accepted, true, v.reason);
 });
 
 // ═══════════════════════════════════════════════════════════════════════

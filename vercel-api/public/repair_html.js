@@ -126,40 +126,31 @@ var HTMLRepair = (() => {
   }
 
   // ─── Main Fix ──────────────────────────────────────
+  // [NO-BLIND] كان fix() يطبّق على كل سطر «JS» في الصفحة سبعة تحويلات نصية بلا سياق، ومقيس أنها تمرّ
+  // من بوابة الخادم إلى SAFE_AUTO_FIX لأن HTML بلا فاحص نحوي (SYNTAX_UNVERIFIED [html]):
+  //   total = order.price            ⇒ total += order.price                 (يغيّر المعنى)
+  //   x.innerHTML = "<b>" + name …   ⇒ el.textContent = String(name)…      (el غير معرَّف ⇒ ReferenceError، ويُسقط <b>)
+  //   eval(x)                        ⇒ سطر تعليق                           (يحذف الكود)
+  //   "SELECT …" + id                ⇒ سطر تعليق                           (يحذف الاستعلام)
+  //   const KEY = "…"                ⇒ process.env.KEY                      (process غير معرَّف في المتصفح)
+  //   createHash("md5")              ⇒ "sha256"                             (يغيّر الناتج)
+  //   'http://…'                     ⇒ "https://…"                          (بلا فحص المضيف/المنفذ)
+  //   وحذف نصوص «SECRET=…» من <p>   (يحذف محتوى صفحة قد يكون توثيقًا؛ والسرّ المسرَّب يلزمه تدوير لا حذف)
+  // الآن: XSS وحده، بالمُصلح السياقي XSSFixer (AST لكل <script> مضمَّن، تهريب يحفظ الـmarkup، ورفض السياقات
+  // التي لا يحميها التهريب). كل ما عداه لا يُلمس هنا ويبقى مُبلَّغًا للمراجعة. الدوال القديمة أعلاه باقية
+  // للتوافق (getLineType جزء من الواجهة) ولا تُستدعى.
   function fix(code, fileName) {
     const ext = (fileName || '').split('.').pop().toLowerCase();
     if (ext !== 'html' && ext !== 'htm') return { fixed: code, repairs: [] };
-
-    const repairs = [];
-    let lines = code.split('\n');
-
-    lines = lines.map((line, i) => {
-      const orig = line;
-
-      // طبّق الإصلاحات بالترتيب
-      line = fixSecrets(line);
-      line = fixEval(line);
-      line = fixXSS(line);
-      line = fixHTTP(line);
-      line = fixSQL(line);
-      if (/createHash\s*\(\s*['"](?:md5|sha1)['"]/i.test(line.trim()))
-        line = line.replace(/['"](?:md5|sha1)['"]/i, '"sha256"');
-      { const _m = line.match(/(\w+)\s*=(?!=|>|\+|-)\s*(\w+\.\w+)/);
-        if (_m && !/(const|let|var)\s/.test(line) && !new RegExp(`\\b${_m[1]}\\b\\s*=>`).test(line) && !/textContent|innerHTML|className|style/.test(line))
-          line = line.replace(new RegExp(`\\b${_m[1]}\\b\\s*=(?!=|>|\\+|-)\\s*`), `${_m[1]} += `); }
-
-      if (line !== orig) repairs.push({ line: i + 1, fix: line.trim().slice(0, 50) });
-      return line;
-    });
-
-    let result = lines.join('\n');
-
-    // صلح Footer secrets
-    const beforeFooter = result;
-    result = fixFooterSecrets(result);
-    if (result !== beforeFooter) repairs.push({ line: 0, fix: 'Footer secrets cleaned' });
-
-    return { fixed: result, repairs, changed: result !== code };
+    const X = (typeof XSSFixer !== 'undefined' && XSSFixer && typeof XSSFixer.fix === 'function') ? XSSFixer : null;
+    if (!X) return { fixed: code, repairs: [], changed: false };
+    let r = null;
+    try { r = X.fix(code, fileName); } catch (e) { r = null; }
+    if (!r || typeof r.fixed !== 'string' || r.fixed === code) {
+      return { fixed: code, repairs: [], changed: false, unresolved: (r && r.unresolved) || [] };
+    }
+    const repairs = (r.edits || []).map(e => ({ line: e.line || 0, fix: String(e.action || 'XSS').slice(0, 50) }));
+    return { fixed: r.fixed, repairs, changed: true, unresolved: r.unresolved || [] };
   }
 
   return { fix, getLineType };

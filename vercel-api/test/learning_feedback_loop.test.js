@@ -86,8 +86,12 @@ const P_REGRESS = () => pat('p-regress', JS_LINE, 's = eval(x);', 'js');
 const P_BENIGN  = () => pat('p-benign', JS_LINE, 's = s + (x);', 'js');
 // موجب: إصلاح يُقِس المحلل له تحسّنًا فعليًّا
 // (عيّنة innerHTML كان يسبقها repairCode فتُفقد الإحالة إلى applyLearned)
-const P_PASS    = () => pat('p-pass', 'r = eval(x);', 'r = JSON.parse(x);', 'js');
-const PASS_FILE = 'function g(el, x, r) {\n  r = eval(x);\n  return r;\n}\n';
+// [EVAL-JSON] كانت العيّنة eval(x) ⇒ JSON.parse(x)، والبوابة صارت ترفضها (تغيّر الناتج لأي x ليس JSON).
+// العيّنة الموجبة الآن إصلاحٌ تُثبته البوابة: بصمة md5 مفتاحٌ داخلي لـSet محلي ⇒ sha256 ([HASH-EPHEMERAL]).
+const PASS_LINE = 'const k = crypto.createHash("md5").update(String(v)).digest("hex");';
+const P_PASS    = () => pat('p-pass', PASS_LINE, PASS_LINE.replace('"md5"', '"sha256"'), 'js');
+const PASS_FILE = 'const crypto = require("crypto");\nconst seen = new Set();\nfunction g(v) {\n  ' + PASS_LINE +
+                  '\n  if (seen.has(k)) return false;\n  seen.add(k);\n  return true;\n}\nmodule.exports = g;\n';
 
 // ═══ 0. شروط العزل — تمنع التغطية الخاوية ══════════════
 
@@ -203,8 +207,8 @@ test('PASS لا يُحرّك failures ولا يُنقص الثقة', () => {
   assert.strictEqual(o.outcome, 'PASS', `الحكم ${o.outcome} · ${o.gateReason}/${o.ghostReason}`);
   assert.strictEqual(o.source, 'applyLearned', 'الإحالة ليست لمسار التعلّم');
   // الإصلاح المتعلَّم وصل إلى الملف فعلاً — لا حكم على فراغ
-  assert.ok(/JSON\.parse\(x\)/.test(out['p.js']), 'بديل النمط لم يُكتب في الملف');
-  assert.ok(!/eval\(x\)/.test(out['p.js']), 'eval باقٍ ⇒ لم يُصلَح شيء');
+  assert.ok(/"sha256"/.test(out['p.js']), 'بديل النمط لم يُكتب في الملف');
+  assert.ok(!/"md5"/.test(out['p.js']), 'md5 باقٍ ⇒ لم يُصلَح شيء');
   const p = db.patterns.find(x => x.id === 'p-pass');
   assert.strictEqual(p.failures, 0, 'failures تحرّك على حكم موجب');
   assert.ok(p.confidence >= 0.6, 'confidence نزل على حكم موجب');
