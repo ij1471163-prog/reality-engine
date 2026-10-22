@@ -10,6 +10,7 @@
 
 
 const vm   = require('vm');
+const sec  = require('../../lib/api_security.js');
 const fs   = require('fs');
 const path = require('path');
 
@@ -368,6 +369,10 @@ async function githubPut(filePath, content, sha, message) {
 // ─── Main Handler ────────────────────────────────────
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // كل كتابة هنا commit حقيقي على GitHub، فالمسار يتطلب سرَّ خادم لا يحمله
+  // أي عميلٍ عام. غيابُ PATTERNS_WRITE_SECRET ⇒ المسار معطّل (503) لا مفتوح.
+  // وsessionId أدناه يختاره المرسل، فحدُّه لا يمنع شيئًا بلا هذا الشرط.
+  if (!sec.requireServerSecret(req, res, 'PATTERNS_WRITE_SECRET')) return;
   if (!TOKEN)                return res.status(500).json({ error: 'Server misconfigured' });
   if (!loadAnalyzer())       return res.status(500).json({ error: 'Analyzer unavailable' });
 

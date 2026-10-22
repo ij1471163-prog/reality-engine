@@ -489,13 +489,16 @@ test('[VERCEL] الطرائق من فحوص المعالج نفسه — ‎!==�
   assert.deepStrictEqual(M('export default (req,res) => res.end();'), ['ANY']);
 });
 
-test('[VERCEL] نقاط النهاية الحقيقية: api/analyze.js يعطي OPTIONS و POST', () => {
+// [API-SEC] حُذف CORS المفتوح ومعالجة OPTIONS من analyze.js: لا عميل متصفح
+// يستدعيه (أندرويد عميلٌ أصلي). فالطريقة الوحيدة في الملف صارت POST — والثابت
+// الحقيقي أدناه باقٍ: ما يُكتشف يطابق ما في الملف.
+test('[VERCEL] نقاط النهاية الحقيقية: api/analyze.js يعطي POST', () => {
   const name = 'vercel-api/api/analyze.js';
   const code = fs.readFileSync(path.join(API_DIR, 'analyze.js'), 'utf8');
   const d = detect(code, name);
   const eps = PI.mapAPIEndpoints(code, d, name);
 
-  assert.deepStrictEqual(eps.map(e => e.method).sort(), ['OPTIONS', 'POST']);
+  assert.deepStrictEqual(eps.map(e => e.method).sort(), ['POST']);
   for (const e of eps) {
     assert.strictEqual(e.path, '/api/analyze');
     assert.strictEqual(e.source, 'file-route', 'مصدر المسار يجب أن يُعلَن');
@@ -706,7 +709,7 @@ test('[INTEGRATED] vercel-api: بيئة ← تحليل عبر الملفات ←
   const onDisk = fs.readdirSync(API_DIR).filter(f => f.endsWith('.js'))
     .map(f => '/api/' + f.replace(/\.js$/, ''));
   for (const p of onDisk) assert.ok(paths.has(p), 'مسار مفقود: ' + p);
-  assert.ok(r.eps.includes('POST /api/analyze') && r.eps.includes('OPTIONS /api/analyze'),
+  assert.ok(r.eps.includes('POST /api/analyze') && !r.eps.includes('OPTIONS /api/analyze'),
     JSON.stringify(r.eps));
 
   assert.strictEqual(r.nodes, files.length);

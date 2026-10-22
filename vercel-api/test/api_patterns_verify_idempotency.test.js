@@ -23,6 +23,10 @@
 'use strict';
 
 process.env.GITHUB_TOKEN = 'test-token-not-real';
+// [API-SEC] الكتابة صارت تتطلب سرَّ خادم (PATTERNS_WRITE_SECRET). سرٌّ وهمي يُرسَل
+// في كل نداء هنا — بيانات طلب فقط؛ الرفض بلا سرّ مُختبَر في api_security.test.js.
+process.env.PATTERNS_WRITE_SECRET = 'patterns-secret-NOT-REAL';
+const AUTH = { authorization: 'Bearer patterns-secret-NOT-REAL' };
 
 const test   = require('node:test');
 const assert = require('node:assert');
@@ -107,7 +111,7 @@ function mkRes() {
 let sessionSeq = 0;
 const call = async (body) => {
   const res = mkRes();
-  await handler({ method: 'POST', body: Object.assign(
+  await handler({ method: 'POST', headers: AUTH, body: Object.assign(
     { sessionId: 'idemp-session-' + (++sessionSeq) }, body) }, res);
   return res;
 };
@@ -434,7 +438,7 @@ test('documented: فشل شبكة في الكتابة يخرج استثناءً 
   const state = mockGitHub(baseDb(), ['throw']);
   let threw = false;
   try {
-    await handler({ method: 'POST', body: {
+    await handler({ method: 'POST', headers: AUTH, body: {
       patternId: PID, success: true, resultId: 'result-netthrow-00001', sessionId: 'net-throw-session',
     } }, mkRes());
   } catch (e) { threw = true; }

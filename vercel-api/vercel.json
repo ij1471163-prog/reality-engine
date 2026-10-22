@@ -31,10 +31,36 @@
   ],
   "functions": {
     "api/patterns/save.js": {
-      "includeFiles": "public/**"
+      "includeFiles": "public/**",
+      "maxDuration": 30
     },
     "api/analyze.js": {
-      "includeFiles": "public/**"
+      "includeFiles": "public/**",
+      "maxDuration": 60
+    },
+    "api/patterns/verify.js": {
+      "maxDuration": 30
+    },
+    "api/chat.js": {
+      "maxDuration": 60
+    },
+    "api/session.js": {
+      "maxDuration": 10
+    },
+    "api/webtoken.js": {
+      "maxDuration": 10
+    },
+    "api/analyzer.js": {
+      "maxDuration": 10
+    },
+    "api/verify-purchase.js": {
+      "maxDuration": 10
+    },
+    "api/unzip.js": {
+      "maxDuration": 30
+    },
+    "api/patterns/list.js": {
+      "maxDuration": 10
     }
   }
 }

@@ -133,19 +133,13 @@ public class AIEngine {
                                     Map<String, String> relatedFiles,
                                     Callback callback) {
         executor.submit(() -> {
-            // جلب المفتاح داخل background thread
-            if (apiKey == null || apiKey.isEmpty()) {
-                try {
-                    apiKey = fetchKeyFromServer();
-                } catch (Exception ignored) {}
-            }
-            if (apiKey == null || apiKey.isEmpty()) {
-                mainHandler.post(() -> callback.onError("خطأ: لم يتم تعيين API Key"));
+            // جلب الرمز داخل background thread. رمزُ الجلسة لا يُخزَّن في apiKey:
+            // كان يُحفظ فيه للأبد فيسقط كل نداءٍ بـ401 بعد انتهاء صلاحيته
+            // حتى يُعاد تشغيل التطبيق. callAPI يأخذ الرمز الصالح في كل نداء.
+            if (currentBearer().isEmpty()) {
+                mainHandler.post(() -> callback.onError("خطأ: تعذر الحصول على Session Token"));
                 return;
             }
-            // Debug: أظهر أول 6 أحرف من المفتاح
-            final String keyHint = apiKey.length() > 6 ? apiKey.substring(0,6)+"..." : "SHORT";
-            // Key validated
             try {
                 String prompt = buildContextualPrompt(fullCode, fileName, candidates, relatedFiles);
                 String rawResponse = callAPIWithRetry(prompt);
@@ -218,30 +212,40 @@ public class AIEngine {
                 body.put("fileName", fileName);
                 body.put("fix", false);
 
-                java.net.URL url = new java.net.URL(ANALYZE_URL);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
+                int code2 = 0;
+                String response = "";
+                // محاولتان كحدٍّ أقصى: 401 الأولى غالبًا رمزٌ انتهى أو تغيّر عنوان
+                // الشبكة (الرمز مربوطٌ بالـIP) ⇒ يُبطَل ويُجلب جديد. والثانية خطأ حقيقي.
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    String session = fetchSessionToken();
+                    if (session == null || session.isEmpty()) {
+                        callback.onError("خطأ: تعذر الحصول على Session Token");
+                        return;
+                    }
+                    java.net.URL url = new java.net.URL(ANALYZE_URL);
+                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setRequestProperty("Content-Type", "application/json");
+                    conn.setRequestProperty("Authorization", "Bearer " + session);
+                    conn.setDoOutput(true);
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(30000);
 
-                String session = fetchSessionToken();
-                if (session == null || session.isEmpty()) {
-                    callback.onError("خطأ: تعذر الحصول على Session Token");
-                    return;
+                    try (java.io.OutputStream os = conn.getOutputStream()) {
+                        os.write(body.toString().getBytes("UTF-8"));
+                    }
+
+                    code2 = conn.getResponseCode();
+                    java.io.InputStream is = code2 == 200 ? conn.getInputStream() : conn.getErrorStream();
+                    response = "";
+                    if (is != null) {
+                        java.util.Scanner sc = new java.util.Scanner(is, "UTF-8").useDelimiter("\\A");
+                        response = sc.hasNext() ? sc.next() : "";
+                    }
+                    conn.disconnect();
+                    if (code2 != 401) break;
+                    invalidateSessionToken();
                 }
-                conn.setRequestProperty("Authorization", "Bearer " + session);
-
-                conn.setDoOutput(true);
-                conn.setConnectTimeout(15000);
-                conn.setReadTimeout(30000);
-
-                try (java.io.OutputStream os = conn.getOutputStream()) {
-                    os.write(body.toString().getBytes("UTF-8"));
-                }
-
-                int code2 = conn.getResponseCode();
-                java.io.InputStream is = code2 == 200 ? conn.getInputStream() : conn.getErrorStream();
-                java.util.Scanner sc = new java.util.Scanner(is).useDelimiter("\\A");
-                String response = sc.hasNext() ? sc.next() : "";
 
                 if (code2 == 200) {
                     callback.onResult(response);
@@ -718,7 +722,22 @@ public class AIEngine {
     private static String sessionToken = null;
     private static long tokenExpiry = 0;
 
-    private static String fetchSessionToken() {
+    /** يُبطل الرمز المخزَّن فيُجلب جديدٌ في النداء التالي (بعد 401). */
+    static synchronized void invalidateSessionToken() {
+        sessionToken = null;
+        tokenExpiry = 0;
+    }
+
+    /** مفتاحٌ عُيِّن صراحةً بـsetApiKey، وإلا رمزُ الجلسة الصالح. */
+    private static String currentBearer() {
+        if (apiKey != null && !apiKey.isEmpty()) return apiKey;
+        String t = fetchSessionToken();
+        return t == null ? "" : t;
+    }
+
+    // synchronized: المنفّذ متعدد الخيوط، وبلا قفلٍ يجلب كل خيطٍ رمزًا فيُستهلك
+    // حدُّ /api/session على فتحةٍ واحدة.
+    private static synchronized String fetchSessionToken() {
         try {
             // لو Token لا يزال صالح
             if (sessionToken != null && System.currentTimeMillis() < tokenExpiry - 60000) {
@@ -732,14 +751,21 @@ public class AIEngine {
             conn.setReadTimeout(5000);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.getOutputStream().write("{}".getBytes());
-            java.io.BufferedReader br = new java.io.BufferedReader(
-                new java.io.InputStreamReader(conn.getInputStream()));
-            String response = br.readLine();
-            br.close();
-            if (response != null) {
-                org.json.JSONObject json = new org.json.JSONObject(response);
-                sessionToken = json.optString("token", "");
-                tokenExpiry = System.currentTimeMillis() + 600000; // 10 دقائق
+            int status = conn.getResponseCode();
+            if (status != 200) {
+                android.util.Log.e("AIEngine", "Session fetch: HTTP " + status);
+                conn.disconnect();
+                return "";
+            }
+            String response = readStream(conn.getInputStream());
+            conn.disconnect();
+            if (response != null && !response.trim().isEmpty()) {
+                org.json.JSONObject json = new org.json.JSONObject(response.trim());
+                String token = json.optString("token", "");
+                if (token.isEmpty()) return "";
+                long ttlMs = json.optLong("expiresIn", 600) * 1000L;   // صلاحية الخادم لا رقمٌ مفترض
+                sessionToken = token;
+                tokenExpiry = System.currentTimeMillis() + ttlMs;
                 return sessionToken;
             }
         } catch (Exception e) {
@@ -753,11 +779,14 @@ public class AIEngine {
     }
 
     private static String callAPI(String prompt) throws Exception {
-        if (apiKey == null || apiKey.isEmpty()) {
-            apiKey = fetchKeyFromServer();
-        }
-        if (apiKey == null || apiKey.isEmpty()) {
-            throw new Exception("API Key غير معيّن");
+        return callAPI(prompt, false);
+    }
+
+    private static String callAPI(String prompt, boolean retriedAuth) throws Exception {
+        final boolean usingSession = (apiKey == null || apiKey.isEmpty());
+        final String bearer = currentBearer();
+        if (bearer.isEmpty()) {
+            throw new Exception("تعذر الحصول على Session Token");
         }
 
         HttpURLConnection conn = null;
@@ -768,7 +797,7 @@ public class AIEngine {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            conn.setRequestProperty("Authorization", "Bearer " + bearer);
             // Gemini يقبل المفتاح كـheader بدل ما يكون بالـURL (أنظف من ناحية اللوقات)
             // المفتاح صار بالـURL (?key=) بدل الـheader — شوف السطر اللي بنى url فوق
             conn.setDoOutput(true);
@@ -794,6 +823,14 @@ public class AIEngine {
 
             if (responseCode == 429 || responseCode >= 500) {
                 throw new RetryableException("HTTP " + responseCode);
+            }
+
+            // رمزٌ انتهى أو تغيّر عنوان الشبكة ⇒ يُبطَل ويُعاد النداء مرّةً واحدة
+            if (responseCode == 401 && usingSession && !retriedAuth) {
+                conn.disconnect();
+                conn = null;
+                invalidateSessionToken();
+                return callAPI(prompt, true);
             }
 
             if (responseCode < 200 || responseCode >= 300) {

@@ -4,6 +4,8 @@
 // يحدث verified/failures/confidence على السيرفر فقط
 "use strict";
 
+const sec = require('../../lib/api_security.js');
+
 const REPO      = process.env.GITHUB_REPO   || 'ij1471163-prog/reality-engine';
 const BRANCH    = process.env.GITHUB_BRANCH || 'repair-learning';
 const FILE_PATH = process.env.PATTERNS_PATH  || 'vercel-api/public/data/patterns.json';
@@ -61,8 +63,12 @@ async function githubPut(path, content, sha, message) {
   return { ok: res.status === 200 || res.status === 201, status: res.status };
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // ثلاثُ نتائج تعتمد نمطًا وثلاثٌ تحظره، وresultId وsessionId يختارهما
+  // المرسل — فبلا سرّ خادم يتحكم أيُّ أحدٍ في قائمة الأنماط المعتمدة.
+  // غيابُ PATTERNS_WRITE_SECRET ⇒ المسار معطّل (503) لا مفتوح.
+  if (!sec.requireServerSecret(req, res, 'PATTERNS_WRITE_SECRET')) return;
   if (!TOKEN) return res.status(500).json({ error: 'Server misconfigured' });
 
   const { patternId, success, sessionId, resultId } = req.body || {};

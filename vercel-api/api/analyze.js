@@ -3,52 +3,39 @@ const path = require('path');
 const vm = require('vm');
 const { RealityOrchestrator } = require('../public/server_engine_registration.js');
 
-const analyzeLimits = new Map();
+const sec = require('../lib/api_security.js');
 
+// حدود عديمة الحالة تسري في كل نسخة. القياس على مدخلٍ خبيث (تكرار سطرٍ قصير):
+// 50KB بلا إصلاح ≈ 1.3 ثانية و200KB ≈ 18 ثانية، ومع fix: 5KB ≈ 2.7 و10KB ≈ 10.
+// النموّ أسرع من خطي، فالحجم يخفّف ولا يضمن: السقف الحاسم maxDuration في vercel.json.
+const MAX_CODE_CHARS = 100 * 1024;
+const MAX_FIX_CODE_CHARS = 10 * 1024;
+const MAX_FILENAME_CHARS = 255;
+
+// احتياطيٌّ داخل نسخةٍ واحدة — ليس حماية. الحدُّ الحقيقي: قاعدة Vercel WAF.
+const perIp = sec.bestEffortLimiter(20, 10 * 60 * 1000);
+
+// لا CORS: أندرويد عميلٌ أصلي لا يحتاجه، والويب لا يستدعي هذا المسار.
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  
-  // Rate limit: 20 requests per IP per 10min
-  const ip = req.headers['x-forwarded-for']?.split(',')[0] || 'unknown';
-  const now = Date.now();
-  const limits = (analyzeLimits.get(ip) || []).filter(t => now - t < 600000);
-  if (limits.length >= 20) return res.status(429).json({ error: 'Rate limit exceeded' });
-  analyzeLimits.set(ip, [...limits, now]);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Session authentication — same rotating HMAC token used by /api/chat.
-  const auth = req.headers['authorization'] || '';
-  const token = auth.replace(/^Bearer\s+/i, '').trim();
-  if (!token) return res.status(401).json({ error: 'No token' });
+  // رمز الجلسة — نفسه الذي يقبله /api/chat. ليس مصادقة (lib/api_security.js).
+  if (!sec.requireSession(req, res)) return;
+  if (!perIp(sec.clientIp(req))) return res.status(429).json({ error: 'Rate limit exceeded' });
 
-  const master = process.env.MASTER_SECRET || '';
-  if (!master) return res.status(500).json({ error: 'Server authentication is not configured' });
-
-  const crypto = require('crypto');
-  let valid = false;
-
-  for (let w = 0; w <= 1; w++) {
-    const window = Math.floor(Date.now() / (10 * 60 * 1000)) - w;
-    const expected = crypto.createHmac('sha256', master)
-      .update('web_' + window)
-      .digest('hex');
-
-    if (token === expected) {
-      valid = true;
-      break;
-    }
+  const { code, fileName, fix } = req.body || {};
+  if (typeof code !== 'string' || !code || typeof fileName !== 'string' || !fileName) {
+    return res.status(400).json({ error: 'code and fileName required' });
   }
-
-  if (!valid) return res.status(401).json({ error: 'Invalid token' });
-
-  const { code, fileName, fix } = req.body;
-  if (!code || !fileName) return res.status(400).json({ error: 'code and fileName required' });
+  if (fileName.length > MAX_FILENAME_CHARS || /[\u0000-\u001f]/.test(fileName)) {
+    return res.status(400).json({ error: 'invalid fileName' });
+  }
+  if (code.length > MAX_CODE_CHARS) {
+    return res.status(413).json({ error: 'Code too large', maxChars: MAX_CODE_CHARS });
+  }
+  if (fix && code.length > MAX_FIX_CODE_CHARS) {
+    return res.status(413).json({ error: 'Code too large for fix', maxChars: MAX_FIX_CODE_CHARS });
+  }
 
   try {
     const ctx = vm.createContext({ console, window: {}, global: {}, F: {}, R: {} });
@@ -114,17 +101,13 @@ module.exports = async (req, res) => {
 
     // تحقق من المحلل داخل VM
     if (typeof ctx.analyzeCode !== 'function') {
-      return res.status(500).json({
-        error: 'analyzeCode is not defined in VM',
-        available: Object.keys(ctx).filter(k => /analyze|engine|taint/i.test(k))
-      });
+      console.error('[analyze] analyzeCode is not defined in VM');
+      return res.status(500).json({ error: 'Analyzer unavailable' });
     }
 
     if (engineLoadErrors.length) {
-      return res.status(500).json({
-        error: 'Engine load errors',
-        details: engineLoadErrors
-      });
+      console.error('[analyze] engine load errors:', engineLoadErrors);
+      return res.status(500).json({ error: 'Analyzer unavailable' });
     }
 
     // تحليل
@@ -184,10 +167,16 @@ module.exports = async (req, res) => {
         orchestratorResult.decision.decision === RealityOrchestrator.Decision.SAFE_AUTO_FIX
           ? fixed
           : undefined,
-      orchestrator: fix ? orchestratorResult : undefined,
+      // ملخّصٌ فقط: الكائن الكامل يكشف داخل المنسّق (مراحل، مسارات، تفاصيل
+      // البوابة) ولا عميل يقرؤه — أندرويد يقرأ score/stats/issues/fixed.
+      orchestrator: fix ? {
+        decision: orchestratorResult && orchestratorResult.decision ? orchestratorResult.decision.decision : null,
+        reason: orchestratorResult && orchestratorResult.decision ? orchestratorResult.decision.reason : null,
+      } : undefined,
     });
 
   } catch(e) {
-    res.status(500).json({ error: e.message });
+    console.error('[analyze] failed:', e && e.stack || e);
+    res.status(500).json({ error: 'Analysis failed' });
   }
 };

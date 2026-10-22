@@ -1,21 +1,11 @@
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+// POST /api/analyzer — معطّل.
+// كان يُرجع مفتاح Gemini الخام لحامل ANALYZER_SECRET. لا مستدعي له في
+// المستودع، ومفتاحٌ يغادر الخادم لا يُستردّ. فالمسار يُرجع 410 دائمًا،
+// ولا يقرأ أي سرٍّ من البيئة أصلًا — فلا مسار في الكود يمكن أن يُخرج المفتاح.
+// (التنفيذ السابق في تاريخ git قبل هذا التعديل.)
+'use strict';
 
-  const auth = req.headers['authorization'] || '';
-  const token = auth.replace('Bearer ', '').trim();
-
-  // تحقق من التوكن — نفس السر المخزن في env
-  const secret = process.env.ANALYZER_SECRET || '';
-  if (!secret || token !== secret) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const key = process.env.GEMINIKEY || '';
-  if (!key) {
-    return res.status(500).json({ error: 'No API key' });
-  }
-
-  res.status(200).json({ key });
-}
+module.exports = async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).end();
+  res.status(410).json({ error: 'This endpoint has been disabled' });
+};
