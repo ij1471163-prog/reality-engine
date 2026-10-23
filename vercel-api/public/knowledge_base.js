@@ -357,7 +357,7 @@ var KnowledgeBase = (() => {
     // [XSS-ESCAPED] قاعدة innerHTML أعلاه تبلّغ عن **كل** إسناد (‎\s*‎ يتراجع فيُسقط شرط الاقتباس)،
     // فتعجز عن التمييز بين الثغرة ونسخها المُصلحة. يُستثنى بلاغ واحد فقط حين يُثبت الـAST أنه
     // مُصلَح: انظر _kbEscapedTextSink. كل ما عدا ذلك — ومنه النص الثابت — يبقى مُبلَّغًا كما كان.
-    return issues.filter(x => !(x.type === 'XSS' && /\.(?:inner|outer)HTML\s*=(?!=)/.test(String(x.ev)) &&
+    return issues.filter(x => !(x.type === 'XSS' && /\.(?:inner|outer)HTML\s*=(?!=)|\bsend\s*\(/.test(String(x.ev)) &&
                                 _kbEscapedTextSink(code, x.line)));
   }
 
@@ -423,28 +423,76 @@ var KnowledgeBase = (() => {
     }
     return st;
   }
+  // [RES-SEND-PROOF] الإثبات يُستدعى لكل سطر مَصرِف مرشّح، وكان كلُّ استدعاء يمشي الشجرة كلها مرتين ⇒ ملفٌ
+  // فيه 300 نداء res.send صار 7.5 ثانية (مقيس؛ 0.12 قبل البند). فيُحفظ لكل كائن AST (WeakMap — _kbParse يُعيد
+  // الكائن ذاته للنص ذاته): (1) صلاحية الدالة المساعدة، (2) مَصارِف كل سطر بترتيب المشي نفسه.
+  // المنطق حرفيًا كما هو؛ التكافؤ مع النسخة غير المحفوظة مُختبَر في res_send_html_proof.
+  const _kbHelperMemo = new WeakMap(), _kbSinkMemo = new WeakMap();
+  function _kbHelperOk(code, ast) {
+    if (_kbHelperMemo.has(ast)) return _kbHelperMemo.get(ast);
+    const r = (() => {
+      // 1. الدالة المساعدة
+      const decls = [];
+      let rebound = false;
+      _kbWalk(ast, n => {
+        if (n.type === 'FunctionDeclaration' && n.id && n.id.name === '__escapeHTML') decls.push(n);
+        if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === '__escapeHTML') rebound = true;
+        if (n.type === 'AssignmentExpression' && n.left.type === 'Identifier' && n.left.name === '__escapeHTML') rebound = true;
+        if (/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type) &&
+            n.params.some(p => p.type === 'Identifier' && p.name === '__escapeHTML')) rebound = true;
+      });
+      if (rebound || decls.length !== 1 || !ast.body.includes(decls[0])) return false;
+      if (code.slice(decls[0].start, decls[0].end).replace(/\s+/g, '') !== _KB_ESCAPER) return false;
+      return true;
+    })();
+    _kbHelperMemo.set(ast, r);
+    return r;
+  }
+  function _kbSinksAt(ast, lineNo) {
+    let idx = _kbSinkMemo.get(ast);
+    if (!idx) {
+      idx = new Map();
+      const add = (line, sink) => { const a = idx.get(line); if (a) a.push(sink); else idx.set(line, [sink]); };
+      // 2. المَصرِف في السطر: إسناد innerHTML/outerHTML، أو [RES-SEND] نداء send لرد Express —
+      //    المستقبِل R أو R.status(…) وR الوسيط الثاني لدالة المعالج المحيطة ولا يُعاد إسناده.
+      const fnStack = [];
+      const isFn = n => /^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type);
+      (function rec(n) {
+        if (!n || typeof n.type !== 'string') return;
+        if (isFn(n)) fnStack.push(n);
+        if (n.type === 'AssignmentExpression' && n.operator === '=' && n.left.type === 'MemberExpression' && !n.left.computed &&
+            /^(?:inner|outer)HTML$/.test(n.left.property.name)) add(n.left.property.loc.start.line, { value: n.right });
+        if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && !n.callee.computed &&
+            n.callee.property.name === 'send') {
+          let recv = n.callee.object;
+          if (recv.type === 'CallExpression' && recv.callee.type === 'MemberExpression' && !recv.callee.computed &&
+              recv.callee.property.name === 'status') recv = recv.callee.object;
+          const fn = fnStack[fnStack.length - 1];
+          const p1 = fn && fn.params[1];
+          let ok = !!(fn && recv.type === 'Identifier' && p1 && p1.type === 'Identifier' && p1.name === recv.name && n.arguments.length === 1);
+          if (ok) _kbWalk(fn.body, m => { if (m.type === 'AssignmentExpression' && m.left.type === 'Identifier' && m.left.name === recv.name) ok = false; });
+          add(n.callee.property.loc.start.line, ok ? { value: n.arguments[0] } : { value: null });
+        }
+        for (const k of Object.keys(n)) {
+          if (k === 'loc') continue;
+          const v = n[k];
+          if (Array.isArray(v)) v.forEach(c => c && typeof c.type === 'string' && rec(c));
+          else if (v && typeof v.type === 'string') rec(v);
+        }
+        if (isFn(n)) fnStack.pop();
+      })(ast);
+      _kbSinkMemo.set(ast, idx);
+    }
+    return idx.get(lineNo) || [];
+  }
   function _kbEscapedTextSink(code, lineNo) {
     const ast = _kbParse(code);
     if (!ast) return false;
     // 1. الدالة المساعدة
-    const decls = [];
-    let rebound = false;
-    _kbWalk(ast, n => {
-      if (n.type === 'FunctionDeclaration' && n.id && n.id.name === '__escapeHTML') decls.push(n);
-      if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === '__escapeHTML') rebound = true;
-      if (n.type === 'AssignmentExpression' && n.left.type === 'Identifier' && n.left.name === '__escapeHTML') rebound = true;
-      if (/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type) &&
-          n.params.some(p => p.type === 'Identifier' && p.name === '__escapeHTML')) rebound = true;
-    });
-    if (rebound || decls.length !== 1 || !ast.body.includes(decls[0])) return false;
-    if (code.slice(decls[0].start, decls[0].end).replace(/\s+/g, '') !== _KB_ESCAPER) return false;
-    // 2. الإسناد في السطر
-    const sinks = [];
-    _kbWalk(ast, n => {
-      if (n.type === 'AssignmentExpression' && n.operator === '=' && n.left.type === 'MemberExpression' && !n.left.computed &&
-          /^(?:inner|outer)HTML$/.test(n.left.property.name) && n.left.property.loc.start.line === lineNo) sinks.push(n);
-    });
-    if (sinks.length !== 1) return false;
+    if (!_kbHelperOk(code, ast)) return false;
+    // 2. المَصرِف في السطر
+    const sinks = _kbSinksAt(ast, lineNo);
+    if (sinks.length !== 1 || !sinks[0].value) return false;
     const parts = [];
     let ok = true;
     const leaf = x => {
@@ -460,7 +508,7 @@ var KnowledgeBase = (() => {
       }
       ok = false;
     };
-    leaf(sinks[0].right);
+    leaf(sinks[0].value);
     if (!ok || !parts.some(p => p.esc) || parts.some(p => p.s === null)) return false;
     // 3. السياق: كل نداء في نص HTML
     let html = '';

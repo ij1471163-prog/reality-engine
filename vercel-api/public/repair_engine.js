@@ -723,6 +723,17 @@ function fixXSS(code, issue, lines, ext, fileName) {
   const line = lines[issue.line - 1];
   if (!line) return null;
   if (_XSS_SINK.test(line)) return _fixXSSSink(code, issue, line, fileName);
+  // [RES-SEND-PROOF] المُصلح السياقي أولًا: يُهرّب المقاطع الديناميكية ويُبقي res.send — ولا يُعدّل إلا إذا
+  // أُثبت أن الرد HTML (انظر XSSFixer.fixResSend). غير ذلك يستمر المسار القديم كما هو (res.json ⇒ ترفضه
+  // xssCandidateProblem بـXSS_RESPONSE_CHANGED فلا يُطبَّق) — لا تغيير لسلوكه في هذا البند.
+  if (/\bsend\s*\(/.test(line)) {
+    const X = (typeof XSSFixer !== 'undefined' && XSSFixer && typeof XSSFixer.fixResSend === 'function') ? XSSFixer : null;
+    const r = X ? X.fixResSend(code, issue.line) : null;
+    if (r && r.changed) {
+      const moved = _xssHelperToEnd(code, r.fixed);
+      return { fixed: moved, patch: String(moved.split('\n')[issue.line - 1] || '').trim(), reason: r.reason };
+    }
+  }
   let fixed = line;
   if (/res\.send\s*\(/.test(line)) {
     const m = line.match(/res\.send\s*\(["'`]([^"'`]*?)["'`]\s*\+\s*(\w+)/);

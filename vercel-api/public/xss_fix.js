@@ -1340,7 +1340,131 @@ var XSSFixer = (() => {
     }
   }
 
-  return { fix, canFix, version: "2.0" };
+  // ═════════════════════════════════════════════════════
+  // [RES-SEND] Express res.send("…" + x) — تعقيم يحفظ صيغة الرد وسلوكه
+  // ═════════════════════════════════════════════════════
+  // res.send(string) بلا Content-Type مضبوط يُرسل text/html: القيمة الديناميكية تُفسَّر HTML (XSS).
+  // التحويل القديم res.json({ message: String(x).replace(/[<>]/g,'') }) غيّر نوع الرد (JSON) وشكله وشوّه
+  // البيانات، فرُفض. الإصلاح هنا: res.send يبقى، والنص الثابت يبقى، وكل مقطع ديناميكي يُلفّ بـ__escapeHTML —
+  // فالصفحة تعرض النص نفسه حرفيًا (الأحرف الخاصة تصير كيانات يعرضها المتصفح كما هي) ولا تُنفَّذ.
+  // يُطبَّق فقط إذا ثبت كل ما يلي، وإلا يُرجَع السبب ولا تعديل:
+  //   • نداء واحد .send( يبدأ في السطر، ومستقبله R أو R.status(…)، وR هو الوسيط الثاني لدالة المعالج
+  //     المحيطة (اصطلاح Express (req, res)) ولا يُعاد إسناده؛
+  //   • الجسم نصٌّ مؤكد: سلسلة + عنصرها الأول أو الثاني نص ثابت، أو template literal (لا كائن ⇒ JSON، لا Buffer)؛
+  //   • [RES-SEND-PROOF] نوع HTML **مُثبت**: المعالج نفسه يضبطه صراحةً (type/contentType('html'|'text/html')
+  //     أو set/header/setHeader('Content-Type', 'text/html…')) على المستقبِل نفسه، بجملة **غير مشروطة** في
+  //     جسمه وقبل الإرسال. غيابه ⇒ لا تعديل (XSS_RES_SEND_TYPE_UNPROVEN): افتراض Express (نصّ ⇒ text/html)
+  //     ليس إثباتًا، فقد يضبط middleware في ملف آخر نوعًا غيره؛
+  //   • لا Content-Type صريح غير HTML قبل الإرسال في المعالج نفسه، ولا ضبط لـContent-Type في أي موضع آخر
+  //     من الملف (middleware): في رد text/plain أو JSON يُغيّر التهريب البايتات المعروضة ولا ثغرة HTML أصلًا؛
+  //   • كل مقطع ديناميكي في سياق يكفيه التهريب (planValue/contextVerdict)، ولا مقطع «HTML مبني».
+  // الحدّ المُعلَن: middleware في ملف آخر قد يضبط Content-Type — لا يُرى من ملف واحد.
+  const RES_TYPE_METHODS = /^(?:type|contentType|set|header|setHeader|writeHead|format|attachment|sendFile|render)$/;
+  function fixResSend(code, lineNo) {
+    const original = code;
+    try {
+      const ac = getAcorn();
+      if (!ac) return { fixed: original, changed: false, reason: "NO_PARSER — acorn غير متاح" };
+      const parsed = parseJS(ac, code);
+      if (!parsed.ast) return { fixed: original, changed: false, reason: "PARSE_FAILED — " + parsed.error };
+      const ast = parsed.ast;
+      const env = buildEnv(ast, code);
+      const sends = [];
+      const typeCalls = [];
+      const fnStack = [];
+      const isFn = n => n && /^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(n.type);
+      (function rec(n) {
+        if (!n || typeof n.type !== "string") return;
+        if (isFn(n)) fnStack.push(n);
+        if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && !n.callee.computed) {
+          const nm = n.callee.property.name;
+          if (nm === "send" && n.loc.start.line === lineNo) sends.push({ call: n, fn: fnStack[fnStack.length - 1] || null });
+          if (RES_TYPE_METHODS.test(nm)) typeCalls.push({ call: n, fn: fnStack[fnStack.length - 1] || null });
+        }
+        for (const k of Object.keys(n)) {
+          if (k === "loc") continue;
+          const v = n[k];
+          if (Array.isArray(v)) v.forEach(c => c && typeof c.type === "string" && rec(c));
+          else if (v && typeof v.type === "string") rec(v);
+        }
+        if (isFn(n)) fnStack.pop();
+      })(ast);
+      if (sends.length !== 1) return { fixed: original, changed: false, reason: "XSS_RES_SEND_AMBIGUOUS — " + sends.length + " نداء send في السطر" };
+      const { call, fn } = sends[0];
+      let recv = call.callee.object;
+      if (recv.type === "CallExpression" && recv.callee.type === "MemberExpression" && !recv.callee.computed &&
+          recv.callee.property.name === "status") recv = recv.callee.object;
+      const p1 = fn && fn.params[1];
+      if (!fn || recv.type !== "Identifier" || !p1 || p1.type !== "Identifier" || p1.name !== recv.name) {
+        return { fixed: original, changed: false, reason: "XSS_RES_SEND_NOT_EXPRESS — المستقبِل ليس الوسيط الثاني لمعالج (req, res)؛ لا يُعرف أنه رد HTTP من Express" };
+      }
+      let reassigned = false;
+      walk(fn.body, n => { if (n.type === "AssignmentExpression" && n.left.type === "Identifier" && n.left.name === recv.name) reassigned = true; });
+      if (reassigned) return { fixed: original, changed: false, reason: "XSS_RES_SEND_NOT_EXPRESS — المستقبِل يُعاد إسناده" };
+      if (call.arguments.length !== 1) return { fixed: original, changed: false, reason: "XSS_RES_SEND_BODY_TYPE_UNKNOWN — عدد الوسائط ليس 1" };
+      const body = call.arguments[0];
+      const ops = body.type === "BinaryExpression" && body.operator === "+" ? plusOperands(body, []) : [body];
+      const stringy = o => isStringLit(o) || o.type === "TemplateLiteral";
+      const isString = body.type === "TemplateLiteral" ||
+        (body.type === "BinaryExpression" && body.operator === "+" && (stringy(ops[0]) || stringy(ops[1])));
+      if (!isString) {
+        return { fixed: original, changed: false, reason: "XSS_RES_SEND_BODY_TYPE_UNKNOWN — الجسم ليس نصًّا مؤكدًا (كائن ⇒ JSON، Buffer، أو جمع رقمي)؛ التهريب يغيّر الرد" };
+      }
+      // Content-Type
+      const typeLit = c => {
+        const a = c.arguments;
+        const nm = c.callee.property.name;
+        const lit = x => x && x.type === "Literal" && typeof x.value === "string" ? x.value : null;
+        if (nm === "type" || nm === "contentType") return { set: true, value: lit(a[0]) };
+        if ((nm === "set" || nm === "header" || nm === "setHeader") && lit(a[0]) && /^content-type$/i.test(lit(a[0]))) return { set: true, value: lit(a[1]) };
+        if (nm === "set" && a[0] && a[0].type === "ObjectExpression" &&
+            a[0].properties.some(p => p.key && /^content-type$/i.test(p.key.name || p.key.value || ""))) return { set: true, value: null };
+        if (nm === "writeHead" || nm === "format" || nm === "attachment") return { set: true, value: null };
+        return { set: false };
+      };
+      // جملة الإثبات: تعبيرٌ في المستوى الأعلى لجسم المعالج (لا داخل if/حلقة/try/دالة) ينتهي قبل الإرسال ⇒
+      // يُنفَّذ في كل مسار يصل إلى send. والمستقبِل نفسه (res) لا كائنٌ آخر.
+      const topLevel = new Set(fn.body && fn.body.type === "BlockStatement"
+        ? fn.body.body.filter(st => st.type === "ExpressionStatement" && st.end <= call.start).map(st => st.expression) : []);
+      let htmlProven = false;
+      for (const t of typeCalls) {
+        const v = typeLit(t.call);
+        if (!v.set) continue;
+        const sameHandler = t.fn === fn && t.call.start < call.start;
+        if (!sameHandler) {
+          if (t.fn === fn) continue;  // بعد الإرسال في المعالج نفسه: لا أثر على هذا الرد
+          return { fixed: original, changed: false, reason: "XSS_RES_SEND_TYPE_SET_ELSEWHERE — Content-Type يُضبط في موضع آخر من الملف (middleware محتمل)؛ لا يُعرف نوع هذا الرد" };
+        }
+        if (!(v.value && /^(?:html|text\/html)\b/i.test(v.value.trim()))) {
+          return { fixed: original, changed: false, reason: "XSS_RES_SEND_EXPLICIT_TYPE — نوع الرد مضبوط صراحةً (" + (v.value || "ديناميكي") + ")؛ في رد غير HTML يغيّر التهريب المخرج ولا ثغرة HTML" };
+        }
+        const obj = t.call.callee.object;
+        if (topLevel.has(t.call) && obj.type === "Identifier" && obj.name === recv.name) htmlProven = true;
+      }
+      if (!htmlProven) {
+        return { fixed: original, changed: false, reason: "XSS_RES_SEND_TYPE_UNPROVEN — لا ضبط صريح وغير مشروط لنوع HTML في المعالج قبل الإرسال؛ افتراض Express ليس إثباتًا (middleware في ملف آخر قد يغيّره) ⇒ لا تطبيق تلقائي" };
+      }
+      const plan = planValue(code, body, false, env);
+      if (plan.mode === "none") return { fixed: original, changed: false, reason: "XSS_RES_SEND_NOTHING_DYNAMIC — لا مقطع ديناميكي يحتاج تهريبًا" };
+      if (plan.mode !== "escape") {
+        return { fixed: original, changed: false, reason: (plan.ctxUnsupported ? "XSS_CONTEXT_UNSAFE — " : "XSS_RES_SEND_COMPLEX — ") + (plan.reason || "") };
+      }
+      if (plan.trusted && plan.trusted.length) {
+        return { fixed: original, changed: false, reason: "XSS_RES_SEND_TRUSTED_HTML — جزء يُبنى كـHTML في موضع آخر؛ تعقيمه يكسر العرض وتركه لا يُثبت الأمان" };
+      }
+      let seq = 0;
+      const edits = plan.wrap.map(n => ({ start: n.start, end: n.end, text: HELPER + "(" + code.slice(n.start, n.end) + ")", seq: seq++ }));
+      if (!HELPER_DECLARED_RE.test(code)) edits.push(helperInsertion(ast, code));
+      const next = applyEdits(code, edits);
+      if (!parseJS(ac, next).ast) return { fixed: original, changed: false, reason: "REWRITE_BROKE_SYNTAX" };
+      return { fixed: next, changed: next !== original, wrapped: plan.wrap.map(n => snippet(code, n, 40)),
+               reason: "XSS: res.send — تعقيم المقاطع الديناميكية بـ" + HELPER + " (الرد يبقى text/html بنفس النص المعروض)" };
+    } catch (e) {
+      return { fixed: original, changed: false, reason: "FIXER_ERROR — " + String(e && e.message || e) };
+    }
+  }
+
+  return { fix, canFix, fixResSend, version: "2.0" };
 })();
 
 if (typeof module !== "undefined" && module.exports) {
