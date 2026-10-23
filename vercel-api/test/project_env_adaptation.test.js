@@ -517,6 +517,92 @@ test('[VERCEL] بلا اسم ملف لا نقاط نهاية — لا مسار �
   assert.deepStrictEqual(PI.mapAPIEndpoints(code, d, 'public/x.js'), [], 'ملف خارج api/');
 });
 
+// ═══ [ENDPOINT-DET] الصيغة المسمّاة مرساة، وmiddleware ليس نقطة نهاية ═══════════
+// مقيس قبل التغيير: ‎module.exports = async function handler(req, res)‎ بلا req.method ⇒ null،
+// و‎module.exports = function (req, res, next)‎ في src/middleware ⇒ serverless.
+const EP_POSITIVE = {
+  named_async_min:   'module.exports = async function handler(req, res) {\n  res.status(410).json({});\n};',
+  named_sync_min:    'module.exports = function handler(req, res) {\n  res.status(200).json({ ok: true });\n};',
+  named_with_method: 'module.exports = async function handler(req, res) {\n  if (req.method !== "POST") return res.status(405).end();\n  res.json({});\n};',
+  anonymous_min:     'module.exports = async function (req, res) {\n  res.status(410).json({});\n};',
+  arrow_min:         'module.exports = async (req, res) => {\n  res.status(410).json({});\n};',
+  esm_named:         'export default async function handler(req, res) {\n  res.status(410).json({});\n}',
+  helper_with_next:  'function guard(req, res, next) { next(); }\nmodule.exports = async function handler(req, res) {\n  res.status(200).json({});\n};',
+};
+const EP_NEGATIVE = {
+  named_middleware:      'module.exports = function auth(req, res, next) {\n  if (!req.user) return res.status(401).end();\n  next();\n};',
+  anon_middleware_2sig:  'module.exports = function (req, res, next) {\n  if (req.method !== "GET") return res.status(405).end();\n  next();\n};',
+  arrow_middleware:      'module.exports = (req, res, next) => {\n  if (req.method === "OPTIONS") return res.status(204).end();\n  next();\n};',
+  esm_middleware:        'export default function cors(req, res, next) {\n  if (req.method === "OPTIONS") return res.status(204).end();\n  next();\n}',
+  // مرساة ESM ‎handler(req‎ تطابق هذا — فالنفي (vetoes) وحده يُسقطه
+  esm_handler_with_next: 'export default async function handler(req, res, next) {\n  if (req.method === "OPTIONS") return res.status(204).end();\n  next();\n}',
+  done_param:            'module.exports = async function limiter(req, res, done) {\n  if (req.method) res.status(429).json({});\n  done();\n};',
+  exported_by_name:      'function auth(req, res, next) {\n  if (req.method !== "GET") return res.status(401).json({});\n  next();\n}\nmodule.exports = auth;',
+  two_other_params:      'module.exports = function handler(a, b) { return a + b; };',
+  lambda_signature:      'module.exports = async function handler(event, context) { return { statusCode: 200 }; };',
+  commented_out:         '// module.exports = async function handler(req, res) { res.status(200).json({}); };\nconst x = 1;',
+  block_commented:       '/* module.exports = async function handler(req, res) {} */\nmodule.exports = 1;',
+};
+
+test('[ENDPOINT-DET] إيجابية: كل صيغ المعالج بمعاملين (req, res) تُكتشف serverless بمرساة', () => {
+  for (const [k, code] of Object.entries(EP_POSITIVE)) {
+    const d = detect(code, 'vercel-api/api/x.js');
+    assert.ok(d && d.key === 'serverless', k + ' ⇒ ' + (d ? d.key : 'null'));
+    assert.strictEqual(d.anchored, true, k + ' بلا مرساة');
+    const eps = PI.mapAPIEndpoints(code, d, 'vercel-api/api/x.js');
+    assert.ok(eps.length >= 1 && eps.every(e => e.path === '/api/x'), k + ': ' + JSON.stringify(eps));
+  }
+});
+
+test('[ENDPOINT-DET] سلبية: middleware بثلاثة معاملات، وتوقيعات أخرى، والمعلّق — ليست serverless', () => {
+  for (const [k, code] of Object.entries(EP_NEGATIVE)) {
+    for (const where of ['src/middleware/x.js', 'vercel-api/api/x.js']) {
+      const d = detect(code, where);
+      assert.ok(!d || d.key !== 'serverless', k + ' @ ' + where + ' ⇒ serverless');
+    }
+  }
+});
+
+test('[ENDPOINT-DET] أنماط النفي لا تتراجع: نصّ الهجوم التربيعي (recheck) يُفحص بسرعة', () => {
+  const attack = 'function$'.repeat(20000) + 'o(function(req,res,$';
+  const t0 = Date.now();
+  detect(attack, 'src/x.js');
+  assert.ok(Date.now() - t0 < 1000, (Date.now() - t0) + 'ms');
+});
+
+test('[ENDPOINT-DET] حاجز اللغة: النص نفسه في ملف .py لا يُعدّ serverless', () => {
+  const d = detect(EP_POSITIVE.named_async_min, 'app/handler.py');
+  assert.ok(!d || d.key !== 'serverless');
+});
+
+test('[ENDPOINT-DET] Express يبقى Express ولو صدّر middleware، وmiddleware لا يصير serverless بالإشارات', () => {
+  const code = 'const express = require("express");\nmodule.exports = function (req, res, next) {\n  if (req.method !== "GET") return res.status(405).end();\n  next();\n};';
+  const d = detect(code, 'src/mw.js');
+  assert.strictEqual(d && d.key, 'express');
+});
+
+test('[ENDPOINT-DET] كل ملفات api/ الحقيقية (مع الأدلة الفرعية) نقاط نهاية بمرساة، ومساراتها من مواضعها', () => {
+  const files = [];
+  (function walk(dir, rel) {
+    for (const f of fs.readdirSync(dir)) {
+      const p = path.join(dir, f);
+      if (fs.statSync(p).isDirectory()) walk(p, rel + f + '/');
+      else if (f.endsWith('.js')) files.push(rel + f);
+    }
+  })(API_DIR, '');
+  assert.ok(files.length >= 10, 'عدد الملفات: ' + files.length);
+  const bad = [];
+  for (const f of files) {
+    const name = 'vercel-api/api/' + f;
+    const code = fs.readFileSync(path.join(API_DIR, f), 'utf8');
+    const d = detect(code, name);
+    if (!d || d.key !== 'serverless' || !d.anchored) { bad.push(f + ' ⇒ ' + (d ? d.key + (d.anchored ? '' : ' (بلا مرساة)') : 'null')); continue; }
+    const eps = PI.mapAPIEndpoints(code, d, name);
+    if (!eps.length || eps.some(e => e.path !== '/api/' + f.replace(/\.js$/, ''))) bad.push(f + ' مسار: ' + JSON.stringify(eps));
+  }
+  assert.deepStrictEqual(bad, []);
+});
+
 test('[VERCEL] لا يُزاحم الأطر الحقيقية: Express يبقى Express', () => {
   const express = 'const express = require("express");\nconst app = express();\n' +
     'app.get("/u",(req,res)=>{ if (req.method !== "GET") return res.status(405).json({}); res.json({}); });';

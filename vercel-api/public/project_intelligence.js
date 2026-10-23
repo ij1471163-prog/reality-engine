@@ -86,17 +86,34 @@ const FRAMEWORK_SIGNATURES = {
   // والاسم «Vercel/Serverless» لا «Vercel» وحدها بقرار: ما تُثبته المراسي هو
   // معالج HTTP عديم الخادم (Vercel أو Netlify أو مشابه)، لا المنصّة بعينها.
   // ودليل المنصّة نفسه يأتي من بيان البناء — vercel.json — في detectEnvironment.
+  //
+  // [ENDPOINT-DET] ‎module.exports = async function handler(req, res)‎ — الصيغة المسمّاة — لم تكن مرساة
+  // (النمط يشترط ‎function\s*\(‎ مباشرة)، فمعالجٌ لا يفحص req.method لا يُكتشف (مقيس: api/analyzer.js).
+  // وبالمقابل كانت المرساة المجهولة تقبل ‎(req, res, next)‎ فيُعدّ middleware نقطةَ نهاية (مقيس:
+  // src/middleware/auth.js ⇒ serverless). فالمرساة الآن تقبل الاسم وتشترط **معاملين بالضبط**،
+  // وvetoes تُسقط الحكم عن ملفٍ يُصدِّر دالة ‎(req, res, X)‎ — توقيع middleware لا معالج Vercel.
+  // وunanchoredVetoes: بلا أي مرساة يكفي تعريف دالة ‎(req, res, X)‎ في الملف لإسقاط حكمٍ قائم على
+  // الإشارات وحدها (middleware يُصدَّر باسمه: ‎module.exports = auth‎).
   serverless: {
     anchors: [
       /@vercel\/node\b/,
       /export\s+default\s+(?:async\s+)?function\s+handler\s*\(\s*req\b/,
       /export\s+default\s+(?:async\s+)?\(\s*req\s*,\s*res\s*\)\s*=>/,
       /module\.exports\s*=\s*(?:async\s+)?\(\s*req\s*,\s*res\s*\)\s*=>/,
-      /module\.exports\s*=\s*(?:async\s+)?function\s*\(\s*req\s*,\s*res\b/,
+      /module\.exports\s*=\s*(?:async\s+)?function\b\s*(?:[A-Za-z_$][\w$]*\s*)?\(\s*req\s*,\s*res\s*\)/,
     ],
     signals: [
       /\breq\.method\b/,
       /\bres\.status\s*\(\s*\d+\s*\)\s*\.\s*(json|end|send)\s*\(/,
+    ],
+    vetoes: [
+      /(?:module\.exports\s*=|export\s+default)\s*(?:async\s+)?function\b\s*(?:[A-Za-z_$][\w$]*\s*)?\(\s*req\s*,\s*res\s*,\s*[A-Za-z_$]/,
+      /(?:module\.exports\s*=|export\s+default)\s*(?:async\s+)?\(\s*req\s*,\s*res\s*,\s*[A-Za-z_$][\w$]*\s*\)\s*=>/,
+    ],
+    unanchoredVetoes: [
+      // ‎(?:\s+name)?‎ لا ‎\s*(?:name\s*)?‎: الثاني يقبل ‎function$x‎ ويتراجع تربيعيًا بلا مرساة (recheck)
+      /\bfunction(?:\s+[A-Za-z_$][\w$]*)?\s*\(\s*req\s*,\s*res\s*,\s*[A-Za-z_$]/,
+      /\(\s*req\s*,\s*res\s*,\s*[A-Za-z_$][\w$]*\s*\)\s*=>/,
     ],
     name: 'Vercel/Serverless Function', lang: 'js', type: 'backend',
   },
@@ -305,6 +322,10 @@ function detectFramework(code, fileName) {
 
     const anchors = fw.anchors.filter(p => p.test(src)).length;
     const signals = fw.signals.filter(p => p.test(src)).length;
+
+    // [ENDPOINT-DET] أدلة نفي: توقيع middleware يُسقط حكم البصمة (انظر serverless أعلاه)
+    if (fw.vetoes && fw.vetoes.some(p => p.test(src))) return;
+    if (anchors === 0 && fw.unanchoredVetoes && fw.unanchoredVetoes.some(p => p.test(src))) return;
 
     // [FW-EVIDENCE] شرط الأدلة: مرساةٌ واحدة، أو إشارتان ثانويتان.
     // دليلٌ ثانويّ واحد ⇒ لا حكم. وهذا ما كان يُنتج «React» و«Flask» زورًا.
