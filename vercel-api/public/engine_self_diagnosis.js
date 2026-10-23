@@ -801,6 +801,19 @@ var EngineSelfDiagnosis = (() => {
   // 2) تحديد السبب بالأدلة
   // ═════════════════════════════════════════════════════════════════
 
+  // ─── [CONF-WHOLE] ثقة التشخيص ───────────────────────────────────────────
+  // المسار المحافظ في buildHunks (diff.whole) يجعل الملف كله hunk واحدًا. وكان
+  // الحساب السابق ‎found.length === 1 ? "HIGH"‎ يُعطيه HIGH: «تراجع عن 1 hunk»
+  // وهذا الواحد هو الملف بأكمله. والتعليق عند buildHunks يقرّر الصواب — «تراجعًا
+  // كاملًا بثقة LOW — وهو صادقٌ لا صامت» — فالكود كان يناقض نيّته: اقتراحٌ
+  // يُعيد الوحدة كلها إلى المرجع يظهر للمراجع بأعلى ثقة، بينما لم يُحدَّد موضع
+  // الخلل أصلًا. فـwhole ⇒ LOW دائمًا، قبل أي عدٍّ للـhunks.
+  function confidenceOf(diff, revertCount) {
+    if (diff && diff.whole) return "LOW";
+    if (revertCount === 1) return "HIGH";
+    return revertCount === (diff && diff.hunks ? diff.hunks.length : -1) ? "LOW" : "MEDIUM";
+  }
+
   function diagnose(incident, opts) {
     opts = opts || {};
     const sources = resolveSources(opts);
@@ -898,7 +911,7 @@ var EngineSelfDiagnosis = (() => {
       attempts,
       hunkCount: diff.hunks.length,
       revertSet: found,
-      confidence: found.length === 1 ? "HIGH" : (found.length === diff.hunks.length ? "LOW" : "MEDIUM"),
+      confidence: confidenceOf(diff, found.length),
       hunks: found.map(i => describeHunk(diff.hunks[i], refLines, curLines)),
       evidence: incident.evidence,
       _diff: diff, _refLines: refLines, _curLines: curLines, _current: cur, _eol: eol,
@@ -1176,7 +1189,7 @@ var EngineSelfDiagnosis = (() => {
     runCycle,
     // أدوات معروضة للاختبار والمراجعة
     _internals: { splitLines, dominantEol, lcsOps, buildHunks, rebuild, describeHunk,
-                  buildIsolate, defaultSources, MAX_LCS_CELLS },
+                  buildIsolate, defaultSources, confidenceOf, MAX_LCS_CELLS },
   };
 })();
 

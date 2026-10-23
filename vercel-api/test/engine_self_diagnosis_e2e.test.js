@@ -707,6 +707,35 @@ test('[E2E-10f] والسقف لا يُعايَر على حجمٍ قديم: أك�
     'التراجع عن الـhunk يُعيد الوحدة كما هي على القرص');
 });
 
+test('[E2E-10g] [CONF-WHOLE] المسار المحافظ (ملف كامل = hunk) ثقته LOW لا HIGH', () => {
+  const C = ESD._internals.confidenceOf;
+  // الصيغة المباشرة: whole يغلب عدّ الـhunks
+  assert.strictEqual(C({ whole: true,  hunks: [{}] }, 1), 'LOW',    'whole ⇒ LOW دائمًا');
+  assert.strictEqual(C({ whole: false, hunks: [{}] }, 1), 'HIGH',   'hunk واحد حقيقي ⇒ HIGH');
+  assert.strictEqual(C({ whole: false, hunks: [{}, {}, {}] }, 2), 'MEDIUM');
+  assert.strictEqual(C({ whole: false, hunks: [{}, {}] }, 2), 'LOW', 'تراجع عن كل الـhunks ⇒ LOW');
+
+  // والمسار الحقيقي: خللٌ محقون + كتلة 2100 سطرًا مختلفة كليًّا بين المرجع والشجرة
+  // في ذيل الملف ⇒ المنطقة المختلفة تتجاوز MAX_LCS_CELLS ⇒ diff.whole.
+  const junk = tag => '\n' + Array.from({ length: 2100 }, (_, i) => '// ' + tag + ' ' + (i * 7)).join('\n') + '\n';
+  const REF = REAL_VERIFIER + junk('ref');
+  const CUR = DEFECTIVE_VERIFIER + junk('cur');
+  const src = {
+    kind: 'test-injected', publicDir: PUBLIC_DIR,
+    current(m)   { return m === VERIFIER ? CUR : fs.readFileSync(path.join(PUBLIC_DIR, m), 'utf8'); },
+    reference(m) { return m === VERIFIER ? REF : fs.readFileSync(path.join(PUBLIC_DIR, m), 'utf8'); },
+  };
+  const opts = Object.assign({ publicDir: PUBLIC_DIR, sources: src }, FOCUS);
+  const found = ESD.detect(opts);
+  assert.strictEqual(found.incidents.length, 1);
+  const dx = ESD.diagnose(found.incidents[0], opts);
+  assert.strictEqual(dx.cause, 'HUNK_REGRESSION', dx.reason || '');
+  assert.strictEqual(dx._diff.whole, true, 'الاختبار يجب أن يسلك المسار المحافظ فعلًا');
+  assert.strictEqual(dx.hunkCount, 1);
+  assert.strictEqual(dx.confidence, 'LOW',
+    'تراجعٌ عن الملف كله لا يُعرض بثقة عالية — الخلل لم يُحدَّد موضعُه');
+});
+
 test('[E2E-10c] ملفان متطابقان ⇒ صفر hunks، وإعادة البناء محافظة', () => {
   const s = 'p\nq\nr\n';
   const L = ESD._internals.splitLines(s);
