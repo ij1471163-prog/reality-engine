@@ -618,10 +618,10 @@ function fbFixJwt(lines, idx, env, issue) {
   if (lang === 'py') {
     const m = line.match(/^(\s*)([A-Za-z_]\w*)(\s*=\s*)(['"])(?:(?!\4)[^\\\n])+\4(\s*(?:#.*)?)$/);
     if (m && (FB_JWT_NAMES.test(m[2]) || m[2] === 'SECRET_KEY')) {
-      return { edits: [{ idx, text: m[1] + m[2] + m[3] + "os.environ.get('" + fbToEnvName(m[2]) + "', '')" + m[5] }],
+      return { edits: [{ idx, text: m[1] + m[2] + m[3] + "os.environ['" + fbToEnvName(m[2]) + "']" + m[5] }],
                note: 'JWT secret → os.environ', imports: ['os'] };
     }
-    const call = fbReplaceSecretArg(line, /\bjwt\.(?:encode|decode)\(/, "os.environ.get('JWT_SECRET', '')");
+    const call = fbReplaceSecretArg(line, /\bjwt\.(?:encode|decode)\(/, "os.environ['JWT_SECRET']");
     if (call) return { edits: [{ idx, text: call }], note: 'JWT literal secret → os.environ', imports: ['os'] };
   } else {
     const m = line.match(/^(\s*(?:export\s+)?(?:const|let|var)\s+)([A-Za-z_$][\w$]*)(\s*=\s*)(['"])(?:(?!\4)[^\\\n])+\4(\s*;?\s*(?:\/\/.*)?)$/);

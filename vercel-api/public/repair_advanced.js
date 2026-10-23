@@ -369,7 +369,7 @@ var AdvancedRepair = (() => {
         m = line.match(/^(\s*)([A-Za-z_]\w*)(\s*=\s*)(['"])((?:(?!\4)[^\\\n])+)\4(\s*(?:#.*)?)$/);
         if (!m) continue;
         name = m[2]; value = m[5];
-        rebuild = envName => m[1] + m[2] + m[3] + "os.environ.get('" + envName + "', '')" + m[6];
+        rebuild = envName => m[1] + m[2] + m[3] + "os.environ['" + envName + "']" + m[6];
       } else if (env.fam === 'php') {
         m = line.match(/^(\s*)(\$[A-Za-z_]\w*)(\s*=\s*)(['"])((?:(?!\4)[^\\\n])+)\4(\s*;\s*(?:\/\/.*|#.*)?)$/);
         if (m) {

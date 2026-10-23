@@ -177,17 +177,17 @@ const pyFix = code => ctx.repairCode(code, ctx.analyzeCode(code, 's.py'), 's.py'
 test('python secret fix adds import os (was NameError) for SECRET and PASSWORD names', () => {
   for (const n of ['SECRET_KEY', 'DB_PASSWORD', 'API_TOKEN']) {
     const out = pyFix(`${n} = "abcdefghijk12345"\nprint(1)\n`);
-    assert.strictEqual(out, `import os\n${n} = os.environ.get('${n}', '')\nprint(1)\n`, n);
+    assert.strictEqual(out, `import os\n${n} = os.environ['${n}']\nprint(1)\n`, n);
   }
 });
 
 test('python import os: respects shebang/docstring/__future__, no duplicates, alias, unclear → no fix', () => {
   assert.strictEqual(
     pyFix('#!/usr/bin/env python\n"""Doc.\n\nmore"""\nfrom __future__ import annotations\nSECRET_KEY = "abcdefghijk12345"\n'),
-    '#!/usr/bin/env python\n"""Doc.\n\nmore"""\nfrom __future__ import annotations\nimport os\nSECRET_KEY = os.environ.get(\'SECRET_KEY\', \'\')\n');
-  assert.strictEqual(pyFix('import os\nAPI_TOKEN = "abcdefghijk12345"\n'), 'import os\nAPI_TOKEN = os.environ.get(\'API_TOKEN\', \'\')\n');
-  assert.strictEqual(pyFix('import sys, os.path\nAPI_TOKEN = "abcdefghijk12345"\n'), 'import sys, os.path\nAPI_TOKEN = os.environ.get(\'API_TOKEN\', \'\')\n');
-  assert.strictEqual(pyFix('import os as o\nAPI_TOKEN = "abcdefghijk12345"\n'), 'import os\nimport os as o\nAPI_TOKEN = os.environ.get(\'API_TOKEN\', \'\')\n');
+    '#!/usr/bin/env python\n"""Doc.\n\nmore"""\nfrom __future__ import annotations\nimport os\nSECRET_KEY = os.environ[\'SECRET_KEY\']\n');
+  assert.strictEqual(pyFix('import os\nAPI_TOKEN = "abcdefghijk12345"\n'), 'import os\nAPI_TOKEN = os.environ[\'API_TOKEN\']\n');
+  assert.strictEqual(pyFix('import sys, os.path\nAPI_TOKEN = "abcdefghijk12345"\n'), 'import sys, os.path\nAPI_TOKEN = os.environ[\'API_TOKEN\']\n');
+  assert.strictEqual(pyFix('import os as o\nAPI_TOKEN = "abcdefghijk12345"\n'), 'import os\nimport os as o\nAPI_TOKEN = os.environ[\'API_TOKEN\']\n');
   const unclear = '"""unterminated\nSECRET_KEY = "abcdefghijk12345"\n';
   assert.strictEqual(pyFix(unclear), unclear, 'no guess → no fix');
 });

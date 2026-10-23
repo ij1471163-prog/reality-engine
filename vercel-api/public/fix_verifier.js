@@ -2166,13 +2166,19 @@ var FixVerifier = (() => {
       // سطرٌ جديد يُسنِد إلى نفس المفتاح ويقرأ من مصدر بيئة/أسرار
       const repl = A.filter(l => !bSet.has(l.trim()) && sameKey.test(l) && ENV_SOURCE_RX.test(l));
       if (!repl.length) return false;
-      // [ENV-REQUIRED] process.env في كود متصفح غير معرَّف (ReferenceError)، والسرّ المُرسَل إلى المتصفح مكشوف أصلًا.
+      // [ENV-REQUIRED] قراءةٌ بقيمة افتراضية حرفية ليست إصلاحًا: '' فشلٌ مفتوح (مفتاح فارغ يوقّع ويتحقق بلا خطأ)،
+      // وقيمة غير فارغة تُبقي سرًّا/بديلًا في الكود. وprocess.env في كود متصفح غير معرَّف (ReferenceError).
+      if (repl.some(l => ENV_LITERAL_DEFAULT_RX.test(l))) { _secretWhy = 'ENV_LITERAL_DEFAULT'; return false; }
       if (lang === 'javascript' && repl.some(l => /process\.env\b/.test(l)) && _browserOnlyJS(String(afterCode))) {
         _secretWhy = 'BROWSER_CONTEXT'; return false;
       }
     }
     return true;
   }
+  // os.environ.get('X', '…') / os.getenv('X', '…') / getenv('X') ?: '…' / process.env.X || '…' / ?? '…'
+  // خطيّ عمليًا: أول حرف بعد القوس ليس فراغًا، والمفتاح بين [ ] أو داخل getenv( ) حتى 200 حرف — الشكل الأول
+  // كان تربيعيًا (recheck؛ 50 ألف حرف ⇒ 2.8 ثانية). التكافؤ مع الأول مُقاس على 592 ألف حالة بلا اختلاف.
+  const ENV_LITERAL_DEFAULT_RX = /(?:os\.environ\.get|os\.getenv)\s*\(\s*[^,()\s][^,()]*,\s*(?:'[^']*'|"[^"]*")\s*\)|process\.env(?:\.\w+|\[[^\]]{1,200}\])\s*(?:\|\||\?\?)\s*(?:'[^']*'|"[^"]*"|`[^`]*`)|getenv\s*\([^)]{0,200}\)\s*\?:\s*(?:'[^']*'|"[^"]*")/;
   function _browserOnlyJS(code) {
     const node = /\brequire\s*\(|module\.exports|\bexports\.|\bprocess\.(?:argv|exit|on|cwd)\b|__dirname|__filename|from\s+['"](?:node:|fs|path|http|https|express|crypto|child_process|os|net)['"]/.test(code);
     const browser = /\b(?:document|window|localStorage|sessionStorage|navigator)\s*\.|\baddEventListener\s*\(/.test(code);
@@ -2537,6 +2543,7 @@ var FixVerifier = (() => {
         prove: () => { _secretWhy = null; return secretFixProven(beforeCode, afterCode, syn.language, secretLinesBefore); },
         get reason() {
           const base = "REJECTED_SECRET_FIX_UNPROVEN — نقص بلاغ السرّ لكن الـcandidate لا يثبت أن القيمة كانت سرًّا كاملًا وأنها صارت تُقرأ من مصدر بيئة";
+          if (_secretWhy === 'ENV_LITERAL_DEFAULT') return base + " [قيمة افتراضية حرفية للمتغير: '' فشلٌ مفتوح وقيمةٌ غير فارغة تُبقي السرّ في الكود — اقرأه بلا افتراضي (os.environ['X'])]";
           if (_secretWhy === 'BROWSER_CONTEXT') return base + " [كود متصفح: process.env غير معرَّف هناك والسرّ مكشوف للمتصفح أصلًا — انقل الاستدعاء إلى الخادم ودوّر القيمة]";
           return base;
         },

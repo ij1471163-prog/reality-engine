@@ -275,8 +275,8 @@ function fixEval(code, issue, lines2, ext2, fileName) {
 // • كود متصفح (لا علامة Node، وفيه document/window/localStorage…): process غير معرَّف هناك ⇒ ReferenceError،
 //   وأي سرّ يُرسَل إلى المتصفح مكشوف أصلًا (ومُجمِّع يحقن process.env.X يعيده إلى الحزمة). الإصلاح: نقل
 //   الاستدعاء إلى الخادم وتدوير القيمة — لا يُثبت من ملف واحد ⇒ لا تعديل والسبب مُسجَّل.
-// • بايثون: os.environ.get('X', '') يُرجع نصًّا فارغًا عند الغياب — «فشلٌ مفتوح» محتمل (مفتاح HMAC/JWT فارغ يُوقّع
-//   ويتحقق بلا خطأ). تبديله إلى os.environ['X'] (توقّف صريح) قرارُ نشرٍ لم يُعتمد بعد، فالسبب المُسجَّل يذكر الشرط.
+// • بايثون: os.environ['X'] لا os.environ.get('X', '') — القيمة الفارغة الافتراضية «فشلٌ مفتوح» (مفتاح HMAC/JWT
+//   فارغ يُوقّع ويتحقق بلا خطأ)، أما KeyError فيوقف التشغيل عند غياب المتغير برسالة صريحة.
 // • JS/Java/C#/PHP: القراءة تُرجع undefined/null/false عند الغياب؛ ومعظم المكتبات ترفض المفتاح الفارغ (jsonwebtoken،
 //   crypto.createHmac)، لكن الدمج النصّي يمرّ صامتًا ("Bearer undefined") — لذلك يُذكر الشرط في سبب القرار.
 // والسبب المُسجَّل يذكر المتغير المطلوب وتدوير القيمة المسرّبة: التعديل وحده لا يكفي.
@@ -312,7 +312,7 @@ function fixHardcodedPassword(code, issue, lines2, ext2, fileName) {
   let fixed = line;
   if (ext === 'py') {
     if (line.includes('os.environ')) return null;
-    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ['${varName}']`);
     // import os يُضاف بعد كتابة السطر: lines.unshift كان يزيح ln فيُكتب السطر في
     // الموضع الخطأ ويبقى الـsecret الأصلي في الكود
     if (fixed === line) return null;
@@ -1278,7 +1278,7 @@ function fixHardcodedSecret(code, issue, lines, ext) {
 
   if (ext === 'py') {
     if (line.includes('os.environ')) return null;
-    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ.get('${varName}', '')`);
+    fixed = line.replace(/(["\'])[^"\']+(["\'])/, `os.environ['${varName}']`);
   } else if (ext === 'php') {
     if (/getenv\s*\(/i.test(line)) return null;
     fixed = line.replace(/(["\'])[^"\']+(["\'])/, `getenv('${varName}')`);
@@ -1455,7 +1455,7 @@ function fixApiKeyAdvanced(code, issue, lines2, ext2, fileName) {
   }
 
   if (ext === 'py') {
-    lines[ln] = line.replace(/["'][^"']+["']/, `os.environ.get('${envName}', '')`);
+    lines[ln] = line.replace(/["'][^"']+["']/, `os.environ['${envName}']`);
     if (!code.includes('import os')) lines.unshift('import os');
     lines.splice(ln + 2, 0, `# Add to .env: ${envName}=your_value`);
   } else if (ext === 'js' || ext === 'ts') {

@@ -85,7 +85,7 @@ test('fixHardcodedSecret: يستخدم صياغة اللغة الصحيحة', ()
   const expected = {
     js:   'process.env.',
     ts:   'process.env.',
-    py:   'os.environ.get(',
+    py:   "os.environ['",
     php:  "getenv('",
     java: 'System.getenv("',
     cs:   'Environment.GetEnvironmentVariable("',
@@ -117,7 +117,7 @@ test('fixHardcodedSecret: idempotent — لا يعيد تغليف سطر مُص�
   const ctx = loadContext(['repair_engine.js']);
   const already = {
     js:   'const API_KEY = process.env.API_KEY;',
-    py:   "API_KEY = os.environ.get('API_KEY', '')",
+    py:   "API_KEY = os.environ['API_KEY']",
     php:  "$API_KEY = getenv('API_KEY');",
     java: 'private String API_KEY = System.getenv("API_KEY");',
     cs:   'private string API_KEY = Environment.GetEnvironmentVariable("API_KEY");',

@@ -83,7 +83,7 @@ function emergencyFix(code, fileName) {
     // Hardcoded secrets → env
     fixed = fixed.replace(
       /^([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|PASS|PWD)\w*)\s*=\s*["'][^"']{6,}["']/gim,
-      (m, varName) => `${varName} = os.environ.get('${varName}', '')`
+      (m, varName) => `${varName} = os.environ['${varName}']`
     );
     if (fixed !== code && fixed.includes('os.environ') && !fixed.includes('import os')) {
       fixed = 'import os\n' + fixed;
@@ -92,15 +92,15 @@ function emergencyFix(code, fileName) {
     // DB_URL وDatabase Connection Strings → env
     fixed = fixed.replace(
       /\bDB_URL\b\s*=\s*["'][^"']+["']/g,
-      "DB_URL = os.environ.get('DATABASE_URL', '')"
+      "DB_URL = os.environ['DATABASE_URL']"
     );
     fixed = fixed.replace(
       /\bDATABASE_URL\b\s*=\s*["'][^"']+["']/g,
-      "DATABASE_URL = os.environ.get('DATABASE_URL', '')"
+      "DATABASE_URL = os.environ['DATABASE_URL']"
     );
     fixed = fixed.replace(
       /\bDB_HOST\b\s*=\s*["'][^"']+["']/g,
-      "DB_HOST = os.environ.get('DB_HOST', '')"
+      "DB_HOST = os.environ['DB_HOST']"
     );
     if (fixed !== code && !fixed.includes('import os') && fixed.includes('os.environ')) {
       fixed = 'import os\n' + fixed;

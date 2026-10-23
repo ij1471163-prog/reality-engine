@@ -854,7 +854,8 @@ function analyzePythonSecurity(code, issues) {
             issues.push({ type:'py', sev:'c', line:ln, ev:t,
                 title:'🔐 ' + (t.match(/^(\w+)/)?.[1] || 'Secret') + ' مكشوف في الكود',
                 strategy:'HARDCODED_SECRET',
-                fix: t.replace(/["'][^"']+["']/, "os.environ.get('" + (t.match(/^(\w+)/)?.[1] || 'SECRET') + "', '')"),
+                // [PY-ENV] التلميح نفسه بلا افتراضي حرفي: البوابة ترفض ‎.get('X', '')‎ (فشلٌ مفتوح)
+                fix: t.replace(/["'][^"']+["']/, "os.environ['" + (t.match(/^(\w+)/)?.[1] || 'SECRET') + "']"),
                 fixHint: 'يتطلب import os في الملف — محرك الإصلاح يضيفه، والتطبيق اليدوي يجب أن يضيفه.',
                 conf:92, cIcon:'🔐', cAct:'CWE-798' });
         }

@@ -46,7 +46,7 @@ var JWTFixer = (() => {
     let fixed = code;
     fixed = fixed.replace(
       /(SECRET_KEY|JWT_SECRET|jwt_secret)\s*=\s*["'][^"']+["']/g,
-      (_, name) => `${name} = os.environ.get('${name}', '')`
+      (_, name) => `${name} = os.environ['${name}']`
     );
     if (fixed !== code && !fixed.includes('import os'))
       fixed = 'import os\n' + fixed;

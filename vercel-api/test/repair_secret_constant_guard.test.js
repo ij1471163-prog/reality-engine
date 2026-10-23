@@ -82,7 +82,7 @@ const FIX = {
   // وذلك كود لا يعمل (NameError: name 'os' is not defined). 26067ab أضاف
   // _pyEnsureImportOs لأن الناتج بلا الاستيراد كان يمر كـSAFE_AUTO_FIX وهو مكسور.
   // فالـbaseline أصحّ من التوقّع القديم، والتوقّع هو ما يُحدَّث لا الكود.
-  'Python password':              ['HARDCODED_SECRET', 'password = "hunter2secret"\n', "import os\npassword = os.environ.get('PASSWORD', '')\n", 'a.py'],
+  'Python password':              ['HARDCODED_SECRET', 'password = "hunter2secret"\n', "import os\npassword = os.environ['PASSWORD']\n", 'a.py'],
   // S1b: قواعد enum/CAPS على خصائص object فقط، والإسناد يبقى يُصلح
   'JS const SECRET = "secret" (assignment, not an enum property)': ['HARDCODED_SECRET', 'const SECRET = "secret";\n', 'const SECRET = process.env.SECRET;\n', 'a.js'],
   'JS all-caps random key in an assignment':  ['HARDCODED_SECRET', 'const apiKey = "ABCDEFGHIJKLMNOPQRST";\n', 'const apiKey = process.env.APIKEY;\n', 'a.js'],

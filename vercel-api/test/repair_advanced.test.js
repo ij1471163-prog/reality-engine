@@ -283,7 +283,7 @@ test('Secrets: اسم واضح + قيمة مضمّنة + لا env أصلاً ⇒
   const AR = engine();
   const py = 'import os\nAPI_KEY = "sk_live_abcdef123456"\ndb_password = "hunter2secret"\nTOKEN = "changeme"\nname = "not a secret value"\nSMTP_PASS = os.environ.get("SMTP_PASS", "")\nSHORT_KEY = "abc"\n';
   const r = idempotent(AR, py, 'a.py');
-  assert.strictEqual(r.fixed, 'import os\nAPI_KEY = os.environ.get(\'API_KEY\', \'\')\ndb_password = os.environ.get(\'DB_PASSWORD\', \'\')\nTOKEN = "changeme"\nname = "not a secret value"\nSMTP_PASS = os.environ.get("SMTP_PASS", "")\nSHORT_KEY = "abc"\n');
+  assert.strictEqual(r.fixed, 'import os\nAPI_KEY = os.environ[\'API_KEY\']\ndb_password = os.environ[\'DB_PASSWORD\']\nTOKEN = "changeme"\nname = "not a secret value"\nSMTP_PASS = os.environ.get("SMTP_PASS", "")\nSHORT_KEY = "abc"\n');
   assert.strictEqual((r.fixed.match(/^import os$/mg) || []).length, 1);
   noJsInPy(r.fixed);
   // env يُقرأ أصلاً لنفس الاسم ⇒ لا تحويل

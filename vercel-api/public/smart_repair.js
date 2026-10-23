@@ -394,7 +394,7 @@ var SmartRepairEngine = (() => {
         const m = t.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*["'][^"']{6,}["']/);
         if (m && !SQL_VARS.test(m[1]) && !ctx.sqlVars.has(m[1]) && !t.includes('os.environ')) {
           const indent = ' '.repeat(line.search(/\S/));
-          lines[i] = `${indent}${m[1]} = os.environ.get('${m[1]}', '')`;
+          lines[i] = `${indent}${m[1]} = os.environ['${m[1]}']`;
           repairs.push({ line: i + 1, fix: `${m[1]} → os.environ` });
           changed = true;
         }

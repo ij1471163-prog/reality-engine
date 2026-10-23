@@ -273,7 +273,7 @@ test('JWT Python: SECRET_KEY/jwt.encode ⇒ os.environ مع import os؛ وإعا
   const ctx = engine();
   const code = 'import jwt\nSECRET_KEY = "abc123"\ntoken = jwt.encode(payload, "abc123", algorithm="HS256")\n';
   const r = ctx.fallbackFix(code, 'a.py', [issueAt(2, '🟠 JWT Secret مكشوف', { sev: 'h' }), issueAt(3, '🔴 Hardcoded JWT Secret (CWE-287)')]);
-  assert.strictEqual(r.fixed, "import jwt\nimport os\nSECRET_KEY = os.environ.get('SECRET_KEY', '')\ntoken = jwt.encode(payload, os.environ.get('JWT_SECRET', ''), algorithm=\"HS256\")\n");
+  assert.strictEqual(r.fixed, "import jwt\nimport os\nSECRET_KEY = os.environ['SECRET_KEY']\ntoken = jwt.encode(payload, os.environ['JWT_SECRET'], algorithm=\"HS256\")\n");
   noJsInPy(r.fixed);
   const again = ctx.fallbackFix(r.fixed, 'a.py', [issueAt(3, '🟠 JWT Secret مكشوف', { sev: 'h' }), issueAt(4, '🔴 Hardcoded JWT Secret (CWE-287)')]);
   assert.strictEqual(again.fixed, r.fixed, 'إعادة تغليف secret سبق إصلاحه');

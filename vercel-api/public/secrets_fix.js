@@ -50,7 +50,7 @@ var SecretsFixer = (() => {
       if (!hasSecret) return;
 
       const indent = ' '.repeat(line.search(/\S/));
-      lines[i] = `${indent}${varName} = os.environ.get('${varName}', '')`;
+      lines[i] = `${indent}${varName} = os.environ['${varName}']`;
       changed = true;
       needOs = true;
     });
