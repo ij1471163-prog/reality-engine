@@ -108,12 +108,21 @@ function checkSaveRate(sessionId) {
 // أي تعديل هناك (إضافة/حذف/ترتيب) يجب أن يُطبَّق هنا بنفس الشكل،
 // وإلا اختلف تحليل نظام التعلم عن تحليل الإنتاج.
 // MUST stay identical to the engine list in api/analyze.js.
+// [ENGINE-PARITY] كانت 19 من 47: على 247 ملفًا اختلفت البلاغات في 206، ولم تُرَ عائلات SQL/XSS/التشفير
+// في JS أصلًا (مقيس). التطابق والترتيب وآثار التحميل يحرسها test/engine_list_parity.test.js.
 const ENGINES = [
-  'engine_java.js', 'analyzer.js', 'security_scanner.js',
-  'secret_detector.js', 'taint_core.js', 'taint_js.js',
-  'taint_py.js', 'taint_php.js', 'context_analyzer.js',
-  'repair_engine.js', 'fallback_fixes.js', 'emergency_fixes.js',
-  'smart_repair.js', 'fixers_orchestrator.js', 'repair_sql.js', 'healing_log_schema.js', 'healing_log_policy.js', 'healing_store.js', 'self_healing_engine.js',
+  'acorn.min.js', 'engine_java.js', 'c_cpp_analyzer.js', 'analyzer.js', 'security_scanner.js',
+  'secret_detector.js', 'taint_core.js', 'taint_js.js', 'taint_py.js', 'taint_php.js',
+  'context_analyzer.js', 'deep_analyzer.js', 'typo_detector.js', 'accumulation_detector.js',
+  'pattern_detector.js', 'csharp_analyzer.js', 'dart_analyzer.js', 'smart_context.js',
+  'deep_flow.js', 'knowledge_base.js', 'cve_patterns.js', 'extended_patterns.js',
+  'crypto_scanner.js', 'typescript_analyzer.js', 'kotlin_analyzer.js', 'php_analyzer.js',
+  'advanced_analyzer.js', 'threat_detector.js', 'dependency_analyzer.js', 'repair_engine.js',
+  'fallback_fixes.js', 'emergency_fixes.js', 'smart_repair.js', 'fixers_orchestrator.js',
+  'repair_sql.js', 'healing_log_schema.js', 'healing_log_policy.js', 'healing_store.js',
+  'self_healing_engine.js', 'repair_html.js', 'repair_advanced.js', 'fix_verifier.js',
+  'ghost_mode.js', 'learning_validation.js', 'learning_knowledge.js', 'learning_engine.js',
+  'fix_engine_pipeline.js',
 ];
 
 let analyzeCode = null;
