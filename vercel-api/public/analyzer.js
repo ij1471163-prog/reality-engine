@@ -458,9 +458,33 @@ function analyzeCode(code, fileName) {
     // Pattern detection
     if (typeof detectPatterns === 'function') {
         const patternIssues = runEngine('detectPatterns', () => detectPatterns(code, fileName));
+        // [PERF-1c] كان issues.some لكل بلاغ ⇒ تربيعي (مقيس: 67% من وقت 100KB من أسطر قصيرة).
+        // الفهرس: العنوان (نص) ← دلو floor(السطر) ← قيم السطر. لسطرٍ صحيح L كل قيمةٍ v في [L-1, L+1]
+        // دلوُها floor(v) ∈ {L-1, L, L+1}، ثم يُطبَّق الشرط الأصلي نفسه على ما في الدلاء. وما لا يطابق
+        // هذا الشكل (سطرٌ غير صحيح، عنوانٌ غير نصّي) يمرّ بالفحص الأصلي حرفيًا. التكافؤ مُختبَر.
+        const _pdIdx = new Map();
+        const _pdAdd = x => {
+            if (!x || typeof x.title !== 'string') return;
+            const v = Number(x.line);
+            if (!Number.isFinite(v)) return;            // NaN/∞ لا تحقق ‎|v-L| <= 1‎ أبدًا
+            let b = _pdIdx.get(x.title);
+            if (!b) _pdIdx.set(x.title, b = new Map());
+            const k = Math.floor(v), a = b.get(k);
+            if (a) a.push(v); else b.set(k, [v]);
+        };
+        issues.forEach(_pdAdd);
         patternIssues.forEach(pi => {
-            const dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
-            if (!dup) issues.push(pi);
+            let dup = false;
+            if (pi && typeof pi.line === 'number' && Number.isInteger(pi.line) && typeof pi.title === 'string') {
+                const b = _pdIdx.get(pi.title);
+                if (b) for (let k = pi.line - 1; k <= pi.line + 1 && !dup; k++) {
+                    const a = b.get(k);
+                    if (a) dup = a.some(v => Math.abs(v - pi.line) <= 1);
+                }
+            } else {
+                dup = issues.some(x => Math.abs(x.line - pi.line) <= 1 && x.title === pi.title);
+            }
+            if (!dup) { issues.push(pi); _pdAdd(pi); }
         });
     }
     // Accumulation detection - inline

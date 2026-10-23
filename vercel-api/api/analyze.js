@@ -12,6 +12,14 @@ const MAX_CODE_CHARS = 100 * 1024;
 const MAX_FIX_CODE_CHARS = 10 * 1024;
 const MAX_FILENAME_CHARS = 255;
 
+// [PERF-1b] ميزانية زمنية للتحليل بدل رفض الأسطر الطويلة: الكلفة تأتي من شكل المدخل لا من طوله
+// (مقيس: acorn.min.js سطرٌ واحد طوله 111 ألف حرف يُحلَّل في ≈0.6 ثانية، وسطرٌ من 50 ألف مسافة في
+// ≈24 ثانية — 400 تعبير منتظم تربيعي على السطر). vm يقاطع التنفيذ المتزامن نفسه، داخل regex أيضًا،
+// فلا يتجاوز أي مدخل الميزانية مهما كان شكله، ويبقى كل ملف رخيص قابلًا للتحليل.
+const ANALYZE_BUDGET_MS = 8000;
+// مسار الإصلاح (fix) يجري خارج vm فلا تشمله الميزانية؛ حدُّه 10KB، وأغلى ما قيس عليه ≈1.6 ثانية
+// (أغلى تحليل لنفس الحجم ≈1.8). والسقف الصلب له maxDuration في vercel.json.
+
 // احتياطيٌّ داخل نسخةٍ واحدة — ليس حماية. الحدُّ الحقيقي: قاعدة Vercel WAF.
 const perIp = sec.bestEffortLimiter(20, 10 * 60 * 1000);
 
@@ -115,7 +123,15 @@ module.exports = async (req, res) => {
     ctx.__name = fileName;
     ctx.F = { [fileName]: code };
     ctx.R = { [fileName]: { issues: [] } };
-    ctx.R[fileName].issues = ctx.analyzeCode(code, fileName);
+    ctx.__code = code;
+    try {
+      ctx.R[fileName].issues = vm.runInContext('analyzeCode(__code, __name)', ctx, { timeout: ANALYZE_BUDGET_MS });
+    } catch (e) {
+      if (e && e.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+        return res.status(422).json({ error: 'Analysis too expensive for this input', budgetMs: ANALYZE_BUDGET_MS });
+      }
+      throw e;
+    }
 
     const issues = ctx.R[fileName].issues || [];
     const c = issues.filter(i => i.sev==='c').length;

@@ -449,7 +449,10 @@ function fixCommandInjection(code, issue, lines2, ext2, fileName) {
 //   بروتوكول/HMAC  ⇒ يُترك: الطرف الآخر يتوقع هذه الخوارزمية
 //   بصمة غير أمنية ⇒ يُترك: لا خطر أمني مُثبت، والتغيير يكسر مطابقة القيم السابقة
 const _WC_PROTOCOL = /content-md5|\betag\b|if-none-match|gravatar|x-amz|\bs3\b|md5sum|checksum-?md5|digest\s+auth|www-authenticate|\bsri\b|integrity/i;
-const _WC_RANDOM_ONLY = /^(?:\s|\+|\(|\)|String|Math\.random\(\)|Date\.now\(\)|new\s+Date\(\)\.getTime\(\)|\.toString\(\s*\d*\s*\)|\d+|'[^'\\\n]*'|"[^"\\\n]*"|`[^`$\\]*`)*$/;
+// [PERF-1a] كان ‎\d+‎ داخل ‎(…)*‎ و‎\s*\d*\s*‎: تقسيمات كثيرة للمدخل نفسه ⇒ تراجعٌ أسّي (مقيس: 28 رقمًا
+// في سطر ⇒ 6.7 ثوانٍ عبر /api/analyze). ‎(…|\d|…)*‎ تساوي ‎(…|\d+|…)*‎ لغةً، و‎\s*(?:\d+\s*)?‎ تساوي
+// ‎\s*\d*\s*‎ — والتعبير مُرسًى ويُستعمل بـ‎.test‎ وحده فلا التقاط يتغيّر. التكافؤ مُختبَر في analyze_perf_redos.
+const _WC_RANDOM_ONLY = /^(?:\s|\+|\(|\)|String|Math\.random\(\)|Date\.now\(\)|new\s+Date\(\)\.getTime\(\)|\.toString\(\s*(?:\d+\s*)?\)|\d|'[^'\\\n]*'|"[^"\\\n]*"|`[^`$\\]*`)*$/;
 
 function _legacyWeakCryptoLine(line, ext) {
   if (ext === 'py') return line.replace(/hashlib\.md5\s*\(/g, 'hashlib.sha256(').replace(/hashlib\.sha1\s*\(/g, 'hashlib.sha256(');
@@ -865,14 +868,31 @@ function _rePatternNames(pat, out) {
 // الآن يُشترط: كل مراجع الاسم داخل الكتلة نفسها وبعد التعريف، لا إعادة تعريف ولا eval/with،
 // وفي الحلقات لا closure يلتقطه ولا تعريف بلا قيمة (var يحتفظ بقيمة الدورة السابقة، let لا)،
 // وفي أعلى سكربت متصفح لا (var هناك خاصية عامة قد تقرؤها ملفات أخرى).
+// [PERF-1e] فهرسٌ لكل AST: أول تعريف var (بترتيب المشي نفسه) يبدأ في كل سطر، مع سلسلة آبائه.
+// كان المشي الكامل يتكرر لكل بلاغ var ⇒ تربيعي (مقيس: 10KB من ‎var a = 1;‎ ⇒ 12.9 ثانية في الإصلاح).
+// المفتاح كائن الـAST نفسه (WeakMap): _reParse يُعيد الكائن ذاته للنص ذاته، ولا شيء في هذا الملف
+// يكتب على عُقد الـAST (مقيس: 174 شجرة قبل/بعد التحليل والإصلاح بلا أي تغيير) — فالفهرس لا يتقادم
+// ولا يتسرّب بين ملفين. تكافؤه مع المشي الأصلي مُختبَر في analyze_perf_redos.
+const _reVarDeclIndex = new WeakMap();
+function _reFirstVarDeclAt(ast, lineNo) {
+  let idx = _reVarDeclIndex.get(ast);
+  if (!idx) {
+    idx = new Map();
+    _reWalk(ast, (n, ps) => {
+      if (n.type === 'VariableDeclaration' && n.kind === 'var' && !idx.has(n.loc.start.line)) {
+        idx.set(n.loc.start.line, { decl: n, chain: ps.slice() });
+      }
+    });
+    _reVarDeclIndex.set(ast, idx);
+  }
+  const hit = idx.get(lineNo);
+  return hit ? { decl: hit.decl, chain: hit.chain.slice() } : null;
+}
 function _varProblem(code, lineNo) {
   const ast = _reParse(code);
   if (!ast) return ['VAR_UNPROVABLE — تعذّر تحليل الملف بـAST؛ لا يمكن إثبات النطاق', 0.6];
-  let decl = null, chain = null;
-  _reWalk(ast, (n, ps) => {
-    if (decl) return false;
-    if (n.type === 'VariableDeclaration' && n.kind === 'var' && n.loc.start.line === lineNo) { decl = n; chain = ps.slice(); return false; }
-  });
+  const found = _reFirstVarDeclAt(ast, lineNo);
+  const decl = found ? found.decl : null, chain = found ? found.chain : null;
   if (!decl) return ['VAR_NOT_FOUND — لا تعريف var يبدأ في هذا السطر', 0.6];
   const P = chain[chain.length - 1];
   let fnIdx = -1;
@@ -956,7 +976,15 @@ function _varProblem(code, lineNo) {
 
 // ملف CommonJS مُثبت: جملة في أعلى الملف (لا داخل if/try/دالة) تشير بلا شرط إلى module.exports أو
 // exports.x أو require(…)، و module/exports/require غير معرّفة محليًا في الملف.
+// [PERF-1e] دالةٌ نقية في الـAST (قراءة فقط) ⇒ تُحفظ نتيجتها لكل كائن AST.
+const _reCjsMemo = new WeakMap();
 function _isUnconditionalCommonJS(ast) {
+  if (_reCjsMemo.has(ast)) return _reCjsMemo.get(ast);
+  const r = _isUnconditionalCommonJSUncached(ast);
+  _reCjsMemo.set(ast, r);
+  return r;
+}
+function _isUnconditionalCommonJSUncached(ast) {
   let local = false;
   _reWalk(ast, n => {
     if (n.type === 'VariableDeclarator') _rePatternNames(n.id, []).forEach(id => { if (/^(?:module|exports|require)$/.test(id.name)) local = true; });
